@@ -43,8 +43,6 @@ function getInvidiousBases() {
     'https://inv.nadeko.net/api/v1',
     'https://invidious.nerdvpn.de/api/v1',
     'https://invidious.private.coffee/api/v1',
-    'https://invidious.jing.rocks/api/v1',
-    'https://yt.artemislena.eu/api/v1',
   ];
 }
 
@@ -52,8 +50,6 @@ function getPipedBases() {
   return [
     'https://pipedapi.adminforge.de',
     'https://api.piped.private.coffee',
-    'https://piped-api.lunar.icu',
-    'https://pipedapi.leptons.xyz',
   ];
 }
 
@@ -127,7 +123,7 @@ function raceFirstUrl(tasks: Array<() => Promise<string>>): Promise<string> {
 }
 
 async function resolveFromCobalt(youtubeId: string): Promise<string> {
-  const cobaltBases = ['https://api.cobalt.tools', 'https://co.wuk.sh'];
+  const cobaltBases = ['https://api.cobalt.tools'];
   for (const base of cobaltBases) {
     try {
       const data = await httpPostJson(
