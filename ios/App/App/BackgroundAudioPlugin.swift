@@ -123,7 +123,9 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         guard let validUrl = targetUrl else {
-            call.reject("Invalid audio URL or file path")
+            call.resolve([
+                "error": "Invalid audio URL or file path"
+            ])
             return
         }
 
