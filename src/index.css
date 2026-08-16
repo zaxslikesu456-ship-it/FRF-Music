@@ -1,0 +1,286 @@
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #000000;
+  --bg-surface: #0a0a0a;
+  --bg-card: #121212;
+  --bg-highlight: #ffffff;
+  --text-primary: #ffffff;
+  --text-secondary: #a3a3a3;
+  --text-inverse: #000000;
+  --border-color: #262626;
+  --accent-color: #ffffff;
+  --accent-glow: rgba(255, 255, 255, 0.2);
+}
+
+.theme-cyberpunk {
+  --bg-primary: #090414;
+  --bg-surface: #14092b;
+  --bg-card: #1f0e42;
+  --bg-highlight: #00f0ff;
+  --text-primary: #00f0ff;
+  --text-secondary: #d8b4fe;
+  --text-inverse: #090414;
+  --border-color: #7e22ce;
+  --accent-color: #ff007f;
+  --accent-glow: rgba(0, 240, 255, 0.35);
+}
+
+.theme-midnight {
+  --bg-primary: #020b1f;
+  --bg-surface: #071738;
+  --bg-card: #0c2352;
+  --bg-highlight: #38bdf8;
+  --text-primary: #38bdf8;
+  --text-secondary: #93c5fd;
+  --text-inverse: #020b1f;
+  --border-color: #1e3a8a;
+  --accent-color: #06b6d4;
+  --accent-glow: rgba(56, 189, 248, 0.35);
+}
+
+.theme-sunset {
+  --bg-primary: #18040a;
+  --bg-surface: #2b0813;
+  --bg-card: #3f0d1c;
+  --bg-highlight: #fb7185;
+  --text-primary: #fb7185;
+  --text-secondary: #fca5a5;
+  --text-inverse: #18040a;
+  --border-color: #881337;
+  --accent-color: #f59e0b;
+  --accent-glow: rgba(251, 113, 133, 0.35);
+}
+
+.theme-emerald {
+  --bg-primary: #02170d;
+  --bg-surface: #062b18;
+  --bg-card: #0a3f24;
+  --bg-highlight: #34d399;
+  --text-primary: #34d399;
+  --text-secondary: #6ee7b7;
+  --text-inverse: #02170d;
+  --border-color: #065f46;
+  --accent-color: #10b981;
+  --accent-glow: rgba(52, 211, 153, 0.35);
+}
+
+.theme-violet {
+  --bg-primary: #130426;
+  --bg-surface: #20073d;
+  --bg-card: #310b5b;
+  --bg-highlight: #c084fc;
+  --text-primary: #c084fc;
+  --text-secondary: #e9d5ff;
+  --text-inverse: #130426;
+  --border-color: #6b21a8;
+  --accent-color: #e879f9;
+  --accent-glow: rgba(192, 132, 252, 0.35);
+}
+
+.theme-solar {
+  --bg-primary: #1c0d03;
+  --bg-surface: #301705;
+  --bg-card: #452208;
+  --bg-highlight: #fbbf24;
+  --text-primary: #fbbf24;
+  --text-secondary: #fde68a;
+  --text-inverse: #1c0d03;
+  --border-color: #78350f;
+  --accent-color: #f97316;
+  --accent-glow: rgba(251, 191, 36, 0.35);
+}
+
+html {
+  background: #000;
+}
+
+@layer base {
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    @apply antialiased select-none font-sans overflow-x-hidden transition-colors duration-500;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
+
+/* Custom Theme Utility Classes */
+.bg-app-primary { background-color: var(--bg-primary); }
+.bg-app-surface { background-color: var(--bg-surface); }
+.bg-app-card { background-color: var(--bg-card); }
+.bg-app-highlight { background-color: var(--bg-highlight); }
+
+.text-app-primary { color: var(--text-primary); }
+.text-app-secondary { color: var(--text-secondary); }
+.text-app-inverse { color: var(--text-inverse); }
+
+.border-app-theme { border-color: var(--border-color); }
+.accent-app-theme { accent-color: var(--text-primary); }
+
+/* Global Range Slider Customization (Fixes Android native default blue progress bar) */
+input[type="range"] {
+  accent-color: var(--text-primary, #ffffff) !important;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+  height: 6px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background-color: var(--text-primary, #ffffff) !important;
+  box-shadow: 0 0 8px var(--accent-glow, rgba(255, 255, 255, 0.4));
+  margin-top: -4px;
+}
+
+input[type="range"]::-moz-range-track {
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+  height: 6px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background-color: var(--text-primary, #ffffff) !important;
+  border: none;
+}
+
+/* Custom sleek theme scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bg-highlight);
+}
+
+/* Animations */
+@keyframes spinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spinSlow 20s linear infinite;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes eqBar {
+  0%,
+  100% {
+    height: 4px;
+  }
+  50% {
+    height: 14px;
+  }
+}
+
+.anim-fade {
+  animation: fadeIn 0.3s ease both;
+}
+
+.anim-rise {
+  animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.anim-scale {
+  animation: scaleIn 0.25s ease both;
+}
+
+.stagger > * {
+  animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+.stagger > *:nth-child(1) { animation-delay: 0.02s; }
+.stagger > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger > *:nth-child(3) { animation-delay: 0.1s; }
+.stagger > *:nth-child(4) { animation-delay: 0.14s; }
+.stagger > *:nth-child(5) { animation-delay: 0.18s; }
+.stagger > *:nth-child(6) { animation-delay: 0.22s; }
+.stagger > *:nth-child(7) { animation-delay: 0.26s; }
+.stagger > *:nth-child(8) { animation-delay: 0.3s; }
+.stagger > *:nth-child(9) { animation-delay: 0.34s; }
+.stagger > *:nth-child(10) { animation-delay: 0.38s; }
+.stagger > *:nth-child(11) { animation-delay: 0.42s; }
+.stagger > *:nth-child(12) { animation-delay: 0.46s; }
+
+/* Animated equalizer for the currently playing row */
+.eq {
+  display: inline-flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 14px;
+  flex-shrink: 0;
+}
+.eq span {
+  width: 3px;
+  border-radius: 1px;
+  background: var(--bg-highlight);
+  animation: eqBar 0.9s ease-in-out infinite;
+}
+.eq span:nth-child(2) {
+  animation-delay: 0.25s;
+}
+.eq span:nth-child(3) {
+  animation-delay: 0.5s;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
