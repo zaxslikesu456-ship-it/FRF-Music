@@ -284,3 +284,21 @@ input[type="range"]::-moz-range-thumb {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* iOS Dynamic Island & Safe Area Utility Classes */
+.safe-top {
+  padding-top: max(env(safe-area-inset-top), 24px);
+}
+
+.safe-top-extra {
+  padding-top: calc(max(env(safe-area-inset-top), 24px) + 16px);
+}
+
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 16px);
+}
+
+.safe-area-player-top {
+  padding-top: max(env(safe-area-inset-top, 44px), 52px);
+}
+

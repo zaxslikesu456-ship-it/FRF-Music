@@ -142,7 +142,7 @@ export const SettingsView: React.FC = () => {
 
   return (
     <div className="flex-1 overflow-y-auto pb-28 bg-transparent">
-      <h1 className="text-3xl font-bold text-app-primary px-5 pt-8 pb-6">Settings</h1>
+      <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-6">Settings</h1>
 
       <div className="px-5 space-y-4 stagger">
         {sections.map(s => {

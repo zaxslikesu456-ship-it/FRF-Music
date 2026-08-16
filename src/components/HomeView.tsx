@@ -123,7 +123,7 @@ export const HomeView: React.FC = () => {
   return (
     <div className="flex-1 overflow-y-auto pb-28 bg-transparent">
       {/* Profile Header */}
-      <div className="flex items-center gap-3 px-5 pt-6 pb-2">
+      <div className="flex items-center gap-3 px-5 safe-top pb-2">
         <button
           onClick={() => setActiveTab('settings')}
           className="w-11 h-11 rounded-full overflow-hidden bg-app-card border border-app-theme flex items-center justify-center shrink-0"
