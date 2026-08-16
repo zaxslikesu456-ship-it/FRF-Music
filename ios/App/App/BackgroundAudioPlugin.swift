@@ -135,24 +135,31 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         setupSilentPlayer()
         silentPlayer?.play()
 
+        let title = call.getString("title", "")
+        let artist = call.getString("artist", "")
+        let isPlaying = call.getBool("isPlaying", true)
+        let coverUrl = call.getString("coverUrl", "")
+        let duration = call.getDouble("duration", 0.0)
+        let position = call.getDouble("position", 0.0)
+
         updateNowPlaying(
-            title: call.getString("title") ?? "",
-            artist: call.getString("artist") ?? "",
-            isPlaying: call.getBool("isPlaying") ?? true,
-            coverUrl: call.getString("coverUrl"),
-            duration: call.getDouble("duration"),
-            position: call.getDouble("position")
+            title: title,
+            artist: artist,
+            isPlaying: isPlaying,
+            coverUrl: coverUrl.isEmpty ? nil : coverUrl,
+            duration: duration > 0 ? duration : nil,
+            position: position >= 0 ? position : nil
         )
         call.resolve()
     }
 
     @objc public func update(_ call: CAPPluginCall) {
-        let title = call.getString("title") ?? ""
-        let artist = call.getString("artist") ?? ""
-        let isPlaying = call.getBool("isPlaying") ?? true
-        let coverUrl = call.getString("coverUrl")
-        let duration = call.getDouble("duration")
-        let position = call.getDouble("position")
+        let title = call.getString("title", "")
+        let artist = call.getString("artist", "")
+        let isPlaying = call.getBool("isPlaying", true)
+        let coverUrl = call.getString("coverUrl", "")
+        let duration = call.getDouble("duration", 0.0)
+        let position = call.getDouble("position", 0.0)
 
         if isPlaying {
             setupAudioSession()
@@ -168,9 +175,9 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             title: title,
             artist: artist,
             isPlaying: isPlaying,
-            coverUrl: coverUrl,
-            duration: duration,
-            position: position
+            coverUrl: coverUrl.isEmpty ? nil : coverUrl,
+            duration: duration > 0 ? duration : nil,
+            position: position >= 0 ? position : nil
         )
         call.resolve()
     }
