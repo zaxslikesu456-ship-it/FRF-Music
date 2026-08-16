@@ -23,6 +23,8 @@ jobs:
 
       - name: Build Web Application
         run: npm run build
+        env:
+          VITE_YOUTUBE_DATA_API_KEY: ${{ secrets.YOUTUBE_DATA_API_KEY }}
 
       - name: Sync Capacitor iOS
         run: npx cap sync ios

@@ -55,7 +55,7 @@ const BackgroundAudio = Capacitor.isNativePlatform()
 
 const YOUTUBE_APP_ORIGIN = 'https://com.frf.music';
 const YOUTUBE_ALTERNATE_ERROR_CODES = new Set([2, 100, 101, 150]);
-const MAX_ALTERNATE_UPLOADS = 3;
+const MAX_ALTERNATE_UPLOADS = 6;
 
 declare global {
   interface Window {
@@ -648,9 +648,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       el.setAttribute('aria-hidden', 'true');
       document.body.appendChild(el);
     }
-    // Kept in the DOM rendering tree with opacity:0.99 so iOS WebKit doesn't throttle audio playback
+    // The Now Playing screen aligns this surface over its visible video slot.
+    // Keep the parked size at YouTube's documented 200px minimum.
     el.style.cssText =
-      'position:fixed;bottom:0;right:0;width:64px;height:64px;opacity:0.99;pointer-events:none;z-index:-999;clip-path:circle(1px at 0 0);';
+      'position:fixed;left:-10000px;top:0;width:200px;height:200px;opacity:0;pointer-events:none;z-index:-1;border:0;';
     return el;
   };
 
@@ -658,12 +659,12 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (ytPlayerRef.current || !window.YT?.Player) return;
     ensureYtPlayerElement();
     ytPlayerRef.current = new window.YT.Player('yt-hidden-player', {
-      height: '160',
-      width: '240',
+      height: '200',
+      width: '200',
       host: 'https://www.youtube-nocookie.com',
       playerVars: {
         autoplay: 1,
-        controls: 0,
+        controls: 1,
         disablekb: 1,
         fs: 0,
         rel: 0,
@@ -1289,6 +1290,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // 2. YouTube tracks: Immediate player start via YouTube nocookie player
     if (track.isYouTube && track.youtubeId) {
+      // iOS and YouTube both require an on-screen video surface for reliable
+      // IFrame playback. The Now Playing screen hosts the player at >= 200px.
+      setIsPlayerOpen(true);
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.removeAttribute('src');

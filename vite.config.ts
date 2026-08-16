@@ -45,6 +45,18 @@ export default defineConfig({
         },
         rewrite: (path) => path.replace(/^\/api\/youtubei/, '/youtubei/v1'),
       },
+      // Regular YouTube search is used only to locate alternate uploads when
+      // a YouTube Music catalog ID has embedding disabled.
+      '/api/youtube-search': {
+        target: 'https://www.youtube.com',
+        changeOrigin: true,
+        secure: true,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        rewrite: (path) => path.replace(/^\/api\/youtube-search/, ''),
+      },
     },
   },
 })
