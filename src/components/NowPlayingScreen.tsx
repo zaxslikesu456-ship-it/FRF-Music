@@ -193,7 +193,7 @@ export const NowPlayingScreen: React.FC = () => {
         }}
       >
         {/* Top Navigation Header */}
-        <div className="flex items-center justify-between pt-5 pb-2">
+        <div className="flex items-center justify-between safe-area-player-top pb-4 px-1">
           <button
             onClick={() => setIsPlayerOpen(false)}
             className="p-2 text-app-primary hover:scale-110 active:scale-95 transition-transform"

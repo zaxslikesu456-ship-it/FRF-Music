@@ -570,7 +570,7 @@ export const SearchView: React.FC = () => {
       {menuModal}
       <>
           {/* Header */}
-          <div className="flex items-center gap-4 px-5 pt-8 pb-4">
+          <div className="flex items-center gap-4 px-5 safe-top pb-4">
             <button
               onClick={() => setSearchQuery('')}
               className="p-1 text-app-primary"

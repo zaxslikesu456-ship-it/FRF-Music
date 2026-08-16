@@ -14,7 +14,7 @@ export const BottomNav: React.FC = () => {
   ];
 
   return (
-    <div className="w-full bg-app-primary px-2 pb-3 pt-2 flex items-start justify-around z-20">
+    <div className="w-full bg-app-primary px-2 safe-bottom pt-2 flex items-start justify-around z-20">
       {navItems.map(item => {
         const Icon = item.icon;
         const isActive = activeTab === item.id;

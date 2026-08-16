@@ -263,7 +263,7 @@ export const LibraryView: React.FC = () => {
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between px-5 pt-8 pb-4">
+      <div className="flex items-center justify-between px-5 safe-top pb-4">
         <h1 className="text-3xl font-bold text-app-primary">Library</h1>
         <div className="flex items-center gap-2">
           <button
