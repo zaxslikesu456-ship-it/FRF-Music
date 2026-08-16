@@ -324,7 +324,7 @@ export async function searchYouTubeMusic(query: string): Promise<Track[]> {
       query: cleanQuery,
       params: SONGS_PARAMS,
     };
-    const data = await httpPostJson(url, body, 5000);
+    const data = await httpPostJson(url, body, 2500);
     const { tracks, token } = parseInnerTubeSearchResults(data);
     if (tracks.length > 0) {
       const session = searchSessions.get(cleanQuery) || {
@@ -348,7 +348,7 @@ export async function searchYouTubeMusic(query: string): Promise<Track[]> {
       ...buildClientContext(),
       query: cleanQuery,
     };
-    const data = await httpPostJson(url, body, 5000);
+    const data = await httpPostJson(url, body, 2500);
     const { tracks, token } = parseInnerTubeSearchResults(data);
     if (tracks.length > 0) {
       const session = searchSessions.get(cleanQuery) || {
