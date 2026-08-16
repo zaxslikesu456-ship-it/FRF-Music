@@ -867,52 +867,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Android still uses the iframe as a backup; desktop skips it on startup
   // because the hidden player element is not in DesktopFrame and the iframe
-  // is what made Play take several seconds.
+  // Load YouTube IFrame API on startup
   useEffect(() => {
     void loadYtApi();
   }, []);
-
-  // When the full player is minimized, keep YouTube's required visible player
-  // on-screen as a 200x200 mini video. This supports browsing inside the app;
-  // iOS still controls whether playback may continue after leaving the app.
-  useEffect(() => {
-    if (isPlayerOpen) return;
-
-    const positionMiniPlayer = () => {
-      const player = document.getElementById('yt-hidden-player');
-      if (!player) return;
-      if (!currentTrack?.isYouTube || needsLoadRef.current || !settings.youtubeMiniPlayer) {
-        if (currentTrack?.isYouTube && !needsLoadRef.current && !settings.youtubeMiniPlayer) {
-          try {
-            ytPlayerRef.current?.pauseVideo?.();
-          } catch {
-            // ignore
-          }
-          setIsPlaying(false);
-        }
-        player.setAttribute('aria-hidden', 'true');
-        player.style.cssText =
-          'position:fixed;left:-10000px;top:0;width:200px;height:200px;opacity:0;pointer-events:none;z-index:-1;border:0;';
-        return;
-      }
-      player.removeAttribute('aria-hidden');
-      player.setAttribute('title', `${currentTrack.title} mini YouTube player`);
-      player.style.cssText =
-        'position:fixed;right:8px;bottom:160px;width:200px;height:200px;min-width:200px;min-height:200px;' +
-        'opacity:1;pointer-events:auto;z-index:45;border:1px solid rgba(255,255,255,.2);display:block;' +
-        'border-radius:12px;background:#000;box-shadow:0 12px 32px rgba(0,0,0,.55);';
-    };
-
-    const timer = window.setTimeout(positionMiniPlayer, 0);
-    const observer = new MutationObserver(positionMiniPlayer);
-    observer.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener('resize', positionMiniPlayer);
-    return () => {
-      window.clearTimeout(timer);
-      observer.disconnect();
-      window.removeEventListener('resize', positionMiniPlayer);
-    };
-  }, [currentTrack?.id, currentTrack?.isYouTube, currentTrack?.title, isPlayerOpen, settings.youtubeMiniPlayer]);
 
   const startIframe = async (track: Track, startTime = 0) => {
     const currentGen = playGenRef.current;
