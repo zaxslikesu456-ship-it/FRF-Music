@@ -98,6 +98,7 @@ export interface SettingsState {
   downloadQuality: 'high' | 'low';
   sleepTimerMinutes: 0 | 15 | 30 | 60;
   backgroundPlayback: boolean;
+  youtubeMiniPlayer: boolean;
   showPlayCounts: boolean;
   profileName: string;
   profileAvatar: string | null;
