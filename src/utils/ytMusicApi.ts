@@ -16,8 +16,8 @@ function getYtmBase() {
 
 function getInvidiousBases() {
   return USE_PROXY
-    ? ['/api/invidious', 'https://y.com.sb/api/v1', 'https://invidious.nerdvpn.de/api/v1', 'https://inv.tux.pizza/api/v1']
-    : ['https://y.com.sb/api/v1', 'https://invidious.nerdvpn.de/api/v1', 'https://inv.tux.pizza/api/v1', 'https://invidious.drgns.space/api/v1'];
+    ? ['/api/invidious', 'https://inv.nadeko.net/api/v1', 'https://invidious.nerdvpn.de/api/v1', 'https://invidious.private.coffee/api/v1', 'https://yt.artemislena.eu/api/v1']
+    : ['https://inv.nadeko.net/api/v1', 'https://invidious.nerdvpn.de/api/v1', 'https://invidious.private.coffee/api/v1', 'https://yt.artemislena.eu/api/v1', 'https://inv.tux.pizza/api/v1', 'https://invidious.drgns.space/api/v1', 'https://y.com.sb/api/v1'];
 }
 
 function raceToSuccess<T>(tasks: Array<() => Promise<T[]>>): Promise<T[]> {

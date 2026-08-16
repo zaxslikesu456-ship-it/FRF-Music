@@ -1075,7 +1075,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     });
 
-    // 2. YouTube tracks: INSTANT iframe play + background stream resolution
+    // 2. YouTube tracks: Stream audio resolution + fallback
     if (track.isYouTube && track.youtubeId) {
       if (audioRef.current) {
         audioRef.current.pause();
@@ -1090,23 +1090,15 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         playAudioUrl(track, cachedStream, startTime).catch(() => {
           dropCachedStreamUrl(track.youtubeId!);
           streamUrlCacheRef.current.delete(track.youtubeId!);
-          void startIframe(track, startTime);
+          void fallbackToStream(track, true);
         });
       } else {
-        // INSTANT 50ms PLAYBACK via YouTube embed
-        void startIframe(track, startTime);
-        // Pre-fetch direct audio stream and seamlessly handover to HTML5 audio for background playback
-        void resolveAudioStreamUrl(track.youtubeId, false)
-          .then(url => {
-            if (url) {
-              streamUrlCacheRef.current.set(track.youtubeId!, url);
-              if (currentTrackRef.current?.id === track.id && playGenRef.current === currentGen) {
-                const currentPos = positionRef.current;
-                playAudioUrl(track, url, currentPos).catch(() => {});
-              }
-            }
-          })
-          .catch(() => {});
+        // Direct audio stream playback (works natively on iOS and background audio)
+        void fallbackToStream(track).then(success => {
+          if (!success && playGenRef.current === currentGen) {
+            void startIframe(track, startTime);
+          }
+        });
       }
 
       prefetchNextStream(track);

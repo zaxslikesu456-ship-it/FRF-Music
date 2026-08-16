@@ -40,10 +40,13 @@ export function cancelDownload(trackId: string) {
 
 function getInvidiousBases() {
   return [
-    'https://y.com.sb/api/v1',
+    'https://inv.nadeko.net/api/v1',
     'https://invidious.nerdvpn.de/api/v1',
+    'https://invidious.private.coffee/api/v1',
+    'https://yt.artemislena.eu/api/v1',
     'https://inv.tux.pizza/api/v1',
-    'https://invidious.f5.si/api/v1',
+    'https://invidious.drgns.space/api/v1',
+    'https://y.com.sb/api/v1',
   ];
 }
 
@@ -52,6 +55,7 @@ function getPipedBases() {
     'https://pipedapi.kavin.rocks',
     'https://pipedapi.adminforge.de',
     'https://api.piped.private.coffee',
+    'https://piped-api.lunar.icu',
   ];
 }
 
@@ -192,16 +196,30 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
 async function resolveFromInnerTube(youtubeId: string): Promise<string> {
   const clients = [
     {
+      clientName: 'IOS',
+      clientVersion: '19.29.1',
+      deviceMake: 'Apple',
+      deviceModel: 'iPhone16,2',
+      userAgent: 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)',
+      clientId: '5',
+    },
+    {
+      clientName: 'ANDROID',
+      clientVersion: '19.29.1',
+      userAgent: 'com.google.android.youtube/19.29.1 (Linux; U; Android 14; en_US) gzip',
+      clientId: '3',
+    },
+    {
+      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      clientVersion: '2.0',
+      userAgent: 'Mozilla/5.0 (PlayStation 4 10.01) AppleWebKit/605.1.15 (KHTML, like Gecko)',
+      clientId: '85',
+    },
+    {
       clientName: 'WEB_REMIX',
       clientVersion: '1.20260812.01.00',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0',
       clientId: '67',
-    },
-    {
-      clientName: 'TVHTML5',
-      clientVersion: '7.20260812.00.00',
-      userAgent: 'Mozilla/5.0 (SmartHub; SMART-TV; U; Linux/SmartTV) AppleWebKit/537.42 (KHTML, like Gecko) SmartTV Safari/537.42',
-      clientId: '44',
     },
   ];
 
