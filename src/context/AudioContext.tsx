@@ -56,6 +56,16 @@ const BackgroundAudio = Capacitor.isNativePlatform()
 const YOUTUBE_APP_ORIGIN = 'https://com.frf.music';
 const YOUTUBE_ALTERNATE_ERROR_CODES = new Set([2, 100, 101, 150]);
 const MAX_ALTERNATE_UPLOADS = 6;
+const YOUTUBE_PLAYBACK_OVERRIDES_KEY = 'frf_youtube_playback_overrides_v1';
+
+function loadYouTubePlaybackOverrides(): Record<string, string> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(YOUTUBE_PLAYBACK_OVERRIDES_KEY) || '{}');
+    return saved && typeof saved === 'object' ? saved : {};
+  } catch {
+    return {};
+  }
+}
 
 declare global {
   interface Window {
@@ -387,6 +397,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const pendingSeekRef = useRef<number>(LAST_SESSION.position || 0);
   const playGenRef = useRef(0);
   const activeYoutubeIdRef = useRef<string | null>(null);
+  const youtubePlaybackOverridesRef = useRef<Record<string, string>>(loadYouTubePlaybackOverrides());
   const failedYoutubeIdsRef = useRef(new Set<string>());
   const isYoutubeRecoveryRunningRef = useRef(false);
   const streamRetryCountRef = useRef(new Map<string, number>());
@@ -692,6 +703,19 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (event.data === 1) {
             hasPlayedRef.current = true;
             setIsPlaying(true);
+            const playingTrack = currentTrackRef.current;
+            const activeId = activeYoutubeIdRef.current;
+            if (playingTrack?.isYouTube && activeId && activeId !== playingTrack.youtubeId) {
+              youtubePlaybackOverridesRef.current[playingTrack.id] = activeId;
+              try {
+                localStorage.setItem(
+                  YOUTUBE_PLAYBACK_OVERRIDES_KEY,
+                  JSON.stringify(youtubePlaybackOverridesRef.current)
+                );
+              } catch {
+                // Storage can be unavailable in private browsing.
+              }
+            }
             if (ytPlayerRef.current?.setVolume) {
               try {
                 ytPlayerRef.current.setVolume(volumeRef.current * 100);
@@ -716,6 +740,17 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const failedId = activeYoutubeIdRef.current || t.youtubeId;
           failedYoutubeIdsRef.current.add(failedId);
           setIsPlaying(false);
+          if (youtubePlaybackOverridesRef.current[t.id] === failedId) {
+            delete youtubePlaybackOverridesRef.current[t.id];
+            try {
+              localStorage.setItem(
+                YOUTUBE_PLAYBACK_OVERRIDES_KEY,
+                JSON.stringify(youtubePlaybackOverridesRef.current)
+              );
+            } catch {
+              // Storage can be unavailable in private browsing.
+            }
+          }
 
           // Error 153 is an app-identification problem, not a restricted song.
           // Retrying other uploads would fail for the same reason.
@@ -732,7 +767,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               isYoutubeRecoveryRunningRef.current ||
               failedYoutubeIdsRef.current.size > MAX_ALTERNATE_UPLOADS
             ) {
-              showStatus('This upload cannot play inside apps. Tap ⋯ then Open in YouTube to verify access.', 7000);
+              showStatus('No exact embeddable upload was found. Tap ⋯ then Open in YouTube.', 7000);
               return;
             }
 
@@ -742,6 +777,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               const altId = await findBestAlternateVideoId(
                 t.title,
                 t.artist,
+                t.duration,
                 failedYoutubeIdsRef.current
               );
               if (
@@ -762,7 +798,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             }
 
             if (playGenRef.current === generation && currentTrackRef.current?.id === t.id) {
-              showStatus('This upload cannot play inside apps. Tap ⋯ then Open in YouTube to verify access.', 7000);
+              showStatus('No exact embeddable upload was found. Tap ⋯ then Open in YouTube.', 7000);
             }
             return;
           }
@@ -810,6 +846,40 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     void loadYtApi();
   }, []);
+
+  // When the full player is minimized, keep YouTube's required visible player
+  // on-screen as a 200x200 mini video. This supports browsing inside the app;
+  // iOS still controls whether playback may continue after leaving the app.
+  useEffect(() => {
+    if (isPlayerOpen) return;
+
+    const positionMiniPlayer = () => {
+      const player = document.getElementById('yt-hidden-player');
+      if (!player) return;
+      if (!currentTrack?.isYouTube || needsLoadRef.current) {
+        player.setAttribute('aria-hidden', 'true');
+        player.style.cssText =
+          'position:fixed;left:-10000px;top:0;width:200px;height:200px;opacity:0;pointer-events:none;z-index:-1;border:0;';
+        return;
+      }
+      player.removeAttribute('aria-hidden');
+      player.setAttribute('title', `${currentTrack.title} mini YouTube player`);
+      player.style.cssText =
+        'position:fixed;right:8px;bottom:160px;width:200px;height:200px;min-width:200px;min-height:200px;' +
+        'opacity:1;pointer-events:auto;z-index:45;border:1px solid rgba(255,255,255,.2);display:block;' +
+        'border-radius:12px;background:#000;box-shadow:0 12px 32px rgba(0,0,0,.55);';
+    };
+
+    const timer = window.setTimeout(positionMiniPlayer, 0);
+    const observer = new MutationObserver(positionMiniPlayer);
+    observer.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('resize', positionMiniPlayer);
+    return () => {
+      window.clearTimeout(timer);
+      observer.disconnect();
+      window.removeEventListener('resize', positionMiniPlayer);
+    };
+  }, [currentTrack?.id, currentTrack?.isYouTube, currentTrack?.title, isPlayerOpen]);
 
   const startIframe = async (track: Track, startTime = 0) => {
     const currentGen = playGenRef.current;
@@ -1253,7 +1323,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const currentGen = playGenRef.current;
     failedYoutubeIdsRef.current.clear();
     streamRetryCountRef.current.delete(track.id);
-    activeYoutubeIdRef.current = track.youtubeId || null;
+    const savedYoutubeId = track.isYouTube
+      ? youtubePlaybackOverridesRef.current[track.id]
+      : undefined;
+    activeYoutubeIdRef.current = savedYoutubeId || track.youtubeId || null;
     registerTrack(track);
     setRecentlyPlayed(prev => {
       const updated = [track, ...prev.filter(t => t.id !== track.id)].slice(0, 50);
@@ -1298,7 +1371,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         audioRef.current.removeAttribute('src');
       }
 
-      void startIframe(track, startTime);
+      void startIframe(
+        savedYoutubeId ? { ...track, youtubeId: savedYoutubeId } : track,
+        startTime
+      );
       return;
     }
 
