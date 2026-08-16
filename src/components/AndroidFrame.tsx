@@ -29,12 +29,7 @@ export const AndroidFrame: React.FC = () => {
           className="absolute inset-0 w-full h-full object-cover pointer-events-none"
         />
       )}
-      {/* YouTube IFrame Container: must stay rendered with non-zero size or Android WebView refuses to play audio */}
-      <div
-        id="yt-hidden-player"
-        aria-hidden="true"
-        className="fixed bottom-0 left-0 w-px h-px opacity-0 pointer-events-none overflow-hidden"
-      />
+
 
       {/* App Workspace Views */}
       <main className="flex-1 flex flex-col overflow-hidden relative">

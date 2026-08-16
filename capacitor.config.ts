@@ -9,19 +9,20 @@ const config: CapacitorConfig = {
       enabled: true,
     },
   },
+  ios: {
+    allowsLinkPreview: false,
+    scrollEnabled: true,
+  },
   server: {
     iosScheme: 'capacitor',
     allowNavigation: [
-      'https://music.youtube.com',
-      'https://www.youtube.com',
+      '*',
+      'https://*.youtube.com',
+      'https://*.youtube-nocookie.com',
       'https://*.googlevideo.com',
       'https://*.invidious.*',
       'https://*.piped.*',
-      'https://*.cobalt.tools',
-      'https://*.wuk.sh',
-      'https://*.kavin.rocks',
-      'https://*.nadeko.net',
-      'https://*.private.coffee'
+      'https://*.cobalt.tools'
     ]
   }
 };
