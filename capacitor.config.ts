@@ -16,9 +16,11 @@ const config: CapacitorConfig = {
     appendUserAgent: 'Safari/605.1.15',
   },
   server: {
-    // CRITICAL: Must be 'https' so YouTube IFrame API sees an https:// origin
-    // and allows media playback. 'capacitor' scheme gets blocked by YouTube.
-    iosScheme: 'https',
+    // WKWebView cannot register http/https as a custom scheme, so Capacitor
+    // falls back to its native scheme on iOS. YouTube receives the bundle ID
+    // separately through the IFrame Player's origin parameter.
+    iosScheme: 'capacitor',
+    androidScheme: 'https',
     allowNavigation: ['*'],
   },
 };

@@ -893,55 +893,80 @@ export async function fetchYouTubePlaylistTracks(
   return tracks;
 }
 
-export async function findPlayableAlternateVideoId(
+const ALTERNATE_NOISE_WORDS = new Set([
+  'cover',
+  'instrumental',
+  'karaoke',
+  'live',
+  'nightcore',
+  'reaction',
+  'remix',
+  'slowed',
+  'sped',
+  'tutorial',
+]);
+
+function normalizedSearchTokens(value: string): Set<string> {
+  return new Set(
+    value
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/&/g, ' and ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(token => token.length > 1)
+  );
+}
+
+function tokenCoverage(wanted: Set<string>, candidate: Set<string>): number {
+  if (wanted.size === 0) return 0;
+  let matches = 0;
+  wanted.forEach(token => {
+    if (candidate.has(token)) matches += 1;
+  });
+  return matches / wanted.size;
+}
+
+function alternateRelevance(track: Track, title: string, artist: string): number {
+  const wantedTitle = normalizedSearchTokens(title);
+  const wantedArtist = normalizedSearchTokens(artist);
+  const candidateTitle = normalizedSearchTokens(track.title);
+  const candidateIdentity = normalizedSearchTokens(`${track.title} ${track.artist}`);
+
+  let score =
+    tokenCoverage(wantedTitle, candidateTitle) * 0.65 +
+    tokenCoverage(wantedArtist, candidateIdentity) * 0.35;
+
+  ALTERNATE_NOISE_WORDS.forEach(token => {
+    if (candidateTitle.has(token) && !wantedTitle.has(token)) score -= 0.15;
+  });
+
+  return score;
+}
+
+// Finds another legitimate upload of the same recording. The IFrame Player is
+// still responsible for enforcing the upload's embedding and age rules.
+export async function findBestAlternateVideoId(
   title: string,
   artist: string,
-  currentVideoId: string
+  excludedVideoIds: string | Iterable<string>
 ): Promise<string | null> {
-  const query = `${title} ${artist}`.replace(/[^\w\s]/gi, ' ').trim();
+  const excluded =
+    typeof excludedVideoIds === 'string'
+      ? new Set([excludedVideoIds])
+      : new Set(excludedVideoIds);
+  const query = `${artist} ${title} official audio`;
   try {
-    const data = await httpPostJson(
-      'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
-      {
-        context: {
-          client: {
-            clientName: 'WEB',
-            clientVersion: '2.20240801.01.00',
-            hl: 'en',
-            gl: 'US',
-          },
-        },
-        query: `${query} audio`,
-      },
-      4000
-    );
-
-    const sections =
-      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
-        ?.sectionListRenderer?.contents || [];
-
-    for (const s of sections) {
-      const items = s?.itemSectionRenderer?.contents || [];
-      for (const item of items) {
-        const vid =
-          item?.videoRenderer?.videoId ||
-          item?.compactVideoRenderer?.videoId;
-        if (vid && vid !== currentVideoId) {
-          return vid;
-        }
-      }
-    }
+    const results = await searchYouTubeMusic(query);
+    const candidates = results
+      .filter(track => track.youtubeId && !excluded.has(track.youtubeId))
+      .map(track => ({ track, score: alternateRelevance(track, title, artist) }))
+      .filter(candidate => candidate.score >= 0.72)
+      .sort((a, b) => b.score - a.score);
+    return candidates[0]?.track.youtubeId || null;
   } catch {
-    // try fallback
+    return null;
   }
-
-  try {
-    const results = await searchYouTubeMusic(`${query} music`);
-    const found = results.find(t => t.youtubeId && t.youtubeId !== currentVideoId);
-    if (found?.youtubeId) return found.youtubeId;
-  } catch {
-    // ignore
-  }
-
-  return null;
 }

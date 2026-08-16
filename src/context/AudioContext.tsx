@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import type { Track, Playlist, RepeatMode, SettingsState, NavTab } from '../types/music';
 import { INITIAL_TRACKS } from '../utils/sampleData';
 import { applyThemeSettings } from '../utils/theme';
-import { searchYouTubeMusic, findPlayableAlternateVideoId } from '../utils/ytMusicApi';
+import { searchYouTubeMusic, findBestAlternateVideoId } from '../utils/ytMusicApi';
 import {
   downloadTrackToFile,
   deleteOfflineFile,
@@ -52,6 +52,10 @@ interface BackgroundAudioPlugin {
 const BackgroundAudio = Capacitor.isNativePlatform()
   ? registerPlugin<BackgroundAudioPlugin>('BackgroundAudio')
   : null;
+
+const YOUTUBE_APP_ORIGIN = 'https://com.frf.music';
+const YOUTUBE_ALTERNATE_ERROR_CODES = new Set([2, 100, 101, 150]);
+const MAX_ALTERNATE_UPLOADS = 3;
 
 declare global {
   interface Window {
@@ -382,6 +386,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const positionRef = useRef(LAST_SESSION.position || 0);
   const pendingSeekRef = useRef<number>(LAST_SESSION.position || 0);
   const playGenRef = useRef(0);
+  const activeYoutubeIdRef = useRef<string | null>(null);
+  const failedYoutubeIdsRef = useRef(new Set<string>());
+  const isYoutubeRecoveryRunningRef = useRef(false);
+  const streamRetryCountRef = useRef(new Map<string, number>());
   const [isResolvingStream, setIsResolvingStream] = useState(false);
   // Restored sessions need a real load on the first play press
   const needsLoadRef = useRef(Boolean(LAST_SESSION.track));
@@ -661,7 +669,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         rel: 0,
         enablejsapi: 1,
         playsinline: 1,
-        widget_referrer: 'https://www.youtube.com',
+        // Capacitor pages use a custom URL scheme, which does not provide an
+        // HTTPS Referer. YouTube accepts the installed bundle ID as the API
+        // client identity through these player parameters.
+        origin: YOUTUBE_APP_ORIGIN,
+        widget_referrer: YOUTUBE_APP_ORIGIN,
       },
       events: {
         onReady: () => {
@@ -694,35 +706,79 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         },
         onError: async (event: any) => {
-          const errorCode = event?.data;
+          const errorCode = Number(event?.data);
           console.warn('YouTube Player Error:', errorCode);
           const t = currentTrackRef.current;
           if (!t?.youtubeId) return;
 
-          // If track failed with 101, 150, 100, 2:
-          // Seamlessly swap to the alternate official upload of the same song!
-          try {
-            const altId = await findPlayableAlternateVideoId(t.title, t.artist, t.youtubeId);
-            if (altId && ytPlayerRef.current?.loadVideoById && currentTrackRef.current?.id === t.id) {
-              console.log(`Auto-switching to alternate videoId for "${t.title}": ${altId}`);
-              t.youtubeId = altId;
-              ytPlayerRef.current.loadVideoById({
-                videoId: altId,
-                startSeconds: 0,
-              });
-              try {
-                ytPlayerRef.current.playVideo();
-              } catch {
-                // ignore
-              }
-              setIsPlaying(true);
-              return;
-            }
-          } catch {
-            // ignore
+          const generation = playGenRef.current;
+          const failedId = activeYoutubeIdRef.current || t.youtubeId;
+          failedYoutubeIdsRef.current.add(failedId);
+          setIsPlaying(false);
+
+          // Error 153 is an app-identification problem, not a restricted song.
+          // Retrying other uploads would fail for the same reason.
+          if (errorCode === 153) {
+            showStatus('YouTube could not identify this app. Please install the newest iPhone build.', 6000);
+            return;
           }
 
-          void fallbackToStreamRef.current(t, true);
+          // Removed/private/non-embeddable uploads can often be replaced by a
+          // matching official audio upload. Every candidate still goes through
+          // YouTube's IFrame Player and its normal age/embedding checks.
+          if (YOUTUBE_ALTERNATE_ERROR_CODES.has(errorCode)) {
+            if (
+              isYoutubeRecoveryRunningRef.current ||
+              failedYoutubeIdsRef.current.size > MAX_ALTERNATE_UPLOADS
+            ) {
+              showStatus('This upload cannot play inside apps. Tap ⋯ then Open in YouTube to verify access.', 7000);
+              return;
+            }
+
+            isYoutubeRecoveryRunningRef.current = true;
+            showStatus(`Finding another upload of "${t.title}"…`, 5000);
+            try {
+              const altId = await findBestAlternateVideoId(
+                t.title,
+                t.artist,
+                failedYoutubeIdsRef.current
+              );
+              if (
+                altId &&
+                playGenRef.current === generation &&
+                currentTrackRef.current?.id === t.id &&
+                ytPlayerRef.current?.loadVideoById
+              ) {
+                activeYoutubeIdRef.current = altId;
+                ytPlayerRef.current.loadVideoById({ videoId: altId, startSeconds: 0 });
+                ytPlayerRef.current.playVideo?.();
+                return;
+              }
+            } finally {
+              if (playGenRef.current === generation) {
+                isYoutubeRecoveryRunningRef.current = false;
+              }
+            }
+
+            if (playGenRef.current === generation && currentTrackRef.current?.id === t.id) {
+              showStatus('This upload cannot play inside apps. Tap ⋯ then Open in YouTube to verify access.', 7000);
+            }
+            return;
+          }
+
+          // Error 5 is an HTML5 playback failure rather than an age gate. Keep
+          // the existing audio-only recovery for that specific failure.
+          if (errorCode === 5) {
+            const recoveryTrack =
+              failedId === t.youtubeId ? t : { ...t, youtubeId: failedId };
+            const recovered = await fallbackToStreamRef.current(recoveryTrack, true);
+            if (!recovered && playGenRef.current === generation) {
+              showStatus('This song could not start. Please try it again.', 5000);
+            }
+            return;
+          }
+
+          showStatus('This song is not available for in-app playback.', 5000);
         },
       },
     });
@@ -741,6 +797,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const tag = document.createElement('script');
         tag.src = 'https://www.youtube.com/iframe_api';
         tag.dataset.ytIframe = '1';
+        tag.referrerPolicy = 'strict-origin-when-cross-origin';
         document.head.appendChild(tag);
       }
     });
@@ -773,6 +830,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // ignore
       }
       if (playGenRef.current !== currentGen) return;
+      activeYoutubeIdRef.current = track.youtubeId || null;
       yt.loadVideoById({
         videoId: track.youtubeId,
         startSeconds: startTime > 0 ? startTime : 0,
@@ -863,10 +921,24 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         audioModeTrackIdRef.current === track.id &&
         !getOfflinePlaybackUrl(track.id)
       ) {
+        const retryCount = streamRetryCountRef.current.get(track.id) || 0;
+        if (retryCount >= 1) {
+          audioModeTrackIdRef.current = null;
+          setIsPlaying(false);
+          showStatus('This song could not start. Please try another upload.', 5000);
+          return;
+        }
+        streamRetryCountRef.current.set(track.id, retryCount + 1);
+        const streamYoutubeId = activeYoutubeIdRef.current || track.youtubeId;
         audioModeTrackIdRef.current = null;
-        streamUrlCacheRef.current.delete(track.youtubeId);
-        dropCachedStreamUrl(track.youtubeId);
-        fallbackToStreamRef.current(track, true);
+        streamUrlCacheRef.current.delete(streamYoutubeId);
+        dropCachedStreamUrl(streamYoutubeId);
+        fallbackToStreamRef.current(
+          streamYoutubeId === track.youtubeId
+            ? track
+            : { ...track, youtubeId: streamYoutubeId },
+          true
+        );
       }
     };
 
@@ -1135,6 +1207,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const stopAllPlayback = () => {
     playGenRef.current += 1;
+    activeYoutubeIdRef.current = null;
+    isYoutubeRecoveryRunningRef.current = false;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.removeAttribute('src');
@@ -1176,6 +1250,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const startTrack = (track: Track, startTime = 0) => {
     stopAllPlayback();
     const currentGen = playGenRef.current;
+    failedYoutubeIdsRef.current.clear();
+    streamRetryCountRef.current.delete(track.id);
+    activeYoutubeIdRef.current = track.youtubeId || null;
     registerTrack(track);
     setRecentlyPlayed(prev => {
       const updated = [track, ...prev.filter(t => t.id !== track.id)].slice(0, 50);

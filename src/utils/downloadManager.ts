@@ -153,6 +153,72 @@ async function resolveFromCobalt(youtubeId: string): Promise<string> {
 }
 
 const YTM_API_KEY = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30';
+const YOUTUBE_APP_ORIGIN = 'https://com.frf.music';
+
+class AgeRestrictedPlaybackError extends Error {
+  constructor() {
+    super('This video requires age verification on YouTube');
+    this.name = 'AgeRestrictedPlaybackError';
+  }
+}
+
+const restrictionCheckCache = new Map<string, boolean>();
+
+function isAgeRestrictedPlayerResponse(data: any): boolean {
+  const status = String(data?.playabilityStatus?.status || '').toLowerCase();
+  const details = JSON.stringify(data?.playabilityStatus || {}).toLowerCase();
+  return (
+    status === 'age_check_required' ||
+    details.includes('confirm your age') ||
+    details.includes('age-restricted') ||
+    details.includes('age restricted')
+  );
+}
+
+async function assertNotAgeRestricted(youtubeId: string): Promise<void> {
+  if (restrictionCheckCache.get(youtubeId) === true) {
+    throw new AgeRestrictedPlaybackError();
+  }
+  if (restrictionCheckCache.get(youtubeId) === false) return;
+
+  try {
+    const data = await httpPostJson(
+      USE_YT_PROXY
+        ? '/api/youtubei/player?prettyPrint=false'
+        : `https://www.youtube.com/youtubei/v1/player?key=${YTM_API_KEY}&prettyPrint=false`,
+      {
+        context: {
+          client: {
+            clientName: 'WEB_EMBEDDED_PLAYER',
+            clientVersion: '1.20240801.01.00',
+            hl: 'en',
+            gl: 'US',
+          },
+          thirdParty: { embedUrl: YOUTUBE_APP_ORIGIN },
+        },
+        videoId: youtubeId,
+      },
+      3000,
+      {
+        'X-YouTube-Client-Name': '56',
+        'X-YouTube-Client-Version': '1.20240801.01.00',
+        Origin: YOUTUBE_APP_ORIGIN,
+        Referer: `${YOUTUBE_APP_ORIGIN}/`,
+      }
+    );
+
+    if (isAgeRestrictedPlayerResponse(data)) {
+      restrictionCheckCache.set(youtubeId, true);
+      throw new AgeRestrictedPlaybackError();
+    }
+    if (data?.playabilityStatus?.status === 'OK') {
+      restrictionCheckCache.set(youtubeId, false);
+    }
+  } catch (error) {
+    if (error instanceof AgeRestrictedPlaybackError) throw error;
+    // A failed preflight must not make an otherwise playable song unavailable.
+  }
+}
 
 async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promise<string> {
   const playerUrl = USE_YT_PROXY
@@ -174,23 +240,18 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
           gl: 'US',
         },
         thirdParty: {
-          embedUrl: 'https://www.youtube.com',
-        },
-        user: {
-          lockedSafetyMode: false,
+          embedUrl: YOUTUBE_APP_ORIGIN,
         },
       },
       videoId: youtubeId,
-      contentCheckOk: true,
-      racyCheckOk: true,
     },
     3000,
     {
       'User-Agent': client.userAgent,
       'X-YouTube-Client-Name': client.clientId,
       'X-YouTube-Client-Version': client.clientVersion,
-      Origin: 'https://music.youtube.com',
-      Referer: 'https://music.youtube.com/',
+      Origin: YOUTUBE_APP_ORIGIN,
+      Referer: `${YOUTUBE_APP_ORIGIN}/`,
     }
   );
 
@@ -207,46 +268,14 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
 
 async function resolveFromInnerTube(youtubeId: string): Promise<string> {
   const clients = [
-    // 1. TV HTML5 Simply Embedded Player - specifically has NO age restriction enforcement
-    {
-      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-      clientVersion: '2.0',
-      userAgent: 'Mozilla/5.0 (PlayStation 4 5.05) AppleWebKit/537.78 (KHTML, like Gecko)',
-      clientId: '85',
-    },
-    // 2. Android VR (Oculus Quest 3) - high reliability direct stream
-    {
-      clientName: 'ANDROID_VR',
-      clientVersion: '1.60.19',
-      deviceMake: 'Oculus',
-      deviceModel: 'Quest 3',
-      osName: 'Android',
-      osVersion: '12',
-      userAgent: 'Mozilla/5.0 (Linux; Android 12; Quest 3) AppleWebKit/537.36 (KHTML, like Gecko) OculusBrowser/32.0.0.0.0 Safari/537.36',
-      clientId: '28',
-    },
-    // 3. Media Connect embed client
-    {
-      clientName: 'MEDIA_CONNECT',
-      clientVersion: '1.0',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-      clientId: '74',
-    },
-    // 4. Android TestSuite
-    {
-      clientName: 'ANDROID_TESTSUITE',
-      clientVersion: '1.9',
-      userAgent: 'com.google.android.youtube.testsuite/1.9 (Linux; U; Android 14; en_US)',
-      clientId: '89',
-    },
-    // 5. Android Music
+    // Standard YouTube Music and embedded-player clients. These requests do
+    // not opt out of YouTube's content or age checks.
     {
       clientName: 'ANDROID_MUSIC',
       clientVersion: '6.40.52',
       userAgent: 'com.google.android.apps.youtube.music/6.40.52 (Linux; U; Android 14; en_US) gzip',
       clientId: '21',
     },
-    // 6. Web Embedded Player
     {
       clientName: 'WEB_EMBEDDED_PLAYER',
       clientVersion: '1.20240801.01.00',
@@ -292,6 +321,7 @@ async function resolveFromInvidious(
 const inflightResolves = new Map<string, Promise<string>>();
 
 async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string> {
+  await assertNotAgeRestricted(youtubeId);
   try {
     return await raceFirstUrl([
       () => resolveFromInnerTube(youtubeId),
