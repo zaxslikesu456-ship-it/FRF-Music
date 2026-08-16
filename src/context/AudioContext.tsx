@@ -162,6 +162,7 @@ const DEFAULT_SETTINGS: SettingsState = {
   downloadQuality: 'high',
   sleepTimerMinutes: 0,
   backgroundPlayback: true,
+  youtubeMiniPlayer: false,
   showPlayCounts: true,
   profileName: 'Music Lover',
   profileAvatar: null,
@@ -856,7 +857,15 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const positionMiniPlayer = () => {
       const player = document.getElementById('yt-hidden-player');
       if (!player) return;
-      if (!currentTrack?.isYouTube || needsLoadRef.current) {
+      if (!currentTrack?.isYouTube || needsLoadRef.current || !settings.youtubeMiniPlayer) {
+        if (currentTrack?.isYouTube && !needsLoadRef.current && !settings.youtubeMiniPlayer) {
+          try {
+            ytPlayerRef.current?.pauseVideo?.();
+          } catch {
+            // ignore
+          }
+          setIsPlaying(false);
+        }
         player.setAttribute('aria-hidden', 'true');
         player.style.cssText =
           'position:fixed;left:-10000px;top:0;width:200px;height:200px;opacity:0;pointer-events:none;z-index:-1;border:0;';
@@ -879,7 +888,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       observer.disconnect();
       window.removeEventListener('resize', positionMiniPlayer);
     };
-  }, [currentTrack?.id, currentTrack?.isYouTube, currentTrack?.title, isPlayerOpen]);
+  }, [currentTrack?.id, currentTrack?.isYouTube, currentTrack?.title, isPlayerOpen, settings.youtubeMiniPlayer]);
 
   const startIframe = async (track: Track, startTime = 0) => {
     const currentGen = playGenRef.current;
