@@ -71,6 +71,7 @@ export const LibraryView: React.FC = () => {
     hideArtist,
     reorderPlaylistTracks,
     removeTrackFromPlaylist,
+    addTrackToPlaylist,
     settings,
   } = useAudio();
 
@@ -204,6 +205,7 @@ export const LibraryView: React.FC = () => {
           tracks={plTracks}
           onBack={back}
           playlistId={pl.id}
+          onAddTrack={t => addTrackToPlaylist(pl.id, t)}
           onRemoveTrack={trackId => removeTrackFromPlaylist(pl.id, trackId)}
           onDownloadAll={() => downloadPlaylist(pl.name, plTracks)}
           onMoveTrack={(from, to) => reorderPlaylistTracks(pl.id, from, to)}
