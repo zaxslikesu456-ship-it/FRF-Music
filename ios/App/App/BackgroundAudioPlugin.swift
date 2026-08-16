@@ -13,7 +13,6 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise)
     ]
 
-    private var silentPlayer: AVAudioPlayer?
     private var isConfigured = false
 
     public override func load() {
@@ -26,62 +25,12 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             try AVAudioSession.sharedInstance().setCategory(
                 .playback,
                 mode: .default,
-                options: [.allowAirPlay, .allowBluetooth, .allowBluetoothA2DP]
+                options: [.mixWithOthers, .allowAirPlay, .allowBluetooth, .allowBluetoothA2DP]
             )
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("BackgroundAudioPlugin AudioSession setup error: \(error)")
         }
-    }
-
-    private func setupSilentPlayer() {
-        if silentPlayer != nil { return }
-        
-        guard let silentData = createSilentWavData() else { return }
-        do {
-            silentPlayer = try AVAudioPlayer(data: silentData)
-            silentPlayer?.numberOfLoops = -1
-            silentPlayer?.volume = 0.001
-            silentPlayer?.prepareToPlay()
-        } catch {
-            print("BackgroundAudioPlugin silent player error: \(error)")
-        }
-    }
-
-    private func createSilentWavData() -> Data? {
-        let sampleRate: Int32 = 44100
-        let numChannels: Int16 = 2
-        let bitsPerSample: Int16 = 16
-        let durationSeconds: Int32 = 1
-        let numSamples = sampleRate * durationSeconds
-        let subChunk2Size = numSamples * Int32(numChannels * (bitsPerSample / 8))
-        let chunkSize = 36 + subChunk2Size
-
-        var data = Data()
-        data.append(contentsOf: "RIFF".utf8)
-        var cs = chunkSize
-        data.append(Data(bytes: &cs, count: 4))
-        data.append(contentsOf: "WAVE".utf8)
-        data.append(contentsOf: "fmt ".utf8)
-        var sc1s: Int32 = 16
-        data.append(Data(bytes: &sc1s, count: 4))
-        var audioFormat: Int16 = 1
-        data.append(Data(bytes: &audioFormat, count: 2))
-        var nc = numChannels
-        data.append(Data(bytes: &nc, count: 2))
-        var sr = sampleRate
-        data.append(Data(bytes: &sr, count: 4))
-        var byteRate = sampleRate * Int32(numChannels * (bitsPerSample / 8))
-        data.append(Data(bytes: &byteRate, count: 4))
-        var blockAlign: Int16 = numChannels * (bitsPerSample / 8)
-        data.append(Data(bytes: &blockAlign, count: 2))
-        var bps = bitsPerSample
-        data.append(Data(bytes: &bps, count: 2))
-        data.append(contentsOf: "data".utf8)
-        var sc2s = subChunk2Size
-        data.append(Data(bytes: &sc2s, count: 4))
-        data.append(Data(repeating: 0, count: Int(subChunk2Size)))
-        return data
     }
 
     private func setupRemoteCommandCenter() {
@@ -132,8 +81,6 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc public func start(_ call: CAPPluginCall) {
         setupAudioSession()
-        setupSilentPlayer()
-        silentPlayer?.play()
 
         let title = call.getString("title", "")
         let artist = call.getString("artist", "")
@@ -161,16 +108,6 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let duration = call.getDouble("duration", 0.0)
         let position = call.getDouble("position", 0.0)
 
-        if isPlaying {
-            setupAudioSession()
-            setupSilentPlayer()
-            if silentPlayer?.isPlaying == false {
-                silentPlayer?.play()
-            }
-        } else {
-            silentPlayer?.pause()
-        }
-
         updateNowPlaying(
             title: title,
             artist: artist,
@@ -183,7 +120,6 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc public func stop(_ call: CAPPluginCall) {
-        silentPlayer?.stop()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         call.resolve()
     }

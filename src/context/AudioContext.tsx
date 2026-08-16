@@ -1060,17 +1060,6 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
       yt.playVideo();
       setIsPlaying(true);
-
-      // Auto-fallback watchdog for age-restricted / embed-blocked tracks
-      setTimeout(() => {
-        if (
-          playGenRef.current === currentGen &&
-          currentTrackRef.current?.id === track.id &&
-          !hasPlayedRef.current
-        ) {
-          void fallbackToStreamRef.current(track, true);
-        }
-      }, 2000);
     }
   };
 
@@ -1116,14 +1105,6 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     audioModeTrackIdRef.current = track.id;
     const audio = audioRef.current;
-    try {
-      globalEqualizer.init(audio);
-      if (settings.equalizer) {
-        globalEqualizer.update(settings.equalizer);
-      }
-    } catch {
-      // ignore
-    }
     audio.src = url;
     audio.volume = volumeRef.current;
     if (startTime > 0) {
