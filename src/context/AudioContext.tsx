@@ -525,7 +525,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     ytPlayerRef.current = new window.YT.Player('yt-hidden-player', {
       height: '160',
       width: '240',
-      host: 'https://www.youtube-nocookie.com',
+      host: 'https://www.youtube.com',
       playerVars: {
         autoplay: 1,
         controls: 0,
@@ -534,7 +534,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         rel: 0,
         enablejsapi: 1,
         playsinline: 1,
-        origin: typeof window !== 'undefined' ? window.location.origin : 'https://localhost',
+        origin: window.location.origin,
       },
       events: {
         onReady: () => {
