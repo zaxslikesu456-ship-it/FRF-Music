@@ -131,13 +131,17 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
       <TrackOptionsMenuModal track={menuTrack} onClose={() => setMenuTrack(null)} />
 
       {/* Header */}
-      <div className="relative pt-4 pb-6 px-5">
-        <button onClick={onBack} className="p-2 text-app-primary cursor-pointer" title="Back">
-          <ChevronLeft className="w-7 h-7" />
+      <div className="relative pt-[calc(max(env(safe-area-inset-top,0px),48px)+12px)] pb-6 px-5 select-none">
+        <button
+          onClick={onBack}
+          className="absolute top-[calc(max(env(safe-area-inset-top,0px),48px)+12px)] left-5 p-2.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 text-app-primary cursor-pointer transition-all shadow-md backdrop-blur-md z-10"
+          title="Back"
+        >
+          <ChevronLeft className="w-6 h-6 stroke-[2.5]" />
         </button>
 
-        <div className="flex flex-col items-center pt-4">
-          <div className="w-36 h-36 rounded-full bg-app-card overflow-hidden shadow-2xl">
+        <div className="flex flex-col items-center pt-2">
+          <div className="w-36 h-36 rounded-full bg-app-card overflow-hidden shadow-2xl border border-white/10">
             {allTracks[0]?.coverUrl && (
               <img
                 src={allTracks[0].coverUrl}
@@ -155,10 +159,10 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
 
         {/* Action Row */}
         <div className="flex items-center justify-center gap-10 pt-6">
-          <button onClick={handlePlayAll} className="p-2 text-app-primary cursor-pointer hover:scale-110 transition-transform" title="Play All">
-            <Play className="w-7 h-7 fill-current" />
+          <button onClick={handlePlayAll} className="p-3 rounded-full bg-white text-black hover:scale-110 active:scale-95 transition-transform shadow-lg" title="Play All">
+            <Play className="w-6 h-6 fill-current ml-0.5" />
           </button>
-          <button onClick={handleShuffle} className="p-2 text-app-primary cursor-pointer hover:scale-110 transition-transform" title="Shuffle">
+          <button onClick={handleShuffle} className="p-3 text-app-primary cursor-pointer hover:scale-110 active:scale-95 transition-transform" title="Shuffle">
             <Shuffle className="w-6 h-6" />
           </button>
         </div>

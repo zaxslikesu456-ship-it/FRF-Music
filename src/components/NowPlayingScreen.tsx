@@ -19,6 +19,11 @@ import {
   Loader2,
   X,
   Sliders,
+  Video as VideoIcon,
+  Volume,
+  Volume1,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
@@ -28,6 +33,8 @@ interface SyncedLine {
   time: number;
   text: string;
 }
+
+export type PlayerCenterMode = 'artwork' | 'lyrics' | 'video';
 
 const parseLrc = (lrcString: string): SyncedLine[] => {
   if (!lrcString) return [];
@@ -79,23 +86,34 @@ export const NowPlayingScreen: React.FC = () => {
     reorderQueue,
     isResolvingStream,
     setIsEqualizerOpen,
+    volume,
+    setVolume,
   } = useAudio();
+
+  const lastNonZeroVolumeRef = useRef<number>(volume || 0.8);
+  useEffect(() => {
+    if (volume > 0) {
+      lastNonZeroVolumeRef.current = volume;
+    }
+  }, [volume]);
 
   const [showQueueOverlay, setShowQueueOverlay] = useState(false);
   const [dragTime, setDragTime] = useState<number | null>(null);
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
-  const [showLyrics, setShowLyrics] = useState(false);
+  const [centerMode, setCenterMode] = useState<PlayerCenterMode>('artwork');
   const [rawLyrics, setRawLyrics] = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
 
   const activeLyricRef = useRef<HTMLParagraphElement | null>(null);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
-  const touchX = useRef<number | null>(null);
+  const videoSlotRef = useRef<HTMLDivElement | null>(null);
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
 
   // Fetch lyrics when track changes or user opens lyrics view
   useEffect(() => {
-    if (!showLyrics || !currentTrack) return;
+    if (centerMode !== 'lyrics' || !currentTrack) return;
     let mounted = true;
     setLyricsLoading(true);
     setRawLyrics(null);
@@ -108,7 +126,56 @@ export const NowPlayingScreen: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [showLyrics, currentTrack]);
+  }, [centerMode, currentTrack]);
+
+  // Position YouTube player element over the video slot when in Video view mode
+  useEffect(() => {
+    const ytEl = document.getElementById('yt-hidden-player');
+    if (!ytEl) return;
+
+    if (centerMode === 'video' && videoSlotRef.current && isPlayerOpen) {
+      const updatePosition = () => {
+        if (!videoSlotRef.current) return;
+        const rect = videoSlotRef.current.getBoundingClientRect();
+        ytEl.style.position = 'fixed';
+        ytEl.style.left = `${rect.left}px`;
+        ytEl.style.top = `${rect.top}px`;
+        ytEl.style.width = `${rect.width}px`;
+        ytEl.style.height = `${rect.height}px`;
+        ytEl.style.opacity = '1';
+        ytEl.style.pointerEvents = 'auto';
+        ytEl.style.zIndex = '50';
+        ytEl.style.borderRadius = '1rem';
+        ytEl.style.overflow = 'hidden';
+      };
+
+      updatePosition();
+      const interval = setInterval(updatePosition, 250);
+      window.addEventListener('resize', updatePosition);
+
+      return () => {
+        clearInterval(interval);
+        window.removeEventListener('resize', updatePosition);
+        ytEl.style.position = 'fixed';
+        ytEl.style.left = '-10000px';
+        ytEl.style.top = '0';
+        ytEl.style.width = '200px';
+        ytEl.style.height = '200px';
+        ytEl.style.opacity = '0';
+        ytEl.style.pointerEvents = 'none';
+        ytEl.style.zIndex = '-1';
+      };
+    } else {
+      ytEl.style.position = 'fixed';
+      ytEl.style.left = '-10000px';
+      ytEl.style.top = '0';
+      ytEl.style.width = '200px';
+      ytEl.style.height = '200px';
+      ytEl.style.opacity = '0';
+      ytEl.style.pointerEvents = 'none';
+      ytEl.style.zIndex = '-1';
+    }
+  }, [centerMode, isPlayerOpen]);
 
   // Parse timed LRC synced lines
   const syncedLyrics = useMemo(() => {
@@ -132,13 +199,13 @@ export const NowPlayingScreen: React.FC = () => {
 
   // Auto-scroll active lyric line to center smoothly
   useEffect(() => {
-    if (showLyrics && activeLyricRef.current) {
+    if (centerMode === 'lyrics' && activeLyricRef.current) {
       activeLyricRef.current.scrollIntoView({
         behavior: 'smooth',
         block: 'center',
       });
     }
-  }, [activeLyricIndex, showLyrics]);
+  }, [activeLyricIndex, centerMode]);
 
   if (!isPlayerOpen || !currentTrack) return null;
 
@@ -184,14 +251,28 @@ export const NowPlayingScreen: React.FC = () => {
       <div
         className="relative flex flex-col flex-1 overflow-hidden px-6 pb-6"
         onTouchStart={e => {
-          touchX.current = e.touches[0].clientX;
+          touchStartX.current = e.touches[0].clientX;
+          touchStartY.current = e.touches[0].clientY;
         }}
         onTouchEnd={e => {
-          if (touchX.current === null) return;
-          const dx = e.changedTouches[0].clientX - touchX.current;
-          touchX.current = null;
-          if (dx < -60) setShowLyrics(true);
-          if (dx > 60) setShowLyrics(false);
+          if (touchStartX.current === null || touchStartY.current === null) return;
+          const dx = e.changedTouches[0].clientX - touchStartX.current;
+          const dy = e.changedTouches[0].clientY - touchStartY.current;
+          touchStartX.current = null;
+          touchStartY.current = null;
+
+          // Horizontal swipe navigation (Artwork <-> Lyrics <-> Video)
+          if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.1) {
+            if (dx < 0) {
+              // Swipe Left: Advance from Artwork -> Lyrics -> Video
+              if (centerMode === 'artwork') setCenterMode('lyrics');
+              else if (centerMode === 'lyrics') setCenterMode('video');
+            } else {
+              // Swipe Right: Return from Video -> Lyrics -> Artwork
+              if (centerMode === 'video') setCenterMode('lyrics');
+              else if (centerMode === 'lyrics') setCenterMode('artwork');
+            }
+          }
         }}
       >
         {/* Top Navigation Header */}
@@ -251,13 +332,38 @@ export const NowPlayingScreen: React.FC = () => {
           </div>
         </div>
 
-        {/* Main Center Section: Artwork or Synchronized Animated Lyrics */}
-        {showLyrics ? (
+        {/* 3-View Mode Dots Indicator (Artwork • Lyrics • Video) */}
+        <div className="flex items-center justify-center gap-2 py-1">
+          <button
+            onClick={() => setCenterMode('artwork')}
+            className={`h-1.5 rounded-full transition-all duration-300 ${
+              centerMode === 'artwork' ? 'w-6 bg-white' : 'w-1.5 bg-white/20 hover:bg-white/50'
+            }`}
+            title="Artwork"
+          />
+          <button
+            onClick={() => setCenterMode('lyrics')}
+            className={`h-1.5 rounded-full transition-all duration-300 ${
+              centerMode === 'lyrics' ? 'w-6 bg-white' : 'w-1.5 bg-white/20 hover:bg-white/50'
+            }`}
+            title="Lyrics"
+          />
+          <button
+            onClick={() => setCenterMode('video')}
+            className={`h-1.5 rounded-full transition-all duration-300 ${
+              centerMode === 'video' ? 'w-6 bg-white' : 'w-1.5 bg-white/20 hover:bg-white/50'
+            }`}
+            title="Video"
+          />
+        </div>
+
+        {/* Main Center Section: Artwork | Synchronized Lyrics | Live YouTube Video */}
+        {centerMode === 'lyrics' ? (
           <div
             ref={lyricsContainerRef}
-            className="flex-1 min-h-0 overflow-y-auto w-full py-6 no-scrollbar space-y-5 px-2"
+            className="flex-1 min-h-0 overflow-y-auto w-full py-4 no-scrollbar space-y-5 px-2 animate-in fade-in duration-200"
           >
-            <p className="text-center text-xs text-app-secondary pb-2 tracking-wide uppercase">
+            <p className="text-center text-xs text-app-secondary pb-1 tracking-wide uppercase">
               Synced Lyrics • Tap line to jump
             </p>
 
@@ -301,14 +407,38 @@ export const NowPlayingScreen: React.FC = () => {
               </div>
             )}
           </div>
+        ) : centerMode === 'video' ? (
+          <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0 animate-in fade-in duration-200">
+            <div
+              ref={videoSlotRef}
+              id="now-playing-video-slot"
+              className="w-full max-w-[360px] aspect-video rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-black relative flex items-center justify-center"
+            >
+              {/* Fallback poster while video stream positions */}
+              <img
+                src={currentTrack.coverUrl}
+                alt=""
+                className="w-full h-full object-cover opacity-30"
+              />
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center pointer-events-none">
+                <VideoIcon className="w-8 h-8 text-app-primary opacity-80" />
+                <span className="text-xs text-app-secondary">
+                  Live YouTube Video Player
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-app-secondary/60 mt-3 text-center">
+              Swipe right to return to lyrics or cover art
+            </p>
+          </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0">
+          <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0 animate-in fade-in duration-200">
             <div className="relative w-full max-w-[320px] aspect-square rounded-2xl overflow-hidden shadow-2xl border border-white/10 group">
               <img
                 src={currentTrack.coverUrl}
                 alt={currentTrack.title}
                 className={`w-full h-full object-cover transition-all duration-700 ${
-                  isPlaying ? 'scale-100 shadow-purple-500/30' : 'scale-95 opacity-90'
+                  isPlaying ? 'scale-100' : 'scale-95 opacity-90'
                 }`}
               />
               <div className="absolute inset-0 ring-1 ring-inset ring-white/10 rounded-2xl pointer-events-none" />
@@ -352,14 +482,26 @@ export const NowPlayingScreen: React.FC = () => {
               <ListPlus className="w-6 h-6" />
             </button>
 
+            {/* Lyrics Button */}
             <button
-              onClick={() => setShowLyrics(v => !v)}
+              onClick={() => setCenterMode(m => (m === 'lyrics' ? 'artwork' : 'lyrics'))}
               className={`p-2 transition-transform active:scale-95 ${
-                showLyrics ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
+                centerMode === 'lyrics' ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
               }`}
               title="Toggle Lyrics"
             >
               <Mic className="w-6 h-6" />
+            </button>
+
+            {/* Video Button */}
+            <button
+              onClick={() => setCenterMode(m => (m === 'video' ? 'artwork' : 'video'))}
+              className={`p-2 transition-transform active:scale-95 ${
+                centerMode === 'video' ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
+              }`}
+              title="Toggle Video"
+            >
+              <VideoIcon className="w-6 h-6" />
             </button>
 
             <button
@@ -445,6 +587,47 @@ export const NowPlayingScreen: React.FC = () => {
           >
             <Shuffle className="w-6 h-6" />
           </button>
+        </div>
+
+        {/* Mobile Volume Slider Bar */}
+        <div className="flex items-center gap-3 pt-3 px-1 select-none">
+          <button
+            onClick={() => {
+              if (volume > 0) {
+                lastNonZeroVolumeRef.current = volume;
+                setVolume(0);
+              } else {
+                setVolume(lastNonZeroVolumeRef.current || 0.8);
+              }
+            }}
+            className="p-1.5 text-app-secondary hover:text-app-primary active:scale-95 transition-all"
+            title={volume === 0 ? 'Unmute' : 'Mute'}
+          >
+            {volume === 0 ? (
+              <VolumeX className="w-5 h-5 text-red-400" />
+            ) : volume < 0.35 ? (
+              <Volume className="w-5 h-5" />
+            ) : volume < 0.7 ? (
+              <Volume1 className="w-5 h-5" />
+            ) : (
+              <Volume2 className="w-5 h-5" />
+            )}
+          </button>
+
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={e => setVolume(parseFloat(e.target.value))}
+            className="flex-1 accent-[var(--text-primary)] accent-white h-1.5 rounded-lg cursor-pointer bg-app-card"
+            title={`Volume: ${Math.round(volume * 100)}%`}
+          />
+
+          <span className="text-[11px] font-mono text-app-secondary w-9 text-right shrink-0">
+            {Math.round(volume * 100)}%
+          </span>
         </div>
       </div>
 

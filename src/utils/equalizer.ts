@@ -189,11 +189,11 @@ export class WebAudioEqualizer {
       }
     });
 
-    // Apply Bass Boost (scale 0-10 -> 0-10dB)
+    // Apply Bass Boost (scale 0-10 -> up to +18dB deep bass)
     if (this.bassBoostNode) {
-      const targetBass = isEnabled ? (settings.bassBoost || 0) * 1.0 : 0;
+      const targetBass = isEnabled ? (settings.bassBoost || 0) * 1.8 : 0;
       try {
-        this.bassBoostNode.gain.setTargetAtTime(targetBass, now, 0.05);
+        this.bassBoostNode.gain.setTargetAtTime(targetBass, now, 0.03);
       } catch {
         this.bassBoostNode.gain.value = targetBass;
       }
