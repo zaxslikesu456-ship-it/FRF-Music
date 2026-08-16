@@ -12,6 +12,7 @@ import {
   Trash2,
   Timer,
   LibraryBig,
+  Sliders,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import type {
@@ -94,6 +95,7 @@ export const SettingsView: React.FC = () => {
     restoreHiddenArtists,
     exportLibrary,
     importLibrary,
+    setIsEqualizerOpen,
   } = useAudio();
 
   const [open, setOpen] = useState<Section | null>(null);
@@ -389,6 +391,27 @@ export const SettingsView: React.FC = () => {
                           }
                         />
                       </Row>
+                      <div className="py-2">
+                        <button
+                          onClick={() => setIsEqualizerOpen(true)}
+                          className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-app-card border border-app-theme text-left hover:scale-[1.01] active:scale-98 transition-all"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-xl bg-app-surface border border-app-theme text-app-primary">
+                              <Sliders className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-base font-semibold text-app-primary">Equalizer & Sound FX</p>
+                              <p className="text-xs text-app-secondary">
+                                {settings.equalizer?.enabled ? `Enabled • ${settings.equalizer?.preset.toUpperCase()}` : 'Bypassed'}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-xs font-semibold px-3 py-1.5 rounded-full bg-app-highlight text-app-inverse">
+                            Tune
+                          </span>
+                        </button>
+                      </div>
                       <p className="text-sm text-app-secondary pt-4 pb-1 flex items-center gap-2">
                         <Timer className="w-4 h-4" />
                         SLEEP TIMER

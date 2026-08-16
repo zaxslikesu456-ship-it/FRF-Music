@@ -18,6 +18,7 @@ import {
   ArrowDown,
   Loader2,
   X,
+  Sliders,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
@@ -77,6 +78,7 @@ export const NowPlayingScreen: React.FC = () => {
     openArtistProfile,
     reorderQueue,
     isResolvingStream,
+    setIsEqualizerOpen,
   } = useAudio();
 
   const [showQueueOverlay, setShowQueueOverlay] = useState(false);
@@ -207,6 +209,15 @@ export const NowPlayingScreen: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1">
+            {/* Equalizer & Sound FX */}
+            <button
+              onClick={() => setIsEqualizerOpen(true)}
+              className="p-2 text-app-secondary hover:text-app-primary hover:scale-105 active:scale-95 transition-all"
+              title="Equalizer & Sound FX"
+            >
+              <Sliders className="w-5 h-5" />
+            </button>
+
             {/* 3 Lines Icon (Toggles Overlay Queue Sheet) */}
             <button
               onClick={() => setShowQueueOverlay(v => !v)}

@@ -10,8 +10,18 @@ import { ArtistDetailView } from './ArtistDetailView';
 import { AnimatedBackground } from './AnimatedBackground';
 import { useAudio } from '../context/AudioContext';
 
+import { EqualizerModal } from './EqualizerModal';
+
 export const AndroidFrame: React.FC = () => {
-  const { activeTab, settings, downloadStatus, artistProfileName, closeArtistProfile } = useAudio();
+  const {
+    activeTab,
+    settings,
+    downloadStatus,
+    artistProfileName,
+    closeArtistProfile,
+    isEqualizerOpen,
+    setIsEqualizerOpen,
+  } = useAudio();
 
   const getFontClass = () => {
     if (settings.fontStyle === 'mono') return 'font-mono';
@@ -67,6 +77,12 @@ export const AndroidFrame: React.FC = () => {
 
       {/* Full Screen Player Modal */}
       <NowPlayingScreen />
+
+      {/* Studio Equalizer & Sound FX Modal */}
+      <EqualizerModal
+        isOpen={isEqualizerOpen}
+        onClose={() => setIsEqualizerOpen(false)}
+      />
     </div>
   );
 };

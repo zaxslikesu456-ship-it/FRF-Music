@@ -35,6 +35,7 @@ import { SearchView } from './SearchView';
 import { LibraryView } from './LibraryView';
 import { SettingsView } from './SettingsView';
 import { NowPlayingScreen } from './NowPlayingScreen';
+import { EqualizerModal } from './EqualizerModal';
 import type { NavTab } from '../types/music';
 
 const formatTime = (secs: number) => {
@@ -361,6 +362,8 @@ export const DesktopFrame: React.FC = () => {
     renamePlaylist,
     deletePlaylist,
     downloadPlaylist,
+    isEqualizerOpen,
+    setIsEqualizerOpen,
   } = useAudio();
 
   const [sidebarPlaylistId, setSidebarPlaylistId] = useState<string | null>(null);
@@ -524,6 +527,12 @@ export const DesktopFrame: React.FC = () => {
 
       {/* Expanded player still available on desktop */}
       <NowPlayingScreen />
+
+      {/* Studio Equalizer & Sound FX Modal */}
+      <EqualizerModal
+        isOpen={isEqualizerOpen}
+        onClose={() => setIsEqualizerOpen(false)}
+      />
     </div>
   );
 };
