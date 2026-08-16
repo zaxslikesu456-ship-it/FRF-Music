@@ -16,8 +16,8 @@ function getYtmBase() {
 
 function getInvidiousBases() {
   return USE_PROXY
-    ? ['/api/invidious', 'https://inv.nadeko.net/api/v1', 'https://invidious.nerdvpn.de/api/v1', 'https://invidious.private.coffee/api/v1', 'https://yt.artemislena.eu/api/v1']
-    : ['https://inv.nadeko.net/api/v1', 'https://invidious.nerdvpn.de/api/v1', 'https://invidious.private.coffee/api/v1', 'https://yt.artemislena.eu/api/v1', 'https://inv.tux.pizza/api/v1', 'https://invidious.drgns.space/api/v1', 'https://y.com.sb/api/v1'];
+    ? ['/api/invidious', 'https://invidious.nerdvpn.de/api/v1', 'https://invidious.projectsegfau.lt/api/v1']
+    : ['https://invidious.nerdvpn.de/api/v1', 'https://invidious.projectsegfau.lt/api/v1', 'https://inv.nadeko.net/api/v1'];
 }
 
 function raceToSuccess<T>(tasks: Array<() => Promise<T[]>>): Promise<T[]> {
@@ -515,25 +515,32 @@ function parseInnerTubePlaylists(data: any): CommunityPlaylist[] {
       const renderer = entry?.musicResponsiveListItemRenderer;
       if (!renderer) continue;
 
-      const playlistId =
-        renderer.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.playlistId ||
+      const rawBrowseId =
+        renderer.navigationEndpoint?.browseEndpoint?.browseId ||
         renderer.navigationEndpoint?.watchEndpoint?.playlistId ||
+        renderer.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.playlistId ||
+        renderer.doubleTapCommand?.watchEndpoint?.playlistId ||
         '';
+      const cleanId = rawBrowseId.replace(/^VL/, '');
 
-      const titleCol = renderer.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
+      const titleCol =
+        renderer.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.title?.runs ||
+        renderer.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
       const title = titleCol?.[0]?.text || 'Playlist';
 
-      const infoCol = renderer.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
+      const infoCol =
+        renderer.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.title?.runs ||
+        renderer.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
       const author = infoCol?.[0]?.text || 'YouTube Music';
       const songCount = infoCol?.[2]?.text || 'Playlist';
 
       const thumbs = renderer.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-      const coverUrl = thumbs?.[thumbs.length - 1]?.url || thumbs?.[0]?.url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300';
+      const coverUrl = thumbs?.[thumbs.length - 1]?.url || thumbs?.[0]?.url || '';
 
-      if (playlistId) {
+      if (cleanId) {
         playlists.push({
-          id: `yt-playlist-${playlistId}`,
-          browseId: playlistId,
+          id: `yt-playlist-${cleanId}`,
+          browseId: cleanId,
           title,
           author,
           songCount,
@@ -576,10 +583,21 @@ export async function searchYouTubeMusicPlaylists(
     return mapInvidiousPlaylists(items);
   };
 
-  const playlists = await raceToSuccess([
-    fetchInnerTube,
-    ...getInvidiousBases().map(base => () => fetchFrom(base)),
-  ]);
+  let playlists: CommunityPlaylist[] = [];
+  try {
+    playlists = await fetchInnerTube();
+  } catch {
+    // fallback if innertube fails
+    for (const base of getInvidiousBases()) {
+      try {
+        playlists = await fetchFrom(base);
+        if (playlists.length > 0) break;
+      } catch {
+        // continue
+      }
+    }
+  }
+
   if (playlists.length > 0) {
     playlistCache.set(cleanQuery, playlists);
     const session = playlistSearchSessions.get(cleanQuery) || {
@@ -709,7 +727,7 @@ function parseArtistOrAlbumEntries(data: any, kind: 'artist' | 'album') {
       r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails ||
       r.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails ||
       [];
-    const thumbnail = thumbs.length ? thumbs[thumbs.length - 1].url : 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300';
+    const thumbnail = thumbs.length ? thumbs[thumbs.length - 1].url : '';
 
     const browseId =
       r.navigationEndpoint?.browseEndpoint?.browseId ||
@@ -802,14 +820,23 @@ export async function searchYouTubeMusicAlbums(query: string): Promise<AlbumResu
         artist: i.author || 'YouTube Artist',
         coverUrl: i.videos?.[0]?.videoId
           ? `https://i.ytimg.com/vi/${i.videos[0].videoId}/mqdefault.jpg`
-          : 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300',
+          : '',
       }));
   };
 
-  return await raceToSuccess([
-    fetchInnerTube,
-    ...getInvidiousBases().map(b => () => fetchInvidious(b)),
-  ]);
+  try {
+    return await fetchInnerTube();
+  } catch {
+    for (const b of getInvidiousBases()) {
+      try {
+        const res = await fetchInvidious(b);
+        if (res.length > 0) return res;
+      } catch {
+        // continue
+      }
+    }
+    return [];
+  }
 }
 
 export async function searchYouTubeMusicVideos(query: string): Promise<Track[]> {
@@ -833,10 +860,19 @@ export async function searchYouTubeMusicVideos(query: string): Promise<Track[]> 
     return mapInvidiousVideos(items);
   };
 
-  return await raceToSuccess([
-    fetchInnerTube,
-    ...getInvidiousBases().map(b => () => fetchInvidious(b)),
-  ]);
+  try {
+    return await fetchInnerTube();
+  } catch {
+    for (const b of getInvidiousBases()) {
+      try {
+        const res = await fetchInvidious(b);
+        if (res.length > 0) return res;
+      } catch {
+        // continue
+      }
+    }
+    return [];
+  }
 }
 
 export async function fetchYouTubePlaylistTracks(
@@ -850,43 +886,76 @@ export async function fetchYouTubePlaylistTracks(
   }
 
   const fetchInnerTube = async (): Promise<Track[]> => {
-    const browseId = cleanId.startsWith('VL') ? cleanId : `VL${cleanId}`;
+    const browseId = cleanId.startsWith('VL') ? cleanId : (cleanId.startsWith('MPSP') ? cleanId : `VL${cleanId}`);
     const data = await httpPostJson(
       `${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`,
       { ...buildClientContext(), browseId },
-      1500
+      3500
     );
-    const contents =
-      data?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+
+    const sections =
+      data?.contents?.twoColumnBrowseResultsRenderer?.secondaryContents?.sectionListRenderer?.contents ||
+      data?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents ||
+      [];
+
     const tracks: Track[] = [];
     const seen = new Set<string>();
 
-    for (const section of contents) {
+    for (const section of sections) {
       const shelf = section.musicPlaylistShelfRenderer || section.musicShelfRenderer;
       const items = shelf?.contents || [];
+
       for (const entry of items) {
         const r = entry?.musicResponsiveListItemRenderer;
         if (!r) continue;
+
         const videoId =
           r.playlistItemData?.videoId ||
           r.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId ||
+          r.doubleTapCommand?.watchEndpoint?.videoId ||
           '';
+
         if (!videoId || seen.has(videoId)) continue;
         seen.add(videoId);
 
-        const titleCol = r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
+        const titleCol =
+          r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.title?.runs ||
+          r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
         const title = titleCol?.[0]?.text || 'Track';
-        const infoCol = r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
+
+        const infoCol =
+          r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.title?.runs ||
+          r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
         const artist = infoCol?.[0]?.text || 'YouTube Artist';
+
+        const albumCol =
+          r.flexColumns?.[2]?.musicResponsiveListItemFlexColumnRenderer?.title?.runs ||
+          r.flexColumns?.[2]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
+        const album = albumCol?.[0]?.text || 'Community Playlist';
+
+        const durationText =
+          r.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text?.runs?.[0]?.text || '';
+        let duration = 200;
+        if (durationText) {
+          const parts = durationText.split(':').map(Number);
+          if (parts.length === 2) duration = parts[0] * 60 + parts[1];
+          else if (parts.length === 3) duration = parts[0] * 3600 + parts[1] * 60 + parts[2];
+        }
+
+        const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+        const coverUrl =
+          thumbs[thumbs.length - 1]?.url ||
+          thumbs[0]?.url ||
+          `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
 
         tracks.push({
           id: `yt-${videoId}`,
           title,
           artist,
-          album: 'Community Playlist',
-          duration: 200,
+          album,
+          duration,
           url: '',
-          coverUrl: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+          coverUrl,
           isYouTube: true,
           youtubeId: videoId,
           addedAt: Date.now(),
@@ -896,36 +965,45 @@ export async function fetchYouTubePlaylistTracks(
     return tracks;
   };
 
-  const fetchFromInvidious = async (base: string): Promise<Track[]> => {
-    const data = await httpGetJson(`${base}/playlists/${cleanId}`, 1500);
-    const videos = data.videos || [];
-    if (!Array.isArray(videos) || videos.length === 0) return [];
-
-    return videos.map((video: any, idx: number) => {
-      const videoId = video.videoId || `track-${idx}`;
-      return {
-        id: `yt-${videoId}`,
-        title: video.title || 'Playlist Track',
-        artist: video.author || data.author || 'YouTube Artist',
-        album: data.title || 'Community Playlist',
-        duration: video.lengthSeconds || 200,
-        url: '',
-        coverUrl: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-        isYouTube: true,
-        youtubeId: videoId,
-        addedAt: Date.now(),
-      };
-    });
-  };
-
-  const tracks = await raceToSuccess([
-    fetchInnerTube,
-    ...getInvidiousBases().map(base => () => fetchFromInvidious(base)),
-  ]);
-  if (tracks.length > 0) {
-    playlistTracksCache.set(cleanId, tracks);
+  try {
+    const res = await fetchInnerTube();
+    if (res.length > 0) {
+      playlistTracksCache.set(cleanId, res);
+      return res;
+    }
+  } catch {
+    // continue to fallback
   }
-  return tracks;
+
+  for (const base of getInvidiousBases()) {
+    try {
+      const data = await httpGetJson(`${base}/playlists/${cleanId}`, 2500);
+      const videos = data?.videos || [];
+      if (Array.isArray(videos) && videos.length > 0) {
+        const mapped = videos.map((video: any, idx: number) => {
+          const videoId = video.videoId || `track-${idx}`;
+          return {
+            id: `yt-${videoId}`,
+            title: video.title || 'Playlist Track',
+            artist: video.author || data.author || 'YouTube Artist',
+            album: data.title || 'Community Playlist',
+            duration: video.lengthSeconds || 200,
+            url: '',
+            coverUrl: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+            isYouTube: true,
+            youtubeId: videoId,
+            addedAt: Date.now(),
+          };
+        });
+        playlistTracksCache.set(cleanId, mapped);
+        return mapped;
+      }
+    } catch {
+      // try next mirror
+    }
+  }
+
+  return [];
 }
 
 const ALTERNATE_NOISE_WORDS = new Set([
@@ -973,35 +1051,54 @@ function tokenCoverage(wanted: Set<string>, candidate: Set<string>): number {
   return matches / wanted.size;
 }
 
+function cleanTrackTitle(title: string): string {
+  return title
+    .replace(/\s*[\(\[](feat\.?|ft\.?|official|audio|video|lyrics|visualizer|hd|4k|explicit|clean|remastered).*?[\)\]]/gi, '')
+    .trim();
+}
+
+function cleanArtistName(artist: string): string {
+  return artist
+    .replace(/\b(feat\.?|ft\.?|with|and|&|,)\b.*/i, '')
+    .trim();
+}
+
 function alternateRelevance(
   track: Track,
   title: string,
   artist: string,
   expectedDuration?: number
 ): number {
-  const wantedTitle = normalizedSearchTokens(title);
-  const wantedArtist = normalizedSearchTokens(artist);
-  const candidateTitle = normalizedSearchTokens(track.title);
+  const wantedTitle = normalizedSearchTokens(cleanTrackTitle(title));
+  const primaryWantedArtist = normalizedSearchTokens(cleanArtistName(artist));
+  const fullWantedArtist = normalizedSearchTokens(artist);
+
+  const candidateTitle = normalizedSearchTokens(cleanTrackTitle(track.title));
+  const candidateFullTitle = normalizedSearchTokens(track.title);
   const candidateArtist = normalizedSearchTokens(track.artist);
 
   const titleCoverage = tokenCoverage(wantedTitle, candidateTitle);
-  const ownerCoverage = tokenCoverage(wantedArtist, candidateArtist);
-  const artistInTitleCoverage = tokenCoverage(wantedArtist, candidateTitle);
+  const fullTitleCoverage = tokenCoverage(wantedTitle, candidateFullTitle);
+  const bestTitleCoverage = Math.max(titleCoverage, fullTitleCoverage);
+
+  const primaryArtistCoverage = tokenCoverage(primaryWantedArtist, candidateArtist);
+  const artistInTitleCoverage = tokenCoverage(primaryWantedArtist, candidateFullTitle);
+  const fullArtistCoverage = tokenCoverage(fullWantedArtist, candidateArtist);
+  const bestArtistCoverage = Math.max(primaryArtistCoverage, artistInTitleCoverage, fullArtistCoverage);
+
   const candidateLabel = `${track.title} ${track.artist}`.toLowerCase();
-  const looksOfficial = /official audio|official video|provided to youtube|\bvevo\b|\btopic\b|ncs release/.test(
+  const looksOfficial = /\b(official\s+audio|official\s+video|provided\s+to\s+youtube|audio|visualizer|vevo|topic|lyrics|music\s+video|clean)\b/i.test(
     candidateLabel
   );
 
-  // Never substitute a merely similar title. Every meaningful title token
-  // must match, and the uploader must be the artist unless the title itself
-  // names the artist and the upload carries a trusted release marker.
-  if (titleCoverage < 1) return Number.NEGATIVE_INFINITY;
-  if (ownerCoverage < 0.8 && !(artistInTitleCoverage >= 1 && looksOfficial)) {
+  // Must match song title and primary artist
+  if (bestTitleCoverage < 0.75) return Number.NEGATIVE_INFINITY;
+  if (bestArtistCoverage < 0.4 && !looksOfficial) {
     return Number.NEGATIVE_INFINITY;
   }
 
   for (const token of ALTERNATE_NOISE_WORDS) {
-    if (candidateTitle.has(token) && !wantedTitle.has(token)) {
+    if (candidateFullTitle.has(token) && !wantedTitle.has(token)) {
       return Number.NEGATIVE_INFINITY;
     }
   }
@@ -1015,16 +1112,12 @@ function alternateRelevance(
     track.duration !== 200
   ) {
     const difference = Math.abs(track.duration - expectedDuration);
-    const tolerance = Math.max(10, expectedDuration * 0.07);
+    const tolerance = Math.max(15, expectedDuration * 0.15);
     if (difference > tolerance) return Number.NEGATIVE_INFINITY;
     durationScore = 1 - difference / tolerance;
   }
 
-  const identityScore = Math.max(
-    ownerCoverage,
-    looksOfficial ? artistInTitleCoverage * 0.9 : 0
-  );
-  return titleCoverage * 0.45 + identityScore * 0.3 + durationScore * 0.15 + (looksOfficial ? 0.1 : 0);
+  return bestTitleCoverage * 0.45 + bestArtistCoverage * 0.35 + durationScore * 0.1 + (looksOfficial ? 0.1 : 0);
 }
 
 async function filterEmbeddableWithDataApi(tracks: Track[]): Promise<Track[]> {
@@ -1065,25 +1158,58 @@ async function getAlternatePlaybackCandidates(
   const cached = alternatePlaybackCache.get(cacheKey);
   if (cached) return cached;
 
-  const query = `${artist} ${title} official audio`;
-  const htmlResults = await fetchYouTubeHtmlSearch(query).catch(() => []);
-  let pool = htmlResults;
+  const queries = [
+    `${artist} - ${title} Topic`,
+    `${artist} ${title} official audio`,
+    `${artist} ${title} audio`,
+  ];
 
-  // Native YouTube HTML search normally supplies enough regular uploads. If
-  // it does not, add the app's existing video-search providers as a backup.
+  let pool: Track[] = [];
+  const seen = new Set<string>();
+
+  // 1. YouTube Music Official Songs Search (Topic/Clean Audio)
+  try {
+    const ytmSongs = await searchYouTubeMusic(`${artist} ${title}`).catch(() => []);
+    for (const t of ytmSongs) {
+      if (t.youtubeId && !seen.has(t.youtubeId)) {
+        seen.add(t.youtubeId);
+        pool.push(t);
+      }
+    }
+  } catch {
+    // continue
+  }
+
+  // 2. Multi-query search for Topic and Official Audio
+  for (const q of queries) {
+    try {
+      const htmlResults = await fetchYouTubeHtmlSearch(q).catch(() => []);
+      for (const t of htmlResults) {
+        if (t.youtubeId && !seen.has(t.youtubeId)) {
+          seen.add(t.youtubeId);
+          pool.push(t);
+        }
+      }
+      if (pool.length >= 10) break;
+    } catch {
+      // continue
+    }
+  }
+
   if (pool.length < 8) {
-    const providerResults = await searchYouTubeMusicVideos(query).catch(() => []);
-    const seen = new Set(pool.map(track => track.youtubeId).filter(Boolean));
-    pool = [
-      ...pool,
-      ...providerResults.filter(track => track.youtubeId && !seen.has(track.youtubeId)),
-    ];
+    const providerResults = await searchYouTubeMusicVideos(`${artist} ${title}`).catch(() => []);
+    for (const track of providerResults) {
+      if (track.youtubeId && !seen.has(track.youtubeId)) {
+        seen.add(track.youtubeId);
+        pool.push(track);
+      }
+    }
   }
 
   const verified = await filterEmbeddableWithDataApi(pool);
   const ranked = verified
     .map(track => ({ track, score: alternateRelevance(track, title, artist, expectedDuration) }))
-    .filter(candidate => Number.isFinite(candidate.score) && candidate.score >= 0.75)
+    .filter(candidate => Number.isFinite(candidate.score) && candidate.score >= 0.7)
     .sort((a, b) => b.score - a.score)
     .map(candidate => candidate.track);
 
@@ -1095,8 +1221,7 @@ async function getAlternatePlaybackCandidates(
   return ranked;
 }
 
-// Finds another legitimate upload of the same recording. The IFrame Player is
-// still responsible for enforcing the upload's embedding and age rules.
+// Finds another legitimate upload of the same recording (e.g. Official Topic / Clean Audio).
 export async function findBestAlternateVideoId(
   title: string,
   artist: string,
@@ -1114,3 +1239,37 @@ export async function findBestAlternateVideoId(
     return null;
   }
 }
+
+// Directly extracts raw audio stream URL from Invidious/Piped instances (InnerTube Android client)
+// This bypasses 18+ web iframe age restrictions completely and plays directly via iOS native AVPlayer
+export async function fetchDirectAudioStreamUrl(youtubeId: string): Promise<string | null> {
+  if (!youtubeId) return null;
+  const instances = getInvidiousBases();
+
+  for (const base of instances.slice(0, 5)) {
+    try {
+      const url = `${base}/videos/${encodeURIComponent(youtubeId)}`;
+      const data = await httpGetJson(url, 4500);
+
+      if (data && Array.isArray(data.adaptiveFormats)) {
+        const audioFormats = data.adaptiveFormats
+          .filter((f: any) => typeof f.type === 'string' && f.type.startsWith('audio/') && f.url)
+          .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+
+        if (audioFormats.length > 0 && audioFormats[0].url) {
+          return audioFormats[0].url;
+        }
+      }
+
+      if (data && Array.isArray(data.formatStreams) && data.formatStreams.length > 0) {
+        const stream = data.formatStreams.find((s: any) => s.url);
+        if (stream?.url) return stream.url;
+      }
+    } catch {
+      // try next mirror
+    }
+  }
+
+  return null;
+}
+

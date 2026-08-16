@@ -2,12 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Search,
   ChevronLeft,
-  Play,
   Pause,
-  Shuffle,
-  Download,
-  FolderPlus,
   MoreVertical,
+  FolderPlus,
   Loader2,
   X,
 } from 'lucide-react';
@@ -43,7 +40,7 @@ const deriveArtistsFromSongs = (query: string, songs: Track[]): ArtistResult[] =
     } else {
       artistMap.set(name.toLowerCase(), {
         name,
-        thumbnail: s.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300',
+        thumbnail: s.coverUrl || '',
         count: 1,
       });
     }
@@ -68,7 +65,7 @@ const deriveAlbumsFromSongs = (songs: Track[]): AlbumResult[] => {
       albumMap.set(title.toLowerCase(), {
         title,
         artist: s.artist,
-        coverUrl: s.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300',
+        coverUrl: s.coverUrl || '',
       });
     }
   }
@@ -90,7 +87,7 @@ const derivePlaylistsFromSongs = (query: string, songs: Track[]): CommunityPlayl
       title: `${mainArtist} - Top Hits & Essentials`,
       author: mainArtist,
       songCount: `${songs.length} Songs`,
-      coverUrl: songs[0]?.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300',
+      coverUrl: songs[0]?.coverUrl || '',
     },
     {
       id: `derived-pl-2`,
@@ -98,7 +95,7 @@ const derivePlaylistsFromSongs = (query: string, songs: Track[]): CommunityPlayl
       title: `Best of ${query}`,
       author: 'YouTube Music Community',
       songCount: `${Math.min(songs.length, 12)} Songs`,
-      coverUrl: songs[1]?.coverUrl || songs[0]?.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300',
+      coverUrl: songs[1]?.coverUrl || songs[0]?.coverUrl || '',
     },
   ];
 };
@@ -110,11 +107,10 @@ export const SearchView: React.FC = () => {
     playQueue,
     currentTrack,
     isPlaying,
-    togglePlay,
-    downloadTrack,
     downloadPlaylist,
     importPlaylistToLibrary,
     openArtistProfile,
+    addTrackToLibrary,
   } = useAudio();
 
   const [searchMode, setSearchMode] = useState<SearchMode>('results');
@@ -131,7 +127,28 @@ export const SearchView: React.FC = () => {
   const [activeAlbum, setActiveAlbum] = useState<{ title: string; artist: string; tracks: Track[] } | null>(null);
   const [activeCommunityPlaylist, setActiveCommunityPlaylist] = useState<CommunityPlaylist | null>(null);
   const [communityPlaylistTracks, setCommunityPlaylistTracks] = useState<Track[]>([]);
-  const [isLoadingPlaylistTracks, setIsLoadingPlaylistTracks] = useState(false);
+  const [_isLoadingPlaylistTracks, setIsLoadingPlaylistTracks] = useState(false);
+
+  const [communityPlaylistCache, setCommunityPlaylistCache] = useState<Record<string, Track[]>>(() => {
+    try {
+      const saved = localStorage.getItem('bw_music_community_pl_cache_v1');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const updateCommunityPlaylistCache = (plKey: string, updatedTracks: Track[]) => {
+    setCommunityPlaylistCache(prev => {
+      const next = { ...prev, [plKey]: updatedTracks };
+      try {
+        localStorage.setItem('bw_music_community_pl_cache_v1', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   const [loadingMore, setLoadingMore] = useState(false);
   const [noMoreSongs, setNoMoreSongs] = useState(false);
@@ -304,12 +321,35 @@ export const SearchView: React.FC = () => {
 
   const handleOpenCommunityPlaylist = async (pl: CommunityPlaylist) => {
     setActiveCommunityPlaylist(pl);
+    const cacheKey = pl.browseId || pl.id;
+
+    if (communityPlaylistCache[cacheKey] && communityPlaylistCache[cacheKey].length > 0) {
+      setCommunityPlaylistTracks(communityPlaylistCache[cacheKey]);
+      return;
+    }
+
     setIsLoadingPlaylistTracks(true);
     try {
-      const tracks = await fetchYouTubePlaylistTracks(pl.browseId);
+      let tracks: Track[] = [];
+      if (pl.browseId && !pl.browseId.startsWith('derived-pl')) {
+        tracks = await fetchYouTubePlaylistTracks(pl.browseId);
+      }
+      if (!tracks || tracks.length === 0) {
+        const query = pl.title.replace(/top hits|essentials|best of/gi, '').trim() || pl.title;
+        const res = await searchYouTubeMusic(`${query} ${pl.author}`);
+        tracks = res || [];
+      }
       setCommunityPlaylistTracks(tracks);
+      updateCommunityPlaylistCache(cacheKey, tracks);
     } catch {
-      setCommunityPlaylistTracks([]);
+      try {
+        const res = await searchYouTubeMusic(pl.title);
+        const tracks = res || [];
+        setCommunityPlaylistTracks(tracks);
+        updateCommunityPlaylistCache(cacheKey, tracks);
+      } catch {
+        setCommunityPlaylistTracks([]);
+      }
     } finally {
       setIsLoadingPlaylistTracks(false);
     }
@@ -365,8 +405,8 @@ export const SearchView: React.FC = () => {
             e.stopPropagation();
             setSelectedTrackForMenu(track);
           }}
-          className="p-1.5 text-app-secondary shrink-0"
-          title="More Options"
+          className="p-2 text-app-secondary hover:text-app-primary"
+          title="Track options"
         >
           <MoreVertical className="w-5 h-5" />
         </span>
@@ -376,11 +416,14 @@ export const SearchView: React.FC = () => {
 
   const ArtistRows: React.FC<{ artists: ArtistResult[]; limit?: number }> = ({ artists, limit }) => (
     <>
-      {artists.slice(0, limit || artists.length).map(a => (
+      {(limit ? artists.slice(0, limit) : artists).map(a => (
         <button
           key={a.id}
-          onClick={() => setActiveArtist(a)}
-          className="w-full flex items-center gap-5 py-3 text-left"
+          onClick={() => {
+            setActiveArtist(a);
+            saveHistory(a.name);
+          }}
+          className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
         >
           <img
             src={a.thumbnail}
@@ -434,141 +477,34 @@ export const SearchView: React.FC = () => {
   }
 
   if (activeCommunityPlaylist) {
+    const cacheKey = activeCommunityPlaylist.browseId || activeCommunityPlaylist.id;
     return (
-      <div className="flex-1 flex flex-col overflow-y-auto pb-28 bg-app-primary">
+      <>
         {menuModal}
-          <div className="relative h-80 shrink-0 overflow-hidden">
-            <img
-              src={activeCommunityPlaylist.coverUrl}
-              alt={activeCommunityPlaylist.title}
-              className="absolute inset-0 w-full h-full object-cover blur-2xl scale-125 opacity-90"
-            />
-            <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black" />
-            <button
-              onClick={() => setActiveCommunityPlaylist(null)}
-              className="absolute top-4 left-4 p-2 text-app-primary"
-              title="Back"
-            >
-              <ChevronLeft className="w-7 h-7" />
-            </button>
-          </div>
-
-          <div className="px-6 pt-2 flex items-center justify-between">
-            <button
-              onClick={() => communityPlaylistTracks.length > 0 && playQueue(communityPlaylistTracks, 0)}
-              className="p-2 text-app-primary hover:scale-105 active:scale-95 transition-transform"
-              title="Play All"
-            >
-              <Play className="w-7 h-7 fill-current" />
-            </button>
-            <button
-              onClick={() => communityPlaylistTracks.length > 0 && playQueue(communityPlaylistTracks, Math.floor(Math.random() * communityPlaylistTracks.length))}
-              className="p-2 text-app-primary hover:scale-105 active:scale-95 transition-transform"
-              title="Shuffle"
-            >
-              <Shuffle className="w-6 h-6" />
-            </button>
-            <button
-              onClick={() => {
-                if (communityPlaylistTracks.length > 0) {
-                  importPlaylistToLibrary(
-                    activeCommunityPlaylist.title,
-                    `Imported Search Playlist (${communityPlaylistTracks.length} tracks)`,
-                    communityPlaylistTracks
-                  );
-                }
-              }}
-              className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-app-primary rounded-xl flex items-center gap-1.5 text-xs font-semibold hover:scale-105 active:scale-95 transition-all"
-              title="Add to My Playlists"
-            >
-              <FolderPlus className="w-4 h-4 text-app-primary" />
-              <span>Add Playlist</span>
-            </button>
-            <button
-              onClick={() => {
-                if (communityPlaylistTracks.length > 0) {
-                  downloadPlaylist(activeCommunityPlaylist.title, communityPlaylistTracks);
-                }
-              }}
-              className="p-2 text-app-primary hover:scale-105 active:scale-95 transition-transform"
-              title="Download All"
-            >
-              <Download className="w-6 h-6" />
-            </button>
-          </div>
-
-          <div className="px-6 pt-4">
-            <h1 className="text-3xl font-bold text-app-primary leading-tight">{activeCommunityPlaylist.title}</h1>
-            <p className="text-base text-app-secondary mt-2">
-              {activeCommunityPlaylist.author} • {activeCommunityPlaylist.songCount}
-            </p>
-          </div>
-
-          <div className="px-3 pt-6 space-y-1">
-            {isLoadingPlaylistTracks ? (
-              <div className="text-center py-12 space-y-2">
-                <Loader2 className="w-6 h-6 animate-spin mx-auto text-app-primary" />
-                <p className="text-sm text-app-secondary">Fetching playlist tracks...</p>
-              </div>
-            ) : (
-              communityPlaylistTracks.map((t, idx) => (
-                <button
-                  key={`${t.id}-${idx}`}
-                  onClick={() => playQueue(communityPlaylistTracks, idx)}
-                  className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
-                >
-                  <img src={t.coverUrl} alt={t.title} className="w-14 h-14 rounded-lg object-cover shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-base font-semibold text-app-primary truncate">{t.title}</p>
-                    <p className="text-sm text-app-secondary truncate mt-0.5">{t.artist}</p>
-                  </div>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={e => {
-                      e.stopPropagation();
-                      downloadTrack(t);
-                    }}
-                    className="p-1.5 text-app-secondary shrink-0"
-                    title="Download"
-                  >
-                    <Download className="w-5 h-5" />
-                  </span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={e => {
-                      e.stopPropagation();
-                      setSelectedTrackForMenu(t);
-                    }}
-                    className="p-1.5 text-app-secondary shrink-0"
-                    title="More Options"
-                  >
-                    <MoreVertical className="w-5 h-5" />
-                  </span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={e => {
-                      e.stopPropagation();
-                      const isCurrent = currentTrack?.id === t.id;
-                      if (isCurrent) togglePlay();
-                      else playQueue(communityPlaylistTracks, idx);
-                    }}
-                    className="p-1.5 text-app-primary shrink-0"
-                    title="Play"
-                  >
-                    {currentTrack?.id === t.id && isPlaying ? (
-                      <Pause className="w-6 h-6 fill-current" />
-                    ) : (
-                      <Play className="w-6 h-6 fill-current" />
-                    )}
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-      </div>
+        <PlaylistDetailView
+          title={activeCommunityPlaylist.title}
+          subtitle={`${activeCommunityPlaylist.author} • ${activeCommunityPlaylist.songCount}`}
+          coverUrl={activeCommunityPlaylist.coverUrl}
+          tracks={communityPlaylistTracks}
+          onBack={() => setActiveCommunityPlaylist(null)}
+          onDownloadAll={() => downloadPlaylist(activeCommunityPlaylist.title, communityPlaylistTracks)}
+          onAddTrack={track => {
+            setCommunityPlaylistTracks(prev => {
+              const next = prev.some(t => t.id === track.id) ? prev : [track, ...prev];
+              updateCommunityPlaylistCache(cacheKey, next);
+              return next;
+            });
+            addTrackToLibrary(track);
+          }}
+          onRemoveTrack={trackId => {
+            setCommunityPlaylistTracks(prev => {
+              const next = prev.filter(t => t.id !== trackId);
+              updateCommunityPlaylistCache(cacheKey, next);
+              return next;
+            });
+          }}
+        />
+      </>
     );
   }
 
@@ -657,13 +593,13 @@ export const SearchView: React.FC = () => {
                 </div>
               )}
               <div className="space-y-3">
-              <p className="text-sm text-app-secondary">TRENDING SEARCHES</p>
+              <p className="text-sm text-app-secondary font-medium tracking-wide">TRENDING ARTISTS & GENRES</p>
               <div className="flex flex-wrap gap-2">
-                {['Drake', 'Taylor Swift', 'Lo-Fi Chill Beats', 'Synthwave', 'Gym Workout Beats'].map(term => (
+                {['Drake', 'Travis Scott', 'Future', 'King Von', 'Lil Baby', 'Kendrick Lamar', 'Metro Boomin', 'Hip Hop Hits'].map(term => (
                   <button
                     key={term}
                     onClick={() => setSearchQuery(term)}
-                    className="px-4 py-2 rounded-full bg-app-surface border border-app-theme text-sm text-app-primary"
+                    className="px-4 py-2 rounded-full bg-app-surface border border-app-theme text-sm text-app-primary hover:border-app-primary transition-colors"
                   >
                     {term}
                   </button>

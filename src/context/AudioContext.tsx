@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import type { Track, Playlist, RepeatMode, SettingsState, NavTab } from '../types/music';
 import { INITIAL_TRACKS } from '../utils/sampleData';
 import { applyThemeSettings } from '../utils/theme';
-import { searchYouTubeMusic, findBestAlternateVideoId } from '../utils/ytMusicApi';
+import { searchYouTubeMusic, findBestAlternateVideoId, fetchDirectAudioStreamUrl } from '../utils/ytMusicApi';
 import {
   downloadTrackToFile,
   deleteOfflineFile,
@@ -268,6 +268,23 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return {};
     }
   });
+
+  // Auto-sync playlists and trackStore to localStorage whenever modified
+  useEffect(() => {
+    try {
+      localStorage.setItem('bw_music_playlists_v11', JSON.stringify(playlists));
+    } catch {
+      // storage full
+    }
+  }, [playlists]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('bw_music_track_store_v1', JSON.stringify(trackStore));
+    } catch {
+      // storage full
+    }
+  }, [trackStore]);
 
   const registerTrack = (track: Track) => {
     if (!track?.id) return;
@@ -545,6 +562,55 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, []);
 
+  // Initialize HTML5 Audio element and connect Web Audio API Equalizer graph
+  useEffect(() => {
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.crossOrigin = 'anonymous';
+    audioRef.current = audio;
+
+    const onTimeUpdate = () => {
+      if (audioModeTrackIdRef.current) {
+        positionRef.current = audio.currentTime;
+        setCurrentTime(audio.currentTime);
+      }
+    };
+
+    const onDurationChange = () => {
+      if (audioModeTrackIdRef.current && audio.duration && !isNaN(audio.duration)) {
+        setDuration(audio.duration);
+      }
+    };
+
+    const onEnded = () => {
+      if (audioModeTrackIdRef.current) {
+        latestActionsRef.current?.handleEnded?.();
+      }
+    };
+
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('durationchange', onDurationChange);
+    audio.addEventListener('ended', onEnded);
+
+    // Connect Web Audio API Equalizer node graph to the audio pipeline
+    try {
+      globalEqualizer.init(audio);
+      if (settings.equalizer) {
+        globalEqualizer.update(settings.equalizer);
+      }
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('durationchange', onDurationChange);
+      audio.removeEventListener('ended', onEnded);
+      audio.pause();
+      audio.removeAttribute('src');
+    };
+  }, []);
+
   useEffect(() => {
     currentTrackRef.current = currentTrack;
   }, [currentTrack]);
@@ -797,7 +863,6 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             }
 
             isYoutubeRecoveryRunningRef.current = true;
-            showStatus(`Finding another upload of "${t.title}"…`, 5000);
             try {
               const altId = await findBestAlternateVideoId(
                 t.title,
@@ -812,10 +877,32 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 ytPlayerRef.current?.loadVideoById
               ) {
                 activeYoutubeIdRef.current = altId;
+                youtubePlaybackOverridesRef.current[t.id] = altId;
+                try {
+                  localStorage.setItem(
+                    YOUTUBE_PLAYBACK_OVERRIDES_KEY,
+                    JSON.stringify(youtubePlaybackOverridesRef.current)
+                  );
+                } catch {
+                  // ignore
+                }
                 ytPlayerRef.current.loadVideoById({ videoId: altId, startSeconds: 0 });
                 ytPlayerRef.current.playVideo?.();
                 return;
               }
+
+              // Direct Audio Stream fallback (bypasses 18+ age gate and embed blocks)
+              const directStream = await fetchDirectAudioStreamUrl(failedId || t.youtubeId || '');
+              if (
+                directStream &&
+                playGenRef.current === generation &&
+                currentTrackRef.current?.id === t.id
+              ) {
+                await playAudioUrl(t, directStream, 0);
+                return;
+              }
+            } catch {
+              // ignore
             } finally {
               if (playGenRef.current === generation) {
                 isYoutubeRecoveryRunningRef.current = false;
@@ -823,7 +910,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             }
 
             if (playGenRef.current === generation && currentTrackRef.current?.id === t.id) {
-              showStatus('No exact embeddable upload was found. Tap ⋯ then Open in YouTube.', 7000);
+              showStatus('This track is restricted by YouTube. Please try another song.', 6000);
             }
             return;
           }
@@ -1384,9 +1471,6 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // 2. YouTube tracks: Immediate player start via YouTube nocookie player
     if (track.isYouTube && track.youtubeId) {
-      // iOS and YouTube both require an on-screen video surface for reliable
-      // IFrame playback. The Now Playing screen hosts the player at >= 200px.
-      setIsPlayerOpen(true);
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.removeAttribute('src');
@@ -1447,10 +1531,18 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     if (currentTrack.isYouTube && !audioMode && ytPlayerRef.current) {
       if (isPlaying) {
-        ytPlayerRef.current.pauseVideo();
+        try {
+          ytPlayerRef.current.pauseVideo?.();
+        } catch {
+          // ignore
+        }
         setIsPlaying(false);
       } else {
-        ytPlayerRef.current.playVideo();
+        try {
+          ytPlayerRef.current.playVideo?.();
+        } catch {
+          // ignore
+        }
         setIsPlaying(true);
       }
       return;
@@ -1491,10 +1583,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       playTrack(list[0]);
       return;
     }
-    if (currentIndex >= list.length - 1 && repeatMode !== 'all') {
-      setIsPlaying(false);
-      return;
-    }
+    // When playlist runs out of songs, wrap back to the first song (index 0) and continue playing seamlessly
     const nextIndex = (currentIndex + 1) % list.length;
     playTrack(list[nextIndex]);
   };
@@ -1504,7 +1593,12 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (list.length === 0) return;
     const currentIndex = list.findIndex(t => t.id === currentTrack?.id);
     if (currentIndex <= 0) {
-      seekTo(0);
+      if (currentTime > 3) {
+        seekTo(0);
+      } else {
+        const prevIndex = (currentIndex - 1 + list.length) % list.length;
+        playTrack(list[prevIndex]);
+      }
       return;
     }
     playTrack(list[currentIndex - 1]);
@@ -1890,14 +1984,25 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       recentlyPlayed.find(t => t.id === trackId) ||
       (currentTrack?.id === trackId ? currentTrack : undefined);
 
-    if (found) registerTrack(found);
+    if (found) {
+      registerTrack(found);
+      addTrackToLibrary(found);
+    }
 
-    setPlaylists(prev => prev.map(p => {
-      if (p.id === playlistId && !p.trackIds.includes(trackId)) {
-        return { ...p, trackIds: [...p.trackIds, trackId] };
+    setPlaylists(prev => {
+      const next = prev.map(p => {
+        if (p.id === playlistId && !p.trackIds.includes(trackId)) {
+          return { ...p, trackIds: [...p.trackIds, trackId] };
+        }
+        return p;
+      });
+      try {
+        localStorage.setItem('bw_music_playlists_v11', JSON.stringify(next));
+      } catch {
+        // ignore
       }
-      return p;
-    }));
+      return next;
+    });
   };
 
   const removeTrackFromPlaylist = (playlistId: string, trackId: string) => {
@@ -1905,26 +2010,42 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setFavorites(prev => prev.filter(id => id !== trackId));
       return;
     }
-    setPlaylists(prev => prev.map(p => {
-      if (p.id === playlistId) {
-        return { ...p, trackIds: p.trackIds.filter(id => id !== trackId) };
+    setPlaylists(prev => {
+      const next = prev.map(p => {
+        if (p.id === playlistId) {
+          return { ...p, trackIds: p.trackIds.filter(id => id !== trackId) };
+        }
+        return p;
+      });
+      try {
+        localStorage.setItem('bw_music_playlists_v11', JSON.stringify(next));
+      } catch {
+        // ignore
       }
-      return p;
-    }));
+      return next;
+    });
   };
 
   const reorderPlaylistTracks = (playlistId: string, fromIndex: number, toIndex: number) => {
-    setPlaylists(prev => prev.map(p => {
-      if (p.id === playlistId) {
-        const newTrackIds = [...p.trackIds];
-        if (fromIndex >= 0 && fromIndex < newTrackIds.length && toIndex >= 0 && toIndex < newTrackIds.length) {
-          const [moved] = newTrackIds.splice(fromIndex, 1);
-          newTrackIds.splice(toIndex, 0, moved);
+    setPlaylists(prev => {
+      const next = prev.map(p => {
+        if (p.id === playlistId) {
+          const newTrackIds = [...p.trackIds];
+          if (fromIndex >= 0 && fromIndex < newTrackIds.length && toIndex >= 0 && toIndex < newTrackIds.length) {
+            const [moved] = newTrackIds.splice(fromIndex, 1);
+            newTrackIds.splice(toIndex, 0, moved);
+          }
+          return { ...p, trackIds: newTrackIds };
         }
-        return { ...p, trackIds: newTrackIds };
+        return p;
+      });
+      try {
+        localStorage.setItem('bw_music_playlists_v11', JSON.stringify(next));
+      } catch {
+        // ignore
       }
-      return p;
-    }));
+      return next;
+    });
   };
 
   const updateSettings = (newSettings: Partial<SettingsState>) => {

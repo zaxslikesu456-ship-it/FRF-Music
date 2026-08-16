@@ -287,18 +287,18 @@ input[type="range"]::-moz-range-thumb {
 
 /* iOS Dynamic Island & Safe Area Utility Classes */
 .safe-top {
-  padding-top: max(env(safe-area-inset-top), 24px);
+  padding-top: max(env(safe-area-inset-top), 48px);
 }
 
 .safe-top-extra {
-  padding-top: calc(max(env(safe-area-inset-top), 24px) + 16px);
+  padding-top: calc(max(env(safe-area-inset-top), 48px) + 16px);
 }
 
 .safe-bottom {
-  padding-bottom: max(env(safe-area-inset-bottom), 16px);
+  padding-bottom: max(env(safe-area-inset-bottom), 24px);
 }
 
 .safe-area-player-top {
-  padding-top: calc(max(env(safe-area-inset-top, 44px), 54px) + 24px);
+  padding-top: calc(max(env(safe-area-inset-top, 48px), 54px) + 16px);
 }
 
