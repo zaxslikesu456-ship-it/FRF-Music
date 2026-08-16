@@ -236,7 +236,6 @@ export const NowPlayingScreen: React.FC = () => {
         <div className="flex items-center justify-between safe-area-player-top pb-4 px-1">
           <button
             onClick={() => {
-              if (currentTrack.isYouTube && isPlaying) togglePlay();
               setIsPlayerOpen(false);
             }}
             className="p-2 text-app-primary hover:scale-110 active:scale-95 transition-transform"
@@ -358,7 +357,7 @@ export const NowPlayingScreen: React.FC = () => {
                   aria-label={`${currentTrack.title} YouTube player`}
                 />
                 <p className="text-xs text-app-secondary text-center mt-2">
-                  Keep this screen open during YouTube playback.
+                  Minimize to keep playing in the visible mini video.
                 </p>
               </>
             ) : (

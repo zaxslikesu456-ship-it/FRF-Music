@@ -929,13 +929,22 @@ export async function fetchYouTubePlaylistTracks(
 }
 
 const ALTERNATE_NOISE_WORDS = new Set([
+  'acoustic',
+  'bootleg',
   'cover',
   'instrumental',
   'karaoke',
   'live',
+  'mashup',
   'nightcore',
+  'orchestral',
+  'parody',
+  'piano',
+  'pianoforte',
   'reaction',
   'remix',
+  'reverb',
+  'reversed',
   'slowed',
   'sped',
   'tutorial',
@@ -964,27 +973,58 @@ function tokenCoverage(wanted: Set<string>, candidate: Set<string>): number {
   return matches / wanted.size;
 }
 
-function alternateRelevance(track: Track, title: string, artist: string): number {
+function alternateRelevance(
+  track: Track,
+  title: string,
+  artist: string,
+  expectedDuration?: number
+): number {
   const wantedTitle = normalizedSearchTokens(title);
   const wantedArtist = normalizedSearchTokens(artist);
   const candidateTitle = normalizedSearchTokens(track.title);
-  const candidateIdentity = normalizedSearchTokens(`${track.title} ${track.artist}`);
+  const candidateArtist = normalizedSearchTokens(track.artist);
 
-  let score =
-    tokenCoverage(wantedTitle, candidateTitle) * 0.65 +
-    tokenCoverage(wantedArtist, candidateIdentity) * 0.35;
+  const titleCoverage = tokenCoverage(wantedTitle, candidateTitle);
+  const ownerCoverage = tokenCoverage(wantedArtist, candidateArtist);
+  const artistInTitleCoverage = tokenCoverage(wantedArtist, candidateTitle);
+  const candidateLabel = `${track.title} ${track.artist}`.toLowerCase();
+  const looksOfficial = /official audio|official video|provided to youtube|\bvevo\b|\btopic\b|ncs release/.test(
+    candidateLabel
+  );
 
-  ALTERNATE_NOISE_WORDS.forEach(token => {
-    if (candidateTitle.has(token) && !wantedTitle.has(token)) score -= 0.15;
-  });
-
-  const normalizedTitle = track.title.toLowerCase();
-  const normalizedArtist = track.artist.toLowerCase();
-  if (/official audio|official video|provided to youtube|topic\b/.test(`${normalizedTitle} ${normalizedArtist}`)) {
-    score += 0.08;
+  // Never substitute a merely similar title. Every meaningful title token
+  // must match, and the uploader must be the artist unless the title itself
+  // names the artist and the upload carries a trusted release marker.
+  if (titleCoverage < 1) return Number.NEGATIVE_INFINITY;
+  if (ownerCoverage < 0.8 && !(artistInTitleCoverage >= 1 && looksOfficial)) {
+    return Number.NEGATIVE_INFINITY;
   }
 
-  return score;
+  for (const token of ALTERNATE_NOISE_WORDS) {
+    if (candidateTitle.has(token) && !wantedTitle.has(token)) {
+      return Number.NEGATIVE_INFINITY;
+    }
+  }
+
+  let durationScore = 0;
+  if (
+    expectedDuration &&
+    expectedDuration > 0 &&
+    expectedDuration !== 200 &&
+    track.duration > 0 &&
+    track.duration !== 200
+  ) {
+    const difference = Math.abs(track.duration - expectedDuration);
+    const tolerance = Math.max(10, expectedDuration * 0.07);
+    if (difference > tolerance) return Number.NEGATIVE_INFINITY;
+    durationScore = 1 - difference / tolerance;
+  }
+
+  const identityScore = Math.max(
+    ownerCoverage,
+    looksOfficial ? artistInTitleCoverage * 0.9 : 0
+  );
+  return titleCoverage * 0.45 + identityScore * 0.3 + durationScore * 0.15 + (looksOfficial ? 0.1 : 0);
 }
 
 async function filterEmbeddableWithDataApi(tracks: Track[]): Promise<Track[]> {
@@ -1018,9 +1058,10 @@ async function filterEmbeddableWithDataApi(tracks: Track[]): Promise<Track[]> {
 
 async function getAlternatePlaybackCandidates(
   title: string,
-  artist: string
+  artist: string,
+  expectedDuration?: number
 ): Promise<Track[]> {
-  const cacheKey = `${artist} ${title}`.trim().toLowerCase();
+  const cacheKey = `${artist} ${title} ${expectedDuration || 0}`.trim().toLowerCase();
   const cached = alternatePlaybackCache.get(cacheKey);
   if (cached) return cached;
 
@@ -1041,8 +1082,8 @@ async function getAlternatePlaybackCandidates(
 
   const verified = await filterEmbeddableWithDataApi(pool);
   const ranked = verified
-    .map(track => ({ track, score: alternateRelevance(track, title, artist) }))
-    .filter(candidate => candidate.score >= 0.62)
+    .map(track => ({ track, score: alternateRelevance(track, title, artist, expectedDuration) }))
+    .filter(candidate => Number.isFinite(candidate.score) && candidate.score >= 0.75)
     .sort((a, b) => b.score - a.score)
     .map(candidate => candidate.track);
 
@@ -1059,6 +1100,7 @@ async function getAlternatePlaybackCandidates(
 export async function findBestAlternateVideoId(
   title: string,
   artist: string,
+  expectedDuration: number | undefined,
   excludedVideoIds: string | Iterable<string>
 ): Promise<string | null> {
   const excluded =
@@ -1066,7 +1108,7 @@ export async function findBestAlternateVideoId(
       ? new Set([excludedVideoIds])
       : new Set(excludedVideoIds);
   try {
-    const candidates = await getAlternatePlaybackCandidates(title, artist);
+    const candidates = await getAlternatePlaybackCandidates(title, artist, expectedDuration);
     return candidates.find(track => track.youtubeId && !excluded.has(track.youtubeId))?.youtubeId || null;
   } catch {
     return null;

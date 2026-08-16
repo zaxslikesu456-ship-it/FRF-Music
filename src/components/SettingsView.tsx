@@ -415,7 +415,7 @@ export const SettingsView: React.FC = () => {
                           onChange={() => updateSettings({ autoPlayNext: !settings.autoPlayNext })}
                         />
                       </Row>
-                      <Row title="Background playback" subtitle="Local and offline tracks outside the app">
+                      <Row title="Background playback" subtitle="Local/offline outside app; YouTube uses a visible mini player">
                         <Switch
                           on={settings.backgroundPlayback}
                           onChange={() =>
