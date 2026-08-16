@@ -3,13 +3,13 @@ import {
   Palette,
   Music,
   Download,
+  Upload,
   History,
   Settings2,
   Info,
   ChevronDown,
   Check,
   Trash2,
-  Repeat,
   Timer,
   LibraryBig,
 } from 'lucide-react';
@@ -18,10 +18,9 @@ import type {
   AppTheme,
   FontStyle,
   SortOrder,
-  VisualizerMode,
   BackgroundAnimation,
-  RepeatMode,
   SettingsState,
+  IconSize,
 } from '../types/music';
 
 const Switch: React.FC<{ on: boolean; onChange: () => void }> = ({ on, onChange }) => (
@@ -91,10 +90,10 @@ export const SettingsView: React.FC = () => {
     clearAllData,
     tracks,
     downloads,
-    repeatMode,
-    setRepeatModeDirect,
     hiddenArtists,
     restoreHiddenArtists,
+    exportLibrary,
+    importLibrary,
   } = useAudio();
 
   const [open, setOpen] = useState<Section | null>(null);
@@ -208,11 +207,25 @@ export const SettingsView: React.FC = () => {
                         onSelect={f => updateSettings({ fontStyle: f as FontStyle })}
                       />
 
+                      <p className="text-sm text-app-secondary pt-5 pb-1">ICON & LIST SIZE</p>
+                      <ChipGroup
+                        options={[
+                          { id: 'compact', label: 'Compact (Small Icons)' },
+                          { id: 'standard', label: 'Standard' },
+                          { id: 'large', label: 'Large' },
+                        ]}
+                        value={settings.iconSize || (settings.compactView ? 'compact' : 'standard')}
+                        onSelect={sz => updateSettings({ iconSize: sz as IconSize, compactView: sz === 'compact' })}
+                      />
+
                       <div className="pt-3">
-                        <Row title="Compact track lists">
+                        <Row title="Compact track lists" subtitle="Higher density layout">
                           <Switch
-                            on={settings.compactView}
-                            onChange={() => updateSettings({ compactView: !settings.compactView })}
+                            on={settings.compactView || settings.iconSize === 'compact'}
+                            onChange={() => {
+                              const next = !(settings.compactView || settings.iconSize === 'compact');
+                              updateSettings({ compactView: next, iconSize: next ? 'compact' : 'standard' });
+                            }}
                           />
                         </Row>
                       </div>
@@ -325,6 +338,17 @@ export const SettingsView: React.FC = () => {
                         value={settings.sortBy}
                         onSelect={v => updateSettings({ sortBy: v as SortOrder })}
                       />
+                      <p className="text-sm text-app-secondary pt-4 pb-1">LIBRARY ICON & LIST SIZE</p>
+                      <ChipGroup
+                        options={[
+                          { id: 'compact', label: 'Small Icons (40px)' },
+                          { id: 'standard', label: 'Standard Icons (56px)' },
+                          { id: 'large', label: 'Large Icons (64px)' },
+                        ]}
+                        value={settings.iconSize || (settings.compactView ? 'compact' : 'standard')}
+                        onSelect={sz => updateSettings({ iconSize: sz as IconSize, compactView: sz === 'compact' })}
+                      />
+
                       <Row title="YouTube Music engine" subtitle="Search, streams & downloads">
                         <span className="text-xs font-semibold px-2.5 py-1 rounded bg-app-highlight text-app-inverse">
                           CONNECTED
@@ -365,53 +389,31 @@ export const SettingsView: React.FC = () => {
                           }
                         />
                       </Row>
-
                       <p className="text-sm text-app-secondary pt-4 pb-1 flex items-center gap-2">
-                        <Repeat className="w-4 h-4" /> REPEAT MODE
+                        <Timer className="w-4 h-4" />
+                        SLEEP TIMER
                       </p>
                       <ChipGroup
                         options={[
-                          { id: 'off', label: 'Off' },
-                          { id: 'all', label: 'All' },
-                          { id: 'one', label: 'One' },
+                          { id: '0', label: 'Off' },
+                          { id: '15', label: '15 min' },
+                          { id: '30', label: '30 min' },
+                          { id: '60', label: '60 min' },
                         ]}
-                        value={repeatMode}
-                        onSelect={m => setRepeatModeDirect(m as RepeatMode)}
+                        value={String(settings.sleepTimerMinutes)}
+                        onSelect={m => updateSettings({ sleepTimerMinutes: parseInt(m, 10) as any })}
                       />
-
                       <p className="text-sm text-app-secondary pt-3 pb-1">PLAYBACK SPEED</p>
                       <ChipGroup
-                        options={[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map(v => ({
-                          id: String(v),
-                          label: `${v}x`,
-                        }))}
-                        value={String(settings.playbackSpeed)}
-                        onSelect={v => updateSettings({ playbackSpeed: parseFloat(v) })}
-                      />
-
-                      <p className="text-sm text-app-secondary pt-3 pb-1">VISUALIZER</p>
-                      <ChipGroup
                         options={[
-                          { id: 'bars', label: 'Bars' },
-                          { id: 'wave', label: 'Wave' },
-                          { id: 'off', label: 'Off' },
+                          { id: '0.75', label: '0.75×' },
+                          { id: '1', label: '1.0×' },
+                          { id: '1.25', label: '1.25×' },
+                          { id: '1.5', label: '1.5×' },
+                          { id: '2', label: '2.0×' },
                         ]}
-                        value={settings.visualizerMode}
-                        onSelect={v => updateSettings({ visualizerMode: v as VisualizerMode })}
-                      />
-
-                      <p className="text-sm text-app-secondary pt-3 pb-1 flex items-center gap-2">
-                        <Timer className="w-4 h-4" /> SLEEP TIMER
-                      </p>
-                      <ChipGroup
-                        options={[0, 15, 30, 60].map(v => ({
-                          id: String(v),
-                          label: v === 0 ? 'Off' : `${v} min`,
-                        }))}
-                        value={String(settings.sleepTimerMinutes)}
-                        onSelect={v =>
-                          updateSettings({ sleepTimerMinutes: parseInt(v, 10) as 0 | 15 | 30 | 60 })
-                        }
+                        value={String(settings.playbackSpeed)}
+                        onSelect={sp => updateSettings({ playbackSpeed: parseFloat(sp) })}
                       />
                     </div>
                   )}
@@ -425,8 +427,8 @@ export const SettingsView: React.FC = () => {
                         className="w-full flex items-center justify-between py-3 border-b border-app-theme text-left"
                       >
                         <span>
-                          <span className="block text-base text-app-primary">High quality</span>
-                          <span className="block text-sm text-app-secondary">~128 kbps • ~3 MB/song</span>
+                          <span className="block text-base text-app-primary">Original</span>
+                          <span className="block text-sm text-app-secondary">Best available source</span>
                         </span>
                         {settings.downloadQuality === 'high' && <Check className="w-5 h-5 text-app-primary" />}
                       </button>
@@ -446,11 +448,44 @@ export const SettingsView: React.FC = () => {
 
                   {/* BACKUP & RESTORE */}
                   {s.id === 'backup' && (
-                    <div className="pt-3">
+                    <div className="pt-3 space-y-3">
                       <Row
-                        title="Library"
-                        subtitle={`${tracks.length} songs • ${downloads.length} downloads`}
+                        title="Permanent Library Protection"
+                        subtitle={`${tracks.length} songs • ${downloads.length} downloads (Auto-saved to IndexedDB)`}
                       />
+                      
+                      <button
+                        onClick={exportLibrary}
+                        className="w-full flex items-center justify-between p-4 rounded-2xl bg-app-card border border-app-theme text-left hover:scale-[1.01] active:scale-98 transition-all"
+                      >
+                        <div>
+                          <p className="text-base font-semibold text-app-primary">Export Library Backup</p>
+                          <p className="text-xs text-app-secondary mt-0.5">Save all playlists, songs & settings to a JSON file</p>
+                        </div>
+                        <Download className="w-5 h-5 text-app-primary shrink-0 ml-2" />
+                      </button>
+
+                      <label className="w-full flex items-center justify-between p-4 rounded-2xl bg-app-card border border-app-theme text-left cursor-pointer hover:scale-[1.01] active:scale-98 transition-all">
+                        <div>
+                          <p className="text-base font-semibold text-app-primary">Import / Restore Backup</p>
+                          <p className="text-xs text-app-secondary mt-0.5">Restore all your songs & playlists from a backup file</p>
+                        </div>
+                        <Upload className="w-5 h-5 text-app-primary shrink-0 ml-2" />
+                        <input
+                          type="file"
+                          accept=".json,application/json"
+                          className="hidden"
+                          onChange={async e => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const ok = await importLibrary(file);
+                              if (ok) alert('Library successfully restored from backup!');
+                              else alert('Failed to import backup file. Please check file format.');
+                            }
+                          }}
+                        />
+                      </label>
+
                       <button
                         onClick={() => {
                           if (confirm('Clear all music, playlists, favorites and downloads?')) {
@@ -462,9 +497,8 @@ export const SettingsView: React.FC = () => {
                         <Trash2 className="w-4 h-4" />
                         Clear all data
                       </button>
-                      <p className="text-sm text-app-secondary pt-3">
-                        Downloads are stored in app storage on this device. Re-installing the app
-                        removes them.
+                      <p className="text-xs text-app-secondary pt-2">
+                        Your library is automatically preserved across app updates in permanent storage.
                       </p>
                     </div>
                   )}

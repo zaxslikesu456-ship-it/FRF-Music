@@ -62,6 +62,8 @@ export interface ApiProviderConfig {
   customEndpoint?: string;
 }
 
+export type IconSize = 'compact' | 'standard' | 'large';
+
 export interface SettingsState {
   theme: AppTheme;
   fontStyle: FontStyle;
@@ -69,6 +71,7 @@ export interface SettingsState {
   backgroundAnimation: BackgroundAnimation;
   playbackSpeed: number;
   compactView: boolean;
+  iconSize: IconSize;
   autoPlayNext: boolean;
   sortBy: SortOrder;
   downloadQuality: 'high' | 'low';

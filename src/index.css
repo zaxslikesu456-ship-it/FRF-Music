@@ -299,6 +299,6 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .safe-area-player-top {
-  padding-top: max(env(safe-area-inset-top, 44px), 52px);
+  padding-top: calc(max(env(safe-area-inset-top, 44px), 54px) + 24px);
 }
 
