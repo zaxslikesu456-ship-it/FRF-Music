@@ -61,7 +61,6 @@ export const NowPlayingScreen: React.FC = () => {
     repeatMode,
     isShuffle,
     isPlayerOpen,
-    settings,
     favorites,
     tracks,
     togglePlay,
@@ -92,45 +91,7 @@ export const NowPlayingScreen: React.FC = () => {
 
   const activeLyricRef = useRef<HTMLParagraphElement | null>(null);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
-  const youtubeSurfaceRef = useRef<HTMLDivElement | null>(null);
   const touchX = useRef<number | null>(null);
-
-  // YouTube requires an embedded player viewport of at least 200x200. Keep the
-  // shared IFrame mounted under document.body (moving an iframe reloads it),
-  // and align it over the artwork slot while a YouTube track is open.
-  useEffect(() => {
-    if (!isPlayerOpen || !currentTrack?.isYouTube || !youtubeSurfaceRef.current) return;
-
-    const surface = youtubeSurfaceRef.current;
-    const alignPlayer = () => {
-      const player = document.getElementById('yt-hidden-player');
-      if (!player) return;
-      const rect = surface.getBoundingClientRect();
-      player.removeAttribute('aria-hidden');
-      player.style.cssText =
-        `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;` +
-        'min-width:200px;min-height:200px;opacity:1;pointer-events:auto;z-index:45;border:0;display:block;';
-      player.setAttribute('title', `${currentTrack.title} on YouTube`);
-    };
-
-    alignPlayer();
-    const observer = new MutationObserver(alignPlayer);
-    observer.observe(document.body, { childList: true, subtree: true });
-    const resizeObserver = new ResizeObserver(alignPlayer);
-    resizeObserver.observe(surface);
-    window.addEventListener('resize', alignPlayer);
-
-    return () => {
-      observer.disconnect();
-      resizeObserver.disconnect();
-      window.removeEventListener('resize', alignPlayer);
-      const player = document.getElementById('yt-hidden-player');
-      if (!player) return;
-      player.setAttribute('aria-hidden', 'true');
-      player.style.cssText =
-        'position:fixed;left:-10000px;top:0;width:200px;height:200px;opacity:0;pointer-events:none;z-index:-1;border:0;';
-    };
-  }, [currentTrack?.id, currentTrack?.isYouTube, currentTrack?.title, isPlayerOpen]);
 
   // Fetch lyrics when track changes or user opens lyrics view
   useEffect(() => {
@@ -200,7 +161,7 @@ export const NowPlayingScreen: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-40 bg-app-primary max-w-xl mx-auto flex flex-col select-none overflow-hidden">
+    <div className="fixed inset-0 z-40 bg-app-primary max-w-xl mx-auto flex flex-col select-none overflow-hidden animate-in fade-in duration-300">
       <AddToPlaylistModal
         track={showAddToPlaylist ? currentTrack : null}
         onClose={() => setShowAddToPlaylist(false)}
@@ -210,14 +171,14 @@ export const NowPlayingScreen: React.FC = () => {
         onClose={() => setShowOptions(false)}
       />
 
-      {/* Blurred background image matching theme */}
-      <div className="absolute inset-0 overflow-hidden">
+      {/* Dynamic blurred ambient background from album artwork */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <img
           src={currentTrack.coverUrl}
           alt=""
-          className="w-full h-full object-cover blur-3xl scale-125 opacity-25"
+          className="w-full h-full object-cover blur-3xl scale-125 opacity-30 transition-all duration-700"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/40 to-black" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/40 to-black/95" />
       </div>
 
       <div
@@ -229,27 +190,24 @@ export const NowPlayingScreen: React.FC = () => {
           if (touchX.current === null) return;
           const dx = e.changedTouches[0].clientX - touchX.current;
           touchX.current = null;
-          if (dx < -60 && !currentTrack.isYouTube) setShowLyrics(true);
+          if (dx < -60) setShowLyrics(true);
           if (dx > 60) setShowLyrics(false);
         }}
       >
         {/* Top Navigation Header */}
-        <div className="flex items-center justify-between safe-area-player-top pb-4 px-1">
+        <div className="flex items-center justify-between safe-area-player-top pb-2 px-1">
           <button
-            onClick={() => {
-              if (currentTrack.isYouTube && isPlaying && !settings.youtubeMiniPlayer) {
-                togglePlay();
-              }
-              setIsPlayerOpen(false);
-            }}
-            className="p-2 text-app-primary hover:scale-110 active:scale-95 transition-transform"
+            onClick={() => setIsPlayerOpen(false)}
+            className="p-2.5 text-app-primary hover:scale-110 active:scale-95 transition-transform"
             title="Minimize"
           >
             <ChevronDown className="w-7 h-7" />
           </button>
 
           <div className="text-center min-w-0 px-2">
-            <p className="text-xs text-app-secondary truncate font-medium">Playing from queue</p>
+            <p className="text-xs text-app-secondary truncate font-medium tracking-wider uppercase">
+              {queue.length > 0 ? 'Playing from Queue' : 'Now Playing'}
+            </p>
           </div>
 
           <div className="flex items-center gap-1">
@@ -257,23 +215,23 @@ export const NowPlayingScreen: React.FC = () => {
             <button
               onClick={() => setIsEqualizerOpen(true)}
               className="p-2 text-app-secondary hover:text-app-primary hover:scale-105 active:scale-95 transition-all"
-              title="Equalizer & Sound FX"
+              title="Studio Equalizer"
             >
               <Sliders className="w-5 h-5" />
             </button>
 
-            {/* 3 Lines Icon (Toggles Overlay Queue Sheet) */}
+            {/* 3 Lines Icon (Up Next Queue) */}
             <button
               onClick={() => setShowQueueOverlay(v => !v)}
               className={`p-2 transition-colors ${
                 showQueueOverlay ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
               }`}
-              title="3 Lines - Up Next Queue"
+              title="Queue Sheet"
             >
               <List className="w-6 h-6" />
             </button>
 
-            {/* 3 Dots Icon (Opens Track Options Modal matching user screenshot) */}
+            {/* 3 Dots Options */}
             <button
               onClick={() => setShowOptions(true)}
               className="p-2 text-app-secondary hover:text-app-primary transition-colors"
@@ -282,7 +240,7 @@ export const NowPlayingScreen: React.FC = () => {
               <MoreVertical className="w-6 h-6" />
             </button>
 
-            {/* Stop & Dismiss Song */}
+            {/* Stop & Close Song */}
             <button
               onClick={stopTrack}
               className="p-2 text-app-secondary hover:text-red-400 transition-colors"
@@ -294,7 +252,7 @@ export const NowPlayingScreen: React.FC = () => {
         </div>
 
         {/* Main Center Section: Artwork or Synchronized Animated Lyrics */}
-        {showLyrics && !currentTrack.isYouTube ? (
+        {showLyrics ? (
           <div
             ref={lyricsContainerRef}
             className="flex-1 min-h-0 overflow-y-auto w-full py-6 no-scrollbar space-y-5 px-2"
@@ -309,33 +267,25 @@ export const NowPlayingScreen: React.FC = () => {
                 <p className="text-app-secondary text-sm">Fetching lyrics...</p>
               </div>
             ) : syncedLyrics.length > 0 ? (
-              <>
-                <p className="text-center text-xs text-app-secondary pb-2 tracking-wide uppercase">
-                  Synced Lyrics • Tap line to jump
-                </p>
-                {syncedLyrics.map((line, idx) => {
-                  const isActive = idx === activeLyricIndex;
-                  return (
-                    <p
-                      key={`lyric-${idx}`}
-                      ref={isActive ? activeLyricRef : null}
-                      onClick={() => seekTo(line.time)}
-                      className={`text-center transition-all duration-300 cursor-pointer select-none leading-relaxed ${
-                        isActive
-                          ? 'text-app-primary font-extrabold text-xl md:text-2xl scale-105 drop-shadow-[0_0_12px_rgba(255,255,255,0.4)]'
-                          : 'text-app-secondary text-base opacity-40 hover:opacity-80 hover:scale-100'
-                      }`}
-                    >
-                      {line.text}
-                    </p>
-                  );
-                })}
-              </>
+              syncedLyrics.map((line, idx) => {
+                const isActive = idx === activeLyricIndex;
+                return (
+                  <p
+                    key={`lyric-${idx}`}
+                    ref={isActive ? activeLyricRef : null}
+                    onClick={() => seekTo(line.time)}
+                    className={`text-center transition-all duration-300 cursor-pointer select-none leading-relaxed ${
+                      isActive
+                        ? 'text-app-primary font-extrabold text-xl md:text-2xl scale-105 drop-shadow-[0_0_16px_rgba(255,255,255,0.4)]'
+                        : 'text-app-secondary text-base opacity-40 hover:opacity-80 hover:scale-100'
+                    }`}
+                  >
+                    {line.text}
+                  </p>
+                );
+              })
             ) : rawLyrics ? (
               <div className="space-y-3 py-2 px-2">
-                <p className="text-center text-xs text-app-secondary pb-2 tracking-wide uppercase">
-                  Lyrics
-                </p>
                 {rawLyrics.split('\n').map((line, idx) => (
                   <p
                     key={`plain-lyric-${idx}`}
@@ -353,38 +303,28 @@ export const NowPlayingScreen: React.FC = () => {
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0">
-            {currentTrack.isYouTube ? (
-              <>
-                <div
-                  ref={youtubeSurfaceRef}
-                  className="w-full max-w-[320px] aspect-square min-w-[200px] min-h-[200px] overflow-hidden rounded-2xl shadow-2xl bg-black"
-                  aria-label={`${currentTrack.title} YouTube player`}
-                />
-                <p className="text-xs text-app-secondary text-center mt-2">
-                  {settings.youtubeMiniPlayer
-                    ? 'Minimize to keep playing in the visible mini video.'
-                    : 'YouTube pauses when this player is minimized.'}
-                </p>
-              </>
-            ) : (
+            <div className="relative w-full max-w-[320px] aspect-square rounded-2xl overflow-hidden shadow-2xl border border-white/10 group">
               <img
                 src={currentTrack.coverUrl}
                 alt={currentTrack.title}
-                className={`w-full max-w-[320px] aspect-square object-cover rounded-2xl shadow-2xl transition-all duration-500 ${
-                  isPlaying ? 'scale-100 shadow-purple-500/20' : 'scale-95 opacity-90'
+                className={`w-full h-full object-cover transition-all duration-700 ${
+                  isPlaying ? 'scale-100 shadow-purple-500/30' : 'scale-95 opacity-90'
                 }`}
               />
-            )}
+              <div className="absolute inset-0 ring-1 ring-inset ring-white/10 rounded-2xl pointer-events-none" />
+            </div>
           </div>
         )}
 
         {/* Track Title + Favorite & Lyrics Controls */}
-        <div className="flex items-center justify-between gap-4 pt-4">
+        <div className="flex items-center justify-between gap-4 pt-3">
           <div className="min-w-0 flex-1">
-            <h2 className="text-2xl font-bold text-app-primary truncate">{currentTrack.title}</h2>
+            <h2 className="text-2xl font-bold text-app-primary truncate tracking-tight">
+              {currentTrack.title}
+            </h2>
             <button
               onClick={() => openArtistProfile(currentTrack.artist)}
-              className="block max-w-full text-base text-app-secondary truncate mt-1 hover:text-app-primary hover:underline text-left"
+              className="block max-w-full text-base text-app-secondary truncate mt-0.5 hover:text-app-primary hover:underline text-left"
               title="View artist profile"
             >
               {currentTrack.artist}
@@ -398,7 +338,9 @@ export const NowPlayingScreen: React.FC = () => {
               title="Like"
             >
               <Heart
-                className={`w-6 h-6 ${isFav ? 'text-app-primary fill-current' : 'text-app-secondary'}`}
+                className={`w-6 h-6 transition-colors ${
+                  isFav ? 'text-rose-500 fill-rose-500' : 'text-app-secondary hover:text-app-primary'
+                }`}
               />
             </button>
 
@@ -411,18 +353,11 @@ export const NowPlayingScreen: React.FC = () => {
             </button>
 
             <button
-              onClick={() => {
-                if (!currentTrack.isYouTube) setShowLyrics(v => !v);
-              }}
-              disabled={currentTrack.isYouTube}
+              onClick={() => setShowLyrics(v => !v)}
               className={`p-2 transition-transform active:scale-95 ${
-                currentTrack.isYouTube
-                  ? 'text-app-secondary opacity-35 cursor-not-allowed'
-                  : showLyrics
-                    ? 'text-app-primary font-bold'
-                    : 'text-app-secondary hover:text-app-primary'
+                showLyrics ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
               }`}
-              title={currentTrack.isYouTube ? 'Keep the video visible during YouTube playback' : 'Toggle Lyrics'}
+              title="Toggle Lyrics"
             >
               <Mic className="w-6 h-6" />
             </button>
@@ -438,7 +373,7 @@ export const NowPlayingScreen: React.FC = () => {
         </div>
 
         {/* Audio Progress Slider Bar */}
-        <div className="pt-5">
+        <div className="pt-4">
           <input
             type="range"
             min={0}
@@ -456,7 +391,7 @@ export const NowPlayingScreen: React.FC = () => {
         </div>
 
         {/* Main Playback Control Bar (Repeat, Prev, Play/Pause, Next, Shuffle) */}
-        <div className="flex items-center justify-between pt-6 pb-2">
+        <div className="flex items-center justify-between pt-5 pb-1">
           <button
             onClick={toggleRepeatMode}
             className={`p-2.5 rounded-full transition-all ${

@@ -46,6 +46,18 @@ interface BackgroundAudioPlugin {
     duration?: number;
     position?: number;
   }): Promise<void>;
+  playUrl(options: {
+    url?: string;
+    filePath?: string;
+    title: string;
+    artist: string;
+    coverUrl?: string;
+    startTime?: number;
+    duration?: number;
+  }): Promise<void>;
+  pause(): Promise<void>;
+  resume(): Promise<void>;
+  seek(options: { position: number }): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -489,7 +501,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [currentTrack, isPlaying, duration]);
 
-  // Native Lock Screen / AirPods remote command listeners
+  // Native Lock Screen / AirPods remote command listeners + AVPlayer playback events
   useEffect(() => {
     if (!BackgroundAudio) return;
 
@@ -513,6 +525,18 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (data && typeof data.position === 'number') {
           seekTo(data.position);
         }
+      }),
+      (BackgroundAudio as any).addListener('playbackProgress', (data: { currentTime?: number; duration?: number }) => {
+        if (typeof data.currentTime === 'number') {
+          positionRef.current = data.currentTime;
+          setCurrentTime(data.currentTime);
+        }
+        if (typeof data.duration === 'number' && data.duration > 0) {
+          setDuration(data.duration);
+        }
+      }),
+      (BackgroundAudio as any).addListener('playbackEnded', () => {
+        latestActionsRef.current?.handleEnded?.();
       }),
     ];
 
@@ -1244,7 +1268,6 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   const playAudioUrl = (track: Track, url: string, startTime = 0) => {
-    if (!audioRef.current) return Promise.reject(new Error('no audio'));
     const currentGen = playGenRef.current;
 
     // Stop YouTube iframe to ensure no dual playback
@@ -1261,6 +1284,37 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     audioModeTrackIdRef.current = track.id;
+
+    // Native iOS AVPlayer playback for local downloaded files and direct audio URLs
+    if (Capacitor.isNativePlatform() && BackgroundAudio?.playUrl) {
+      const rec = getOfflineRecord(track.id);
+      return BackgroundAudio.playUrl({
+        url: rec?.webUrl || (url.startsWith('http') ? url : undefined),
+        filePath: rec?.path || (!url.startsWith('http') ? url : undefined),
+        title: track.title,
+        artist: track.artist,
+        coverUrl: track.coverUrl,
+        startTime,
+        duration: track.duration,
+      })
+        .then(() => {
+          if (playGenRef.current !== currentGen) {
+            BackgroundAudio.stop?.().catch(() => {});
+            return;
+          }
+          hasPlayedRef.current = true;
+          setIsPlaying(true);
+        })
+        .catch(() => {
+          return playHtml5Audio(track, url, startTime, currentGen);
+        });
+    }
+
+    return playHtml5Audio(track, url, startTime, currentGen);
+  };
+
+  const playHtml5Audio = (_track: Track, url: string, startTime: number, currentGen: number) => {
+    if (!audioRef.current) return Promise.reject(new Error('no audio'));
     const audio = audioRef.current;
     audio.src = url;
     audio.volume = volumeRef.current;
