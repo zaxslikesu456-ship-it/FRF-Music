@@ -1158,15 +1158,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } else {
         // Start YouTube player IMMEDIATELY upon user click
         void startIframe(track, startTime);
-        // Pre-fetch direct audio stream in background and seamlessly handover to HTML5 audio for iOS background playback
+        // Pre-fetch direct audio stream in background for next play (don't interrupt current iframe)
         void resolveAudioStreamUrl(track.youtubeId, false)
           .then(url => {
             if (url) {
               streamUrlCacheRef.current.set(track.youtubeId!, url);
-              if (currentTrackRef.current?.id === track.id && playGenRef.current === currentGen) {
-                const currentPos = positionRef.current;
-                playAudioUrl(track, url, currentPos).catch(() => {});
-              }
             }
           })
           .catch(() => {});
