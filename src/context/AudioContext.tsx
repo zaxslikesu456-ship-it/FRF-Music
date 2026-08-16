@@ -29,7 +29,14 @@ import {
 } from '../utils/equalizer';
 
 interface BackgroundAudioPlugin {
-  start(options: { title: string; artist: string; isPlaying: boolean }): Promise<void>;
+  start(options: {
+    title: string;
+    artist: string;
+    isPlaying: boolean;
+    coverUrl?: string;
+    duration?: number;
+    position?: number;
+  }): Promise<void>;
   update(options: {
     title: string;
     artist: string;
@@ -37,6 +44,7 @@ interface BackgroundAudioPlugin {
     coverUrl?: string;
     streamUrl?: string;
     filePath?: string;
+    duration?: number;
     position?: number;
   }): Promise<void>;
   stop(): Promise<void>;
@@ -448,7 +456,51 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch {
       // ignore
     }
-  }, [currentTrack, isPlaying]);
+
+    // Native iOS Lock Screen & Background Audio engine
+    if (BackgroundAudio?.update) {
+      BackgroundAudio.update({
+        title: currentTrack.title,
+        artist: currentTrack.artist || 'FRF Music',
+        isPlaying,
+        coverUrl: currentTrack.coverUrl,
+        duration: duration || currentTrack.duration || 0,
+        position: positionRef.current || 0,
+      }).catch(() => {});
+    }
+  }, [currentTrack, isPlaying, duration]);
+
+  // Native Lock Screen / AirPods remote command listeners
+  useEffect(() => {
+    if (!BackgroundAudio) return;
+
+    const listeners = [
+      (BackgroundAudio as any).addListener('remotePlay', () => {
+        latestActionsRef.current?.togglePlay?.();
+      }),
+      (BackgroundAudio as any).addListener('remotePause', () => {
+        latestActionsRef.current?.togglePlay?.();
+      }),
+      (BackgroundAudio as any).addListener('remoteTogglePlay', () => {
+        latestActionsRef.current?.togglePlay?.();
+      }),
+      (BackgroundAudio as any).addListener('remoteNext', () => {
+        latestActionsRef.current?.nextTrack?.();
+      }),
+      (BackgroundAudio as any).addListener('remotePrev', () => {
+        latestActionsRef.current?.previousTrack?.();
+      }),
+      (BackgroundAudio as any).addListener('remoteSeek', (data: { position?: number }) => {
+        if (data && typeof data.position === 'number') {
+          seekTo(data.position);
+        }
+      }),
+    ];
+
+    return () => {
+      listeners.forEach(p => p?.then?.((l: any) => l?.remove?.()).catch?.(() => {}));
+    };
+  }, []);
 
   useEffect(() => {
     currentTrackRef.current = currentTrack;
