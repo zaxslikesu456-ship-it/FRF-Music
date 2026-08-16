@@ -64,6 +64,27 @@ export interface ApiProviderConfig {
 
 export type IconSize = 'compact' | 'standard' | 'large';
 
+export type EqualizerPreset =
+  | 'flat'
+  | 'bass-boost'
+  | 'rock'
+  | 'pop'
+  | 'hip-hop'
+  | 'electronic'
+  | 'jazz'
+  | 'classical'
+  | 'vocal'
+  | 'acoustic'
+  | 'custom';
+
+export interface EqualizerSettings {
+  enabled: boolean;
+  preset: EqualizerPreset;
+  bands: number[]; // 5 band gain values in dB (-12 to +12)
+  bassBoost: number; // 0 to 10
+  surround: number; // 0 to 10
+}
+
 export interface SettingsState {
   theme: AppTheme;
   fontStyle: FontStyle;
@@ -86,4 +107,5 @@ export interface SettingsState {
   backgroundImage: string | null;
   overlayTransparency: number;
   providers: ApiProviderConfig[];
+  equalizer: EqualizerSettings;
 }

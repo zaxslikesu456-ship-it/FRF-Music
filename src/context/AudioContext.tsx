@@ -23,6 +23,10 @@ import {
   exportLibraryBackup,
   parseLibraryBackup,
 } from '../utils/persistentLibrary';
+import {
+  globalEqualizer,
+  DEFAULT_EQUALIZER_SETTINGS,
+} from '../utils/equalizer';
 
 interface BackgroundAudioPlugin {
   start(options: { title: string; artist: string; isPlaying: boolean }): Promise<void>;
@@ -63,6 +67,8 @@ interface AudioContextType {
   searchQuery: string;
   activeTab: NavTab;
   isPlayerOpen: boolean;
+  isEqualizerOpen: boolean;
+  setIsEqualizerOpen: (open: boolean) => void;
   artistProfileName: string | null;
   openArtistProfile: (name: string) => void;
   closeArtistProfile: () => void;
@@ -149,6 +155,7 @@ const DEFAULT_SETTINGS: SettingsState = {
     { id: 'freesound', name: 'FreeSound Audio API', enabled: false },
     { id: 'custom', name: 'Custom Stream API Endpoint', enabled: false },
   ],
+  equalizer: DEFAULT_EQUALIZER_SETTINGS,
 };
 
 function loadLastSession(): { track: Track | null; queue: Track[]; position: number } {
@@ -322,6 +329,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<NavTab>('home');
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
+  const [isEqualizerOpen, setIsEqualizerOpen] = useState(false);
   const [artistProfileName, setArtistProfileName] = useState<string | null>(null);
   const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
 
@@ -563,6 +571,13 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     applyThemeSettings(settings);
   }, [settings]);
+
+  // Synchronize Real-time Equalizer & Sound FX settings
+  useEffect(() => {
+    if (settings.equalizer) {
+      globalEqualizer.update(settings.equalizer);
+    }
+  }, [settings.equalizer]);
 
   const ytReadyWaitersRef = useRef<Array<() => void>>([]);
 
@@ -1038,6 +1053,14 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     audioModeTrackIdRef.current = track.id;
     const audio = audioRef.current;
+    try {
+      globalEqualizer.init(audio);
+      if (settings.equalizer) {
+        globalEqualizer.update(settings.equalizer);
+      }
+    } catch {
+      // ignore
+    }
     audio.src = url;
     audio.volume = volumeRef.current;
     if (startTime > 0) {
@@ -1794,11 +1817,13 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         downloadedTracks,
         recentlyPlayed,
         settings,
-        analyserNode: null,
+        analyserNode: globalEqualizer.getAnalyser(),
         isResolvingStream,
         isLoadingApiTracks: false,
         downloadStatus,
         sleepTimerMinutes,
+        isEqualizerOpen,
+        setIsEqualizerOpen,
 
         playTrack,
         playQueue,
