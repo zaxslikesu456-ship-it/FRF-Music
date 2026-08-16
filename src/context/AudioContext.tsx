@@ -511,10 +511,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       el = document.createElement('div');
       el.id = 'yt-hidden-player';
       el.setAttribute('aria-hidden', 'true');
-      el.style.cssText =
-        'position:fixed;top:-9999px;left:-9999px;width:320px;height:200px;pointer-events:none;z-index:-9999;';
       document.body.appendChild(el);
     }
+    // Must be on-screen with non-zero dimensions and opacity > 0 for iOS WebKit to allow media playback
+    el.style.cssText =
+      'position:fixed;bottom:0;right:0;width:240px;height:160px;opacity:0.005;pointer-events:none;z-index:-10;';
     return el;
   };
 
@@ -522,8 +523,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (ytPlayerRef.current || !window.YT?.Player) return;
     ensureYtPlayerElement();
     ytPlayerRef.current = new window.YT.Player('yt-hidden-player', {
-      height: '200',
-      width: '320',
+      height: '160',
+      width: '240',
       host: 'https://www.youtube-nocookie.com',
       playerVars: {
         autoplay: 1,
@@ -532,6 +533,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fs: 0,
         rel: 0,
         enablejsapi: 1,
+        playsinline: 1,
+        origin: typeof window !== 'undefined' ? window.location.origin : 'https://localhost',
       },
       events: {
         onReady: () => {
@@ -921,14 +924,13 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         videoId: track.youtubeId,
         startSeconds: startTime > 0 ? startTime : 0,
       });
-      yt.playVideo();
-      if (yt.setVolume) {
-        try {
-          yt.setVolume(volumeRef.current * 100);
-        } catch {
-          // ignore
-        }
+      try {
+        yt.unMute?.();
+        yt.setVolume?.(volumeRef.current * 100);
+      } catch {
+        // ignore
       }
+      yt.playVideo();
       setIsPlaying(true);
     }
   };
@@ -1075,7 +1077,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     });
 
-    // 2. YouTube tracks: Stream audio resolution + fallback
+    // 2. YouTube tracks: Immediate player start + background stream cache
     if (track.isYouTube && track.youtubeId) {
       if (audioRef.current) {
         audioRef.current.pause();
@@ -1090,15 +1092,19 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         playAudioUrl(track, cachedStream, startTime).catch(() => {
           dropCachedStreamUrl(track.youtubeId!);
           streamUrlCacheRef.current.delete(track.youtubeId!);
-          void fallbackToStream(track, true);
+          void startIframe(track, startTime);
         });
       } else {
-        // Direct audio stream playback (works natively on iOS and background audio)
-        void fallbackToStream(track).then(success => {
-          if (!success && playGenRef.current === currentGen) {
-            void startIframe(track, startTime);
-          }
-        });
+        // Start YouTube player IMMEDIATELY upon user click (unlocked by user gesture)
+        void startIframe(track, startTime);
+        // Pre-fetch direct audio stream in background if available
+        void resolveAudioStreamUrl(track.youtubeId, false)
+          .then(url => {
+            if (url) {
+              streamUrlCacheRef.current.set(track.youtubeId!, url);
+            }
+          })
+          .catch(() => {});
       }
 
       prefetchNextStream(track);
