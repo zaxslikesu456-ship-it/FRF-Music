@@ -15,6 +15,11 @@ import {
   Sliders,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
+import {
+  getSavedYouTubeDataApiKey,
+  hasBuiltInYouTubeDataApiKey,
+  setSavedYouTubeDataApiKey,
+} from '../utils/ytMusicApi';
 import type {
   AppTheme,
   FontStyle,
@@ -85,6 +90,7 @@ type Section =
   | 'info';
 
 export const SettingsView: React.FC = () => {
+  const [youtubeDataApiKey, setYoutubeDataApiKey] = useState(() => getSavedYouTubeDataApiKey());
   const {
     settings,
     updateSettings,
@@ -356,6 +362,32 @@ export const SettingsView: React.FC = () => {
                           CONNECTED
                         </span>
                       </Row>
+                      <div className="py-3.5 border-t border-app-theme">
+                        <label htmlFor="youtube-data-api-key" className="block text-base text-app-primary">
+                          YouTube Data API key
+                        </label>
+                        <p className="text-sm text-app-secondary mt-0.5 mb-2">
+                          Optional: verifies alternate uploads are embeddable. Stored only on this device.
+                        </p>
+                        <input
+                          id="youtube-data-api-key"
+                          type="password"
+                          value={youtubeDataApiKey}
+                          onChange={event => {
+                            const value = event.target.value;
+                            setYoutubeDataApiKey(value);
+                            setSavedYouTubeDataApiKey(value);
+                          }}
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          placeholder={hasBuiltInYouTubeDataApiKey() ? 'GitHub build key is configured' : 'Paste an API key (optional)'}
+                          className="w-full bg-app-card border border-app-theme rounded-xl py-2.5 px-3 text-base text-app-primary placeholder:text-app-secondary focus:outline-none"
+                        />
+                        <p className="text-xs text-app-secondary mt-2">
+                          Restrict the key to YouTube Data API v3. This never bypasses age restrictions.
+                        </p>
+                      </div>
                       <Row title="Invidious mirrors" subtitle="Backup stream sources">
                         <span className="text-xs font-semibold px-2.5 py-1 rounded bg-app-highlight text-app-inverse">
                           CONNECTED
@@ -383,7 +415,7 @@ export const SettingsView: React.FC = () => {
                           onChange={() => updateSettings({ autoPlayNext: !settings.autoPlayNext })}
                         />
                       </Row>
-                      <Row title="Background playback" subtitle="Keep playing outside the app">
+                      <Row title="Background playback" subtitle="Local and offline tracks outside the app">
                         <Switch
                           on={settings.backgroundPlayback}
                           onChange={() =>

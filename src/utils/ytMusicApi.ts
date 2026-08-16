@@ -71,6 +71,40 @@ const SONGS_PARAMS = 'EgWKAQIIAWoKEAkQBRAKEAMQBA==';
 const searchCache = new Map<string, Track[]>();
 const playlistCache = new Map<string, CommunityPlaylist[]>();
 const playlistTracksCache = new Map<string, Track[]>();
+const alternatePlaybackCache = new Map<string, Track[]>();
+
+const YOUTUBE_DATA_API_KEY_STORAGE = 'frf_youtube_data_api_key_v1';
+
+function getBuiltInYouTubeDataApiKey(): string {
+  return String(import.meta.env.VITE_YOUTUBE_DATA_API_KEY || '').trim();
+}
+
+export function getSavedYouTubeDataApiKey(): string {
+  try {
+    return localStorage.getItem(YOUTUBE_DATA_API_KEY_STORAGE)?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setSavedYouTubeDataApiKey(value: string): void {
+  try {
+    const clean = value.trim();
+    if (clean) localStorage.setItem(YOUTUBE_DATA_API_KEY_STORAGE, clean);
+    else localStorage.removeItem(YOUTUBE_DATA_API_KEY_STORAGE);
+    alternatePlaybackCache.clear();
+  } catch {
+    // Storage can be unavailable in private browsing.
+  }
+}
+
+export function hasBuiltInYouTubeDataApiKey(): boolean {
+  return Boolean(getBuiltInYouTubeDataApiKey());
+}
+
+function getYouTubeDataApiKey(): string {
+  return getSavedYouTubeDataApiKey() || getBuiltInYouTubeDataApiKey();
+}
 
 // Persisted search cache so repeat searches show instantly
 const SEARCH_CACHE_KEY = 'bw_music_search_cache_v1';
@@ -258,8 +292,9 @@ function mapInvidiousVideos(items: any): Track[] {
 
 async function fetchYouTubeHtmlSearch(query: string): Promise<Track[]> {
   try {
+    const base = USE_PROXY ? '/api/youtube-search' : 'https://www.youtube.com';
     const html = await httpGetText(
-      `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`,
+      `${base}/results?search_query=${encodeURIComponent(query)}`,
       5000
     );
     const match = html.match(/var ytInitialData = ({.*?});<\/script>/);
@@ -943,7 +978,80 @@ function alternateRelevance(track: Track, title: string, artist: string): number
     if (candidateTitle.has(token) && !wantedTitle.has(token)) score -= 0.15;
   });
 
+  const normalizedTitle = track.title.toLowerCase();
+  const normalizedArtist = track.artist.toLowerCase();
+  if (/official audio|official video|provided to youtube|topic\b/.test(`${normalizedTitle} ${normalizedArtist}`)) {
+    score += 0.08;
+  }
+
   return score;
+}
+
+async function filterEmbeddableWithDataApi(tracks: Track[]): Promise<Track[]> {
+  const key = getYouTubeDataApiKey();
+  const videoIds = tracks
+    .map(track => track.youtubeId)
+    .filter((id): id is string => Boolean(id))
+    .slice(0, 50);
+
+  if (!key || videoIds.length === 0) return tracks;
+
+  const url = new URL('https://www.googleapis.com/youtube/v3/videos');
+  url.searchParams.set('part', 'status');
+  url.searchParams.set('id', videoIds.join(','));
+  url.searchParams.set('key', key);
+
+  try {
+    const data = await httpGetJson(url.toString(), 6000);
+    const embeddableIds = new Set<string>(
+      (Array.isArray(data?.items) ? data.items : [])
+        .filter((item: any) => item?.status?.embeddable === true)
+        .map((item: any) => item.id)
+        .filter(Boolean)
+    );
+    return tracks.filter(track => track.youtubeId && embeddableIds.has(track.youtubeId));
+  } catch {
+    // A missing, disabled, or exhausted key must not break playback recovery.
+    return tracks;
+  }
+}
+
+async function getAlternatePlaybackCandidates(
+  title: string,
+  artist: string
+): Promise<Track[]> {
+  const cacheKey = `${artist} ${title}`.trim().toLowerCase();
+  const cached = alternatePlaybackCache.get(cacheKey);
+  if (cached) return cached;
+
+  const query = `${artist} ${title} official audio`;
+  const htmlResults = await fetchYouTubeHtmlSearch(query).catch(() => []);
+  let pool = htmlResults;
+
+  // Native YouTube HTML search normally supplies enough regular uploads. If
+  // it does not, add the app's existing video-search providers as a backup.
+  if (pool.length < 8) {
+    const providerResults = await searchYouTubeMusicVideos(query).catch(() => []);
+    const seen = new Set(pool.map(track => track.youtubeId).filter(Boolean));
+    pool = [
+      ...pool,
+      ...providerResults.filter(track => track.youtubeId && !seen.has(track.youtubeId)),
+    ];
+  }
+
+  const verified = await filterEmbeddableWithDataApi(pool);
+  const ranked = verified
+    .map(track => ({ track, score: alternateRelevance(track, title, artist) }))
+    .filter(candidate => candidate.score >= 0.62)
+    .sort((a, b) => b.score - a.score)
+    .map(candidate => candidate.track);
+
+  alternatePlaybackCache.set(cacheKey, ranked);
+  if (alternatePlaybackCache.size > 30) {
+    const oldestKey = alternatePlaybackCache.keys().next().value;
+    if (oldestKey) alternatePlaybackCache.delete(oldestKey);
+  }
+  return ranked;
 }
 
 // Finds another legitimate upload of the same recording. The IFrame Player is
@@ -957,15 +1065,9 @@ export async function findBestAlternateVideoId(
     typeof excludedVideoIds === 'string'
       ? new Set([excludedVideoIds])
       : new Set(excludedVideoIds);
-  const query = `${artist} ${title} official audio`;
   try {
-    const results = await searchYouTubeMusic(query);
-    const candidates = results
-      .filter(track => track.youtubeId && !excluded.has(track.youtubeId))
-      .map(track => ({ track, score: alternateRelevance(track, title, artist) }))
-      .filter(candidate => candidate.score >= 0.72)
-      .sort((a, b) => b.score - a.score);
-    return candidates[0]?.track.youtubeId || null;
+    const candidates = await getAlternatePlaybackCandidates(title, artist);
+    return candidates.find(track => track.youtubeId && !excluded.has(track.youtubeId))?.youtubeId || null;
   } catch {
     return null;
   }

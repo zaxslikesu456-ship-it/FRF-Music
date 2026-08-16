@@ -91,7 +91,45 @@ export const NowPlayingScreen: React.FC = () => {
 
   const activeLyricRef = useRef<HTMLParagraphElement | null>(null);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
+  const youtubeSurfaceRef = useRef<HTMLDivElement | null>(null);
   const touchX = useRef<number | null>(null);
+
+  // YouTube requires an embedded player viewport of at least 200x200. Keep the
+  // shared IFrame mounted under document.body (moving an iframe reloads it),
+  // and align it over the artwork slot while a YouTube track is open.
+  useEffect(() => {
+    if (!isPlayerOpen || !currentTrack?.isYouTube || !youtubeSurfaceRef.current) return;
+
+    const surface = youtubeSurfaceRef.current;
+    const alignPlayer = () => {
+      const player = document.getElementById('yt-hidden-player');
+      if (!player) return;
+      const rect = surface.getBoundingClientRect();
+      player.removeAttribute('aria-hidden');
+      player.style.cssText =
+        `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;` +
+        'min-width:200px;min-height:200px;opacity:1;pointer-events:auto;z-index:45;border:0;display:block;';
+      player.setAttribute('title', `${currentTrack.title} on YouTube`);
+    };
+
+    alignPlayer();
+    const observer = new MutationObserver(alignPlayer);
+    observer.observe(document.body, { childList: true, subtree: true });
+    const resizeObserver = new ResizeObserver(alignPlayer);
+    resizeObserver.observe(surface);
+    window.addEventListener('resize', alignPlayer);
+
+    return () => {
+      observer.disconnect();
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', alignPlayer);
+      const player = document.getElementById('yt-hidden-player');
+      if (!player) return;
+      player.setAttribute('aria-hidden', 'true');
+      player.style.cssText =
+        'position:fixed;left:-10000px;top:0;width:200px;height:200px;opacity:0;pointer-events:none;z-index:-1;border:0;';
+    };
+  }, [currentTrack?.id, currentTrack?.isYouTube, currentTrack?.title, isPlayerOpen]);
 
   // Fetch lyrics when track changes or user opens lyrics view
   useEffect(() => {
@@ -190,14 +228,17 @@ export const NowPlayingScreen: React.FC = () => {
           if (touchX.current === null) return;
           const dx = e.changedTouches[0].clientX - touchX.current;
           touchX.current = null;
-          if (dx < -60) setShowLyrics(true);
+          if (dx < -60 && !currentTrack.isYouTube) setShowLyrics(true);
           if (dx > 60) setShowLyrics(false);
         }}
       >
         {/* Top Navigation Header */}
         <div className="flex items-center justify-between safe-area-player-top pb-4 px-1">
           <button
-            onClick={() => setIsPlayerOpen(false)}
+            onClick={() => {
+              if (currentTrack.isYouTube && isPlaying) togglePlay();
+              setIsPlayerOpen(false);
+            }}
             className="p-2 text-app-primary hover:scale-110 active:scale-95 transition-transform"
             title="Minimize"
           >
@@ -250,7 +291,7 @@ export const NowPlayingScreen: React.FC = () => {
         </div>
 
         {/* Main Center Section: Artwork or Synchronized Animated Lyrics */}
-        {showLyrics ? (
+        {showLyrics && !currentTrack.isYouTube ? (
           <div
             ref={lyricsContainerRef}
             className="flex-1 min-h-0 overflow-y-auto w-full py-6 no-scrollbar space-y-5 px-2"
@@ -308,14 +349,27 @@ export const NowPlayingScreen: React.FC = () => {
             )}
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center py-4 min-h-0">
-            <img
-              src={currentTrack.coverUrl}
-              alt={currentTrack.title}
-              className={`w-full max-w-[320px] aspect-square object-cover rounded-2xl shadow-2xl transition-all duration-500 ${
-                isPlaying ? 'scale-100 shadow-purple-500/20' : 'scale-95 opacity-90'
-              }`}
-            />
+          <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0">
+            {currentTrack.isYouTube ? (
+              <>
+                <div
+                  ref={youtubeSurfaceRef}
+                  className="w-full max-w-[320px] aspect-square min-w-[200px] min-h-[200px] overflow-hidden rounded-2xl shadow-2xl bg-black"
+                  aria-label={`${currentTrack.title} YouTube player`}
+                />
+                <p className="text-xs text-app-secondary text-center mt-2">
+                  Keep this screen open during YouTube playback.
+                </p>
+              </>
+            ) : (
+              <img
+                src={currentTrack.coverUrl}
+                alt={currentTrack.title}
+                className={`w-full max-w-[320px] aspect-square object-cover rounded-2xl shadow-2xl transition-all duration-500 ${
+                  isPlaying ? 'scale-100 shadow-purple-500/20' : 'scale-95 opacity-90'
+                }`}
+              />
+            )}
           </div>
         )}
 
@@ -352,11 +406,18 @@ export const NowPlayingScreen: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setShowLyrics(v => !v)}
+              onClick={() => {
+                if (!currentTrack.isYouTube) setShowLyrics(v => !v);
+              }}
+              disabled={currentTrack.isYouTube}
               className={`p-2 transition-transform active:scale-95 ${
-                showLyrics ? 'text-app-primary font-bold' : 'text-app-secondary hover:text-app-primary'
+                currentTrack.isYouTube
+                  ? 'text-app-secondary opacity-35 cursor-not-allowed'
+                  : showLyrics
+                    ? 'text-app-primary font-bold'
+                    : 'text-app-secondary hover:text-app-primary'
               }`}
-              title="Toggle Lyrics"
+              title={currentTrack.isYouTube ? 'Keep the video visible during YouTube playback' : 'Toggle Lyrics'}
             >
               <Mic className="w-6 h-6" />
             </button>
