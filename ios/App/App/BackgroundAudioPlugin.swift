@@ -10,9 +10,15 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "update", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "playUrl", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pause", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "resume", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "seek", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise)
     ]
 
+    private var avPlayer: AVPlayer?
+    private var timeObserverToken: Any?
     private var isConfigured = false
 
     public override func load() {
@@ -41,18 +47,31 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
         rcc.playCommand.isEnabled = true
         rcc.playCommand.addTarget { [weak self] _ in
+            if let player = self?.avPlayer, player.currentItem != nil {
+                player.play()
+            }
             self?.notifyListeners("remotePlay", data: [:])
             return .success
         }
 
         rcc.pauseCommand.isEnabled = true
         rcc.pauseCommand.addTarget { [weak self] _ in
+            if let player = self?.avPlayer, player.currentItem != nil {
+                player.pause()
+            }
             self?.notifyListeners("remotePause", data: [:])
             return .success
         }
 
         rcc.togglePlayPauseCommand.isEnabled = true
         rcc.togglePlayPauseCommand.addTarget { [weak self] _ in
+            if let player = self?.avPlayer, player.currentItem != nil {
+                if player.rate > 0 {
+                    player.pause()
+                } else {
+                    player.play()
+                }
+            }
             self?.notifyListeners("remoteTogglePlay", data: [:])
             return .success
         }
@@ -72,11 +91,110 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         rcc.changePlaybackPositionCommand.isEnabled = true
         rcc.changePlaybackPositionCommand.addTarget { [weak self] event in
             if let posEvent = event as? MPChangePlaybackPositionCommandEvent {
+                if let player = self?.avPlayer, player.currentItem != nil {
+                    let targetTime = CMTime(seconds: posEvent.positionTime, preferredTimescale: 600)
+                    player.seek(to: targetTime)
+                }
                 self?.notifyListeners("remoteSeek", data: ["position": posEvent.positionTime])
                 return .success
             }
             return .commandFailed
         }
+    }
+
+    @objc public func playUrl(_ call: CAPPluginCall) {
+        setupAudioSession()
+
+        let urlString = call.getString("url", "")
+        let filePath = call.getString("filePath", "")
+        let title = call.getString("title", "")
+        let artist = call.getString("artist", "")
+        let coverUrl = call.getString("coverUrl", "")
+        let startTime = call.getDouble("startTime", 0.0)
+        let duration = call.getDouble("duration", 0.0)
+
+        var targetUrl: URL?
+
+        if !filePath.isEmpty {
+            let cleanPath = filePath.replacingOccurrences(of: "file://", with: "")
+            targetUrl = URL(fileURLWithPath: cleanPath)
+        } else if !urlString.isEmpty {
+            targetUrl = URL(string: urlString)
+        }
+
+        guard let validUrl = targetUrl else {
+            call.reject("Invalid audio URL or file path")
+            return
+        }
+
+        // Clean up any existing observer
+        if let token = timeObserverToken, let player = avPlayer {
+            player.removeTimeObserver(token)
+            timeObserverToken = nil
+        }
+
+        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: nil)
+
+        let playerItem = AVPlayerItem(url: validUrl)
+        if avPlayer == nil {
+            avPlayer = AVPlayer(playerItem: playerItem)
+        } else {
+            avPlayer?.replaceCurrentItem(with: playerItem)
+        }
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playerDidFinishPlaying),
+            name: .AVPlayerItemDidPlayToEndTime,
+            object: playerItem
+        )
+
+        // Periodic time observer for progress updates
+        let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
+        timeObserverToken = avPlayer?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            let currentSeconds = CMTimeGetSeconds(time)
+            let itemDuration = self?.avPlayer?.currentItem?.duration
+            let durSeconds = itemDuration != nil ? CMTimeGetSeconds(itemDuration!) : 0
+            self?.notifyListeners("playbackProgress", data: [
+                "currentTime": currentSeconds.isNaN ? 0 : currentSeconds,
+                "duration": durSeconds.isNaN ? 0 : durSeconds
+            ])
+        }
+
+        if startTime > 0 {
+            let cmStartTime = CMTime(seconds: startTime, preferredTimescale: 600)
+            avPlayer?.seek(to: cmStartTime)
+        }
+
+        avPlayer?.play()
+
+        updateNowPlaying(
+            title: title,
+            artist: artist,
+            isPlaying: true,
+            coverUrl: coverUrl.isEmpty ? nil : coverUrl,
+            duration: duration > 0 ? duration : nil,
+            position: startTime >= 0 ? startTime : nil
+        )
+
+        call.resolve()
+    }
+
+    @objc public func pause(_ call: CAPPluginCall) {
+        avPlayer?.pause()
+        call.resolve()
+    }
+
+    @objc public func resume(_ call: CAPPluginCall) {
+        avPlayer?.play()
+        call.resolve()
+    }
+
+    @objc public func seek(_ call: CAPPluginCall) {
+        let position = call.getDouble("position", 0.0)
+        let cmTime = CMTime(seconds: position, preferredTimescale: 600)
+        avPlayer?.seek(to: cmTime)
+        call.resolve()
     }
 
     @objc public func start(_ call: CAPPluginCall) {
@@ -120,8 +238,18 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc public func stop(_ call: CAPPluginCall) {
+        if let token = timeObserverToken, let player = avPlayer {
+            player.removeTimeObserver(token)
+            timeObserverToken = nil
+        }
+        avPlayer?.pause()
+        avPlayer?.replaceCurrentItem(with: nil)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         call.resolve()
+    }
+
+    @objc private func playerDidFinishPlaying() {
+        notifyListeners("playbackEnded", data: [:])
     }
 
     private func updateNowPlaying(
