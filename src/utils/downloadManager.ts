@@ -43,19 +43,17 @@ function getInvidiousBases() {
     'https://inv.nadeko.net/api/v1',
     'https://invidious.nerdvpn.de/api/v1',
     'https://invidious.private.coffee/api/v1',
+    'https://invidious.jing.rocks/api/v1',
     'https://yt.artemislena.eu/api/v1',
-    'https://inv.tux.pizza/api/v1',
-    'https://invidious.drgns.space/api/v1',
-    'https://y.com.sb/api/v1',
   ];
 }
 
 function getPipedBases() {
   return [
-    'https://pipedapi.kavin.rocks',
     'https://pipedapi.adminforge.de',
     'https://api.piped.private.coffee',
     'https://piped-api.lunar.icu',
+    'https://pipedapi.leptons.xyz',
   ];
 }
 
@@ -153,41 +151,39 @@ async function resolveFromCobalt(youtubeId: string): Promise<string> {
 }
 
 const YTM_API_KEY = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30';
-const YOUTUBE_APP_ORIGIN = 'https://com.frf.music';
 
 async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promise<string> {
   const playerUrl = USE_YT_PROXY
     ? '/api/youtubei/player?prettyPrint=false'
     : `https://www.youtube.com/youtubei/v1/player?key=${YTM_API_KEY}&prettyPrint=false`;
 
+  const headers: Record<string, string> = {
+    'User-Agent': client.userAgent,
+    'X-YouTube-Client-Name': client.clientId,
+    'X-YouTube-Client-Version': client.clientVersion,
+  };
+
+  const contextBody: any = {
+    client: {
+      clientName: client.clientName,
+      clientVersion: client.clientVersion,
+      ...(client.deviceMake ? { deviceMake: client.deviceMake } : {}),
+      ...(client.deviceModel ? { deviceModel: client.deviceModel } : {}),
+      ...(client.osName ? { osName: client.osName } : {}),
+      ...(client.osVersion ? { osVersion: client.osVersion } : {}),
+      hl: 'en',
+      gl: 'US',
+    },
+  };
+
   const data = await httpPostJson(
     playerUrl,
     {
-      context: {
-        client: {
-          clientName: client.clientName,
-          clientVersion: client.clientVersion,
-          ...(client.deviceMake ? { deviceMake: client.deviceMake } : {}),
-          ...(client.deviceModel ? { deviceModel: client.deviceModel } : {}),
-          ...(client.osName ? { osName: client.osName } : {}),
-          ...(client.osVersion ? { osVersion: client.osVersion } : {}),
-          hl: 'en',
-          gl: 'US',
-        },
-        thirdParty: {
-          embedUrl: YOUTUBE_APP_ORIGIN,
-        },
-      },
+      context: contextBody,
       videoId: youtubeId,
     },
     3000,
-    {
-      'User-Agent': client.userAgent,
-      'X-YouTube-Client-Name': client.clientId,
-      'X-YouTube-Client-Version': client.clientVersion,
-      Origin: YOUTUBE_APP_ORIGIN,
-      Referer: `${YOUTUBE_APP_ORIGIN}/`,
-    }
+    headers
   );
 
   const status = data?.playabilityStatus?.status;
@@ -203,8 +199,16 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
 
 async function resolveFromInnerTube(youtubeId: string): Promise<string> {
   const clients = [
-    // Standard YouTube Music and embedded-player clients. These requests do
-    // not opt out of YouTube's content or age checks.
+    {
+      clientName: 'IOS',
+      clientVersion: '19.29.1',
+      deviceMake: 'Apple',
+      deviceModel: 'iPhone16,2',
+      osName: 'iOS',
+      osVersion: '17.5.1.21F90',
+      userAgent: 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)',
+      clientId: '5',
+    },
     {
       clientName: 'ANDROID_MUSIC',
       clientVersion: '6.40.52',
@@ -212,10 +216,16 @@ async function resolveFromInnerTube(youtubeId: string): Promise<string> {
       clientId: '21',
     },
     {
-      clientName: 'WEB_EMBEDDED_PLAYER',
+      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      clientVersion: '2.0',
+      userAgent: 'Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.50 Safari/605.1.15',
+      clientId: '85',
+    },
+    {
+      clientName: 'WEB_REMIX',
       clientVersion: '1.20240801.01.00',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-      clientId: '56',
+      clientId: '67',
     },
   ];
 
