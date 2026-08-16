@@ -31,11 +31,16 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             try AVAudioSession.sharedInstance().setCategory(
                 .playback,
                 mode: .default,
-                options: [.mixWithOthers, .allowAirPlay, .allowBluetooth, .allowBluetoothA2DP]
+                options: []
             )
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            print("BackgroundAudioPlugin AudioSession setup error: \(error)")
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback)
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch {
+                print("BackgroundAudioPlugin AudioSession setup error: \(error)")
+            }
         }
     }
 

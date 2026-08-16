@@ -1469,17 +1469,44 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     });
 
-    // 2. YouTube tracks: Immediate player start via YouTube nocookie player
+    // 2. YouTube tracks: Resolve direct raw audio stream for native iOS AVPlayer & HTML5 background playback
     if (track.isYouTube && track.youtubeId) {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.removeAttribute('src');
-      }
+      const vid = savedYoutubeId || track.youtubeId;
+      setIsResolvingStream(true);
 
-      void startIframe(
-        savedYoutubeId ? { ...track, youtubeId: savedYoutubeId } : track,
-        startTime
-      );
+      void resolveAudioStreamUrl(vid)
+        .then(streamUrl => {
+          if (playGenRef.current !== currentGen) return;
+          if (streamUrl) {
+            return playAudioUrl(track, streamUrl, startTime);
+          }
+          throw new Error('No direct stream found');
+        })
+        .catch(async () => {
+          if (playGenRef.current !== currentGen) return;
+          try {
+            const altStream = await fetchDirectAudioStreamUrl(vid);
+            if (altStream && playGenRef.current === currentGen) {
+              return playAudioUrl(track, altStream, startTime);
+            }
+          } catch {
+            // ignore
+          }
+
+          // Fallback to iframe if direct stream extraction fails
+          if (playGenRef.current === currentGen) {
+            void startIframe(
+              savedYoutubeId ? { ...track, youtubeId: savedYoutubeId } : track,
+              startTime
+            );
+          }
+        })
+        .finally(() => {
+          if (playGenRef.current === currentGen) {
+            setIsResolvingStream(false);
+          }
+        });
+
       return;
     }
 
