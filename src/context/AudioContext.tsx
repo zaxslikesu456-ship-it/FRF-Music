@@ -16,6 +16,13 @@ import {
   resolveAudioStreamUrl,
 } from '../utils/downloadManager';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import {
+  idbSaveItem,
+  idbGetItem,
+  loadFromAnyKey,
+  exportLibraryBackup,
+  parseLibraryBackup,
+} from '../utils/persistentLibrary';
 
 interface BackgroundAudioPlugin {
   start(options: { title: string; artist: string; isPlaying: boolean }): Promise<void>;
@@ -111,6 +118,8 @@ interface AudioContextType {
   startRadio: (track: Track) => Promise<void>;
   sleepTimerMinutes: number | null;
   setSleepTimer: (minutes: number | null) => void;
+  exportLibrary: () => void;
+  importLibrary: (file: File) => Promise<boolean>;
 }
 
 const DEFAULT_SETTINGS: SettingsState = {
@@ -120,6 +129,7 @@ const DEFAULT_SETTINGS: SettingsState = {
   backgroundAnimation: 'off',
   playbackSpeed: 1.0,
   compactView: false,
+  iconSize: 'standard',
   autoPlayNext: true,
   sortBy: 'title',
   downloadQuality: 'high',
@@ -164,8 +174,10 @@ const AudioContext = createContext<AudioContextType | null>(null);
 
 export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [tracks, setTracks] = useState<Track[]>(() => {
-    const saved = localStorage.getItem('bw_music_tracks_v11');
-    const list = saved && JSON.parse(saved).length > 0 ? JSON.parse(saved) : INITIAL_TRACKS;
+    const list = loadFromAnyKey(
+      ['bw_music_tracks_v11', 'bw_music_tracks_v10', 'bw_music_tracks_v9', 'bw_music_tracks_v1', 'bw_music_tracks'],
+      INITIAL_TRACKS
+    );
     const seen = new Set<string>();
     return list.filter((t: Track) => {
       if (!t || seen.has(t.id)) return false;
@@ -174,20 +186,26 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   });
 
-  const [playlists, setPlaylists] = useState<Playlist[]>(() => {
-    const saved = localStorage.getItem('bw_music_playlists_v11');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [playlists, setPlaylists] = useState<Playlist[]>(() =>
+    loadFromAnyKey(
+      ['bw_music_playlists_v11', 'bw_music_playlists_v10', 'bw_music_playlists_v9', 'bw_music_playlists_v1', 'bw_music_playlists'],
+      []
+    )
+  );
 
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    const saved = localStorage.getItem('bw_music_favorites_v11');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [favorites, setFavorites] = useState<string[]>(() =>
+    loadFromAnyKey(
+      ['bw_music_favorites_v11', 'bw_music_favorites_v10', 'bw_music_favorites_v9', 'bw_music_favorites_v1', 'bw_music_favorites'],
+      []
+    )
+  );
 
-  const [downloads, setDownloads] = useState<string[]>(() => {
-    const saved = localStorage.getItem('bw_music_downloads_v11');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [downloads, setDownloads] = useState<string[]>(() =>
+    loadFromAnyKey(
+      ['bw_music_downloads_v11', 'bw_music_downloads_v10', 'bw_music_downloads_v9', 'bw_music_downloads_v1', 'bw_music_downloads'],
+      []
+    )
+  );
 
   const [downloadedTracks, setDownloadedTracks] = useState<Track[]>(() => {
     const saved = localStorage.getItem('bw_music_downloaded_objects_v11');
@@ -260,8 +278,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const [settings, setSettings] = useState<SettingsState>(() => {
-    const saved = localStorage.getItem('bw_music_settings_v11');
-    return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
+    const saved = loadFromAnyKey<Partial<SettingsState> | null>(
+      ['bw_music_settings_v11', 'bw_music_settings_v10', 'bw_music_settings_v9', 'bw_music_settings_v1', 'bw_music_settings'],
+      null
+    );
+    return saved ? { ...DEFAULT_SETTINGS, ...saved } : DEFAULT_SETTINGS;
   });
 
   const [currentTrack, setCurrentTrack] = useState<Track | null>(LAST_SESSION.track);
@@ -485,7 +506,41 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Library only contains songs the user downloaded or added locally.
   // Discovery happens on Home and in Library > Discover instead.
 
-  // Persistence
+  // Permanent IndexedDB automatic restore (survives app updates, scheme changes & cache purges)
+  useEffect(() => {
+    void Promise.all([
+      idbGetItem<Track[]>('permanent_tracks'),
+      idbGetItem<Playlist[]>('permanent_playlists'),
+      idbGetItem<string[]>('permanent_favorites'),
+      idbGetItem<string[]>('permanent_downloads'),
+      idbGetItem<SettingsState>('permanent_settings'),
+    ]).then(([idbTracks, idbPlaylists, idbFavorites, idbDownloads, idbSettings]) => {
+      if (idbTracks && idbTracks.length > 0) {
+        setTracks(prev => {
+          if (prev.length <= INITIAL_TRACKS.length) return idbTracks;
+          const merged = [...prev];
+          for (const t of idbTracks) {
+            if (!merged.some(m => m.id === t.id)) merged.push(t);
+          }
+          return merged;
+        });
+      }
+      if (idbPlaylists && idbPlaylists.length > 0) {
+        setPlaylists(prev => (prev.length === 0 ? idbPlaylists : prev));
+      }
+      if (idbFavorites && idbFavorites.length > 0) {
+        setFavorites(prev => (prev.length === 0 ? idbFavorites : prev));
+      }
+      if (idbDownloads && idbDownloads.length > 0) {
+        setDownloads(prev => (prev.length === 0 ? idbDownloads : prev));
+      }
+      if (idbSettings) {
+        setSettings(prev => ({ ...DEFAULT_SETTINGS, ...idbSettings, ...prev }));
+      }
+    });
+  }, []);
+
+  // Dual-Persistence (synchronous localStorage + permanent IndexedDB)
   useEffect(() => {
     try {
       localStorage.setItem('bw_music_tracks_v11', JSON.stringify(tracks));
@@ -494,8 +549,14 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       localStorage.setItem('bw_music_downloads_v11', JSON.stringify(downloads));
       localStorage.setItem('bw_music_settings_v11', JSON.stringify(settings));
     } catch {
-      // storage full (large background image) — keep running in memory
+      // storage full
     }
+    // Permanent IndexedDB backup
+    void idbSaveItem('permanent_tracks', tracks);
+    void idbSaveItem('permanent_playlists', playlists);
+    void idbSaveItem('permanent_favorites', favorites);
+    void idbSaveItem('permanent_downloads', downloads);
+    void idbSaveItem('permanent_settings', settings);
   }, [tracks, playlists, favorites, downloads, settings]);
 
   // Apply theme / custom colors / transparency as CSS variables
@@ -1679,6 +1740,21 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  const exportLibrary = () => {
+    exportLibraryBackup({ tracks, playlists, favorites, downloads, settings });
+  };
+
+  const importLibrary = async (file: File): Promise<boolean> => {
+    const data = await parseLibraryBackup(file);
+    if (!data) return false;
+    if (data.tracks && data.tracks.length > 0) setTracks(data.tracks);
+    if (data.playlists) setPlaylists(data.playlists);
+    if (data.favorites) setFavorites(data.favorites);
+    if (data.downloads) setDownloads(data.downloads);
+    if (data.settings) setSettings(prev => ({ ...prev, ...data.settings }));
+    return true;
+  };
+
   const clearAllData = () => {
     if (sleepTimerRef.current) clearTimeout(sleepTimerRef.current);
     BackgroundAudio?.stop().catch(() => {});
@@ -1764,6 +1840,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         clearAllData,
         startRadio,
         setSleepTimer,
+        exportLibrary,
+        importLibrary,
       }}
     >
       {children}

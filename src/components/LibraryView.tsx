@@ -71,7 +71,11 @@ export const LibraryView: React.FC = () => {
     hideArtist,
     reorderPlaylistTracks,
     removeTrackFromPlaylist,
+    settings,
   } = useAudio();
+
+  const isCompact = settings.iconSize === 'compact' || settings.compactView;
+  const isLarge = settings.iconSize === 'large';
 
   const allKnownTracks = useMemo(() => {
     const map = new Map<string, Track>();
@@ -338,19 +342,21 @@ export const LibraryView: React.FC = () => {
               <button
                 key={t.id}
                 onClick={() => playQueue(sortedTracks, idx)}
-                className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
+                className={`w-full flex items-center gap-4 ${isCompact ? 'p-1.5' : 'p-2'} rounded-xl text-left transition-all`}
               >
                 <img
                   src={t.coverUrl}
                   alt={t.title}
                   loading="lazy"
-                  className="w-14 h-14 rounded-lg object-cover shrink-0"
+                  className={`${
+                    isCompact ? 'w-10 h-10' : isLarge ? 'w-16 h-16' : 'w-14 h-14'
+                  } rounded-lg object-cover shrink-0 transition-all`}
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-base font-semibold text-app-primary truncate">{t.title}</p>
-                  <p className="text-sm text-app-secondary truncate mt-0.5">{t.artist}</p>
+                  <p className={`${isCompact ? 'text-sm' : 'text-base'} font-semibold text-app-primary truncate`}>{t.title}</p>
+                  <p className={`${isCompact ? 'text-xs' : 'text-sm'} text-app-secondary truncate mt-0.5`}>{t.artist}</p>
                 </div>
-                <span className="text-sm text-app-secondary shrink-0">
+                <span className={`${isCompact ? 'text-xs' : 'text-sm'} text-app-secondary shrink-0`}>
                   {formatDuration(t.duration)}
                 </span>
                 <span
@@ -363,7 +369,7 @@ export const LibraryView: React.FC = () => {
                   className="p-1.5 text-app-secondary shrink-0"
                   title="More Options"
                 >
-                  <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current">
+                  <svg viewBox="0 0 24 24" className={`${isCompact ? 'w-4 h-4' : 'w-5 h-5'} fill-current`}>
                     <circle cx="12" cy="5" r="2" />
                     <circle cx="12" cy="12" r="2" />
                     <circle cx="12" cy="19" r="2" />
@@ -515,19 +521,21 @@ export const LibraryView: React.FC = () => {
             <button
               key={`${t.id}-${idx}`}
               onClick={() => playQueue(discoverTracks, idx)}
-              className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
+              className={`w-full flex items-center gap-4 ${isCompact ? 'p-1.5' : 'p-2'} rounded-xl text-left transition-all`}
             >
               <img
                 src={t.coverUrl}
                 alt={t.title}
                 loading="lazy"
-                className="w-14 h-14 rounded-lg object-cover shrink-0"
+                className={`${
+                  isCompact ? 'w-10 h-10' : isLarge ? 'w-16 h-16' : 'w-14 h-14'
+                } rounded-lg object-cover shrink-0 transition-all`}
               />
               <div className="flex-1 min-w-0">
-                <p className="text-base font-semibold text-app-primary truncate">{t.title}</p>
-                <p className="text-sm text-app-secondary truncate mt-0.5">{t.artist}</p>
+                <p className={`${isCompact ? 'text-sm' : 'text-base'} font-semibold text-app-primary truncate`}>{t.title}</p>
+                <p className={`${isCompact ? 'text-xs' : 'text-sm'} text-app-secondary truncate mt-0.5`}>{t.artist}</p>
               </div>
-              <span className="text-sm text-app-secondary shrink-0">
+              <span className={`${isCompact ? 'text-xs' : 'text-sm'} text-app-secondary shrink-0`}>
                 {formatDuration(t.duration)}
               </span>
               <span
@@ -540,7 +548,7 @@ export const LibraryView: React.FC = () => {
                 className="p-1.5 text-app-secondary shrink-0"
                 title="More Options"
               >
-                <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current">
+                <svg viewBox="0 0 24 24" className={`${isCompact ? 'w-4 h-4' : 'w-5 h-5'} fill-current`}>
                   <circle cx="12" cy="5" r="2" />
                   <circle cx="12" cy="12" r="2" />
                   <circle cx="12" cy="19" r="2" />
