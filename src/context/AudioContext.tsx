@@ -65,7 +65,10 @@ const BackgroundAudio = Capacitor.isNativePlatform()
   ? registerPlugin<BackgroundAudioPlugin>('BackgroundAudio')
   : null;
 
-const YOUTUBE_APP_ORIGIN = 'https://com.frf.music';
+const YOUTUBE_APP_ORIGIN =
+  typeof window !== 'undefined' && window.location.origin.startsWith('http')
+    ? window.location.origin
+    : 'https://music.youtube.com';
 const YOUTUBE_ALTERNATE_ERROR_CODES = new Set([2, 100, 101, 150]);
 const MAX_ALTERNATE_UPLOADS = 6;
 const YOUTUBE_PLAYBACK_OVERRIDES_KEY = 'frf_youtube_playback_overrides_v1';
