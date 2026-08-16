@@ -155,71 +155,6 @@ async function resolveFromCobalt(youtubeId: string): Promise<string> {
 const YTM_API_KEY = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30';
 const YOUTUBE_APP_ORIGIN = 'https://com.frf.music';
 
-class AgeRestrictedPlaybackError extends Error {
-  constructor() {
-    super('This video requires age verification on YouTube');
-    this.name = 'AgeRestrictedPlaybackError';
-  }
-}
-
-const restrictionCheckCache = new Map<string, boolean>();
-
-function isAgeRestrictedPlayerResponse(data: any): boolean {
-  const status = String(data?.playabilityStatus?.status || '').toLowerCase();
-  const details = JSON.stringify(data?.playabilityStatus || {}).toLowerCase();
-  return (
-    status === 'age_check_required' ||
-    details.includes('confirm your age') ||
-    details.includes('age-restricted') ||
-    details.includes('age restricted')
-  );
-}
-
-async function assertNotAgeRestricted(youtubeId: string): Promise<void> {
-  if (restrictionCheckCache.get(youtubeId) === true) {
-    throw new AgeRestrictedPlaybackError();
-  }
-  if (restrictionCheckCache.get(youtubeId) === false) return;
-
-  try {
-    const data = await httpPostJson(
-      USE_YT_PROXY
-        ? '/api/youtubei/player?prettyPrint=false'
-        : `https://www.youtube.com/youtubei/v1/player?key=${YTM_API_KEY}&prettyPrint=false`,
-      {
-        context: {
-          client: {
-            clientName: 'WEB_EMBEDDED_PLAYER',
-            clientVersion: '1.20240801.01.00',
-            hl: 'en',
-            gl: 'US',
-          },
-          thirdParty: { embedUrl: YOUTUBE_APP_ORIGIN },
-        },
-        videoId: youtubeId,
-      },
-      3000,
-      {
-        'X-YouTube-Client-Name': '56',
-        'X-YouTube-Client-Version': '1.20240801.01.00',
-        Origin: YOUTUBE_APP_ORIGIN,
-        Referer: `${YOUTUBE_APP_ORIGIN}/`,
-      }
-    );
-
-    if (isAgeRestrictedPlayerResponse(data)) {
-      restrictionCheckCache.set(youtubeId, true);
-      throw new AgeRestrictedPlaybackError();
-    }
-    if (data?.playabilityStatus?.status === 'OK') {
-      restrictionCheckCache.set(youtubeId, false);
-    }
-  } catch (error) {
-    if (error instanceof AgeRestrictedPlaybackError) throw error;
-    // A failed preflight must not make an otherwise playable song unavailable.
-  }
-}
-
 async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promise<string> {
   const playerUrl = USE_YT_PROXY
     ? '/api/youtubei/player?prettyPrint=false'
@@ -321,7 +256,6 @@ async function resolveFromInvidious(
 const inflightResolves = new Map<string, Promise<string>>();
 
 async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string> {
-  await assertNotAgeRestricted(youtubeId);
   try {
     return await raceFirstUrl([
       () => resolveFromInnerTube(youtubeId),
