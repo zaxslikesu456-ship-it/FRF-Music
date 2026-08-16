@@ -12,19 +12,15 @@ const config: CapacitorConfig = {
   ios: {
     allowsLinkPreview: false,
     scrollEnabled: true,
+    webContentsDebuggingEnabled: true,
+    appendUserAgent: 'Safari/605.1.15',
   },
   server: {
-    iosScheme: 'capacitor',
-    allowNavigation: [
-      '*',
-      'https://*.youtube.com',
-      'https://*.youtube-nocookie.com',
-      'https://*.googlevideo.com',
-      'https://*.invidious.*',
-      'https://*.piped.*',
-      'https://*.cobalt.tools'
-    ]
-  }
+    // CRITICAL: Must be 'https' so YouTube IFrame API sees an https:// origin
+    // and allows media playback. 'capacitor' scheme gets blocked by YouTube.
+    iosScheme: 'https',
+    allowNavigation: ['*'],
+  },
 };
 
 export default config;
