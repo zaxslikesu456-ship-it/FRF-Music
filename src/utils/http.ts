@@ -52,7 +52,7 @@ export function isTauriRuntime(): boolean {
 export async function httpPostJson(
   url: string,
   body: unknown,
-  timeout = 15000,
+  timeout = 5000,
   extraHeaders?: Record<string, string>
 ): Promise<any> {
   const headers = {
@@ -100,7 +100,7 @@ export async function httpPostJson(
 
 export async function httpGetJson(
   url: string,
-  timeout = 15000,
+  timeout = 5000,
   extraHeaders?: Record<string, string>
 ): Promise<any> {
   const headers = {
