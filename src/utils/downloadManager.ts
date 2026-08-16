@@ -1,5 +1,4 @@
 import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
 import type { Track } from '../types/music';
 import { httpGetJson, httpPostJson, isTauriRuntime } from './http';
 
@@ -397,20 +396,6 @@ export function isTrackOffline(trackId: string): boolean {
   return Boolean(getOfflineRecord(trackId));
 }
 
-// Convert Blob to Base64 String for Capacitor Filesystem storage on Android
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const res = reader.result as string;
-      const base64 = res.split(',')[1] || res;
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
 export async function downloadTrackToFile(
   track: Track,
   onProgress?: (p: { bytes: number; contentLength: number }) => void
@@ -447,30 +432,9 @@ export async function downloadTrackToFile(
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
 
-    let savedPath = '';
-    let webUrl = '';
-
-    if (IS_NATIVE) {
-      // Android Native: Save binary directly to Android Filesystem (com.frf.music/files/tracks/...)
-      const base64Data = await blobToBase64(blob);
-      const filename = `tracks/${track.id}.m4a`;
-      await Filesystem.writeFile({
-        path: filename,
-        data: base64Data,
-        directory: Directory.Data,
-        recursive: true,
-      });
-      const uriRes = await Filesystem.getUri({
-        path: filename,
-        directory: Directory.Data,
-      });
-      savedPath = uriRes.uri;
-    } else {
-      // Desktop / Web: Store audio Blob permanently in IndexedDB
-      await storeBlobOffline(track.id, blob);
-      webUrl = URL.createObjectURL(blob);
-      activeObjectUrls.set(track.id, webUrl);
-    }
+    await storeBlobOffline(track.id, blob);
+    const webUrl = URL.createObjectURL(blob);
+    activeObjectUrls.set(track.id, webUrl);
 
     if (onProgress) {
       onProgress({ bytes: blob.size, contentLength: blob.size });
@@ -482,7 +446,7 @@ export async function downloadTrackToFile(
     const filtered = records.filter(r => r.trackId !== track.id);
     filtered.push({
       trackId: track.id,
-      path: savedPath,
+      path: '',
       webUrl,
       size: blob.size,
       downloadedAt: Date.now(),
@@ -527,25 +491,17 @@ export async function removeOfflineTrack(trackId: string): Promise<void> {
     const rec = records.find(r => r.trackId === trackId);
 
     if (rec) {
-      if (IS_NATIVE && rec.path) {
-        try {
-          await Filesystem.deleteFile({ path: rec.path, directory: Directory.Data });
-        } catch {
-          // ignore
-        }
-      } else {
-        const objUrl = activeObjectUrls.get(trackId);
-        if (objUrl) {
-          URL.revokeObjectURL(objUrl);
-          activeObjectUrls.delete(trackId);
-        }
-        try {
-          const db = await openDownloadsDB();
-          const tx = db.transaction('files', 'readwrite');
-          tx.objectStore('files').delete(trackId);
-        } catch {
-          // ignore
-        }
+      const objUrl = activeObjectUrls.get(trackId);
+      if (objUrl) {
+        URL.revokeObjectURL(objUrl);
+        activeObjectUrls.delete(trackId);
+      }
+      try {
+        const db = await openDownloadsDB();
+        const tx = db.transaction('files', 'readwrite');
+        tx.objectStore('files').delete(trackId);
+      } catch {
+        // ignore
       }
       records = records.filter(r => r.trackId !== trackId);
       localStorage.setItem(OFFLINE_KEY, JSON.stringify(records));
