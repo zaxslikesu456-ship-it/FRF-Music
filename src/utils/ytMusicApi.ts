@@ -892,3 +892,56 @@ export async function fetchYouTubePlaylistTracks(
   }
   return tracks;
 }
+
+export async function findPlayableAlternateVideoId(
+  title: string,
+  artist: string,
+  currentVideoId: string
+): Promise<string | null> {
+  const query = `${title} ${artist}`.replace(/[^\w\s]/gi, ' ').trim();
+  try {
+    const data = await httpPostJson(
+      'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+      {
+        context: {
+          client: {
+            clientName: 'WEB',
+            clientVersion: '2.20240801.01.00',
+            hl: 'en',
+            gl: 'US',
+          },
+        },
+        query: `${query} audio`,
+      },
+      4000
+    );
+
+    const sections =
+      data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
+        ?.sectionListRenderer?.contents || [];
+
+    for (const s of sections) {
+      const items = s?.itemSectionRenderer?.contents || [];
+      for (const item of items) {
+        const vid =
+          item?.videoRenderer?.videoId ||
+          item?.compactVideoRenderer?.videoId;
+        if (vid && vid !== currentVideoId) {
+          return vid;
+        }
+      }
+    }
+  } catch {
+    // try fallback
+  }
+
+  try {
+    const results = await searchYouTubeMusic(`${query} music`);
+    const found = results.find(t => t.youtubeId && t.youtubeId !== currentVideoId);
+    if (found?.youtubeId) return found.youtubeId;
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
