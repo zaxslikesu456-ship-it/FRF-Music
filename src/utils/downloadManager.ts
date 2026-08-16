@@ -152,10 +152,12 @@ async function resolveFromCobalt(youtubeId: string): Promise<string> {
   throw new Error('Cobalt failed');
 }
 
+const YTM_API_KEY = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30';
+
 async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promise<string> {
   const playerUrl = USE_YT_PROXY
     ? '/api/youtubei/player?prettyPrint=false'
-    : 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
+    : `https://www.youtube.com/youtubei/v1/player?key=${YTM_API_KEY}&prettyPrint=false`;
 
   const data = await httpPostJson(
     playerUrl,
@@ -164,6 +166,10 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
         client: {
           clientName: client.clientName,
           clientVersion: client.clientVersion,
+          ...(client.deviceMake ? { deviceMake: client.deviceMake } : {}),
+          ...(client.deviceModel ? { deviceModel: client.deviceModel } : {}),
+          ...(client.osName ? { osName: client.osName } : {}),
+          ...(client.osVersion ? { osVersion: client.osVersion } : {}),
           hl: 'en',
           gl: 'US',
         },
@@ -172,7 +178,7 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
       contentCheckOk: true,
       racyCheckOk: true,
     },
-    2500,
+    3000,
     {
       'User-Agent': client.userAgent,
       'X-YouTube-Client-Name': client.clientId,
@@ -196,30 +202,34 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
 async function resolveFromInnerTube(youtubeId: string): Promise<string> {
   const clients = [
     {
+      clientName: 'ANDROID_VR',
+      clientVersion: '1.60.19',
+      deviceMake: 'Oculus',
+      deviceModel: 'Quest 3',
+      osName: 'Android',
+      osVersion: '12',
+      userAgent: 'Mozilla/5.0 (Linux; Android 12; Quest 3) AppleWebKit/537.36 (KHTML, like Gecko) OculusBrowser/32.0.0.0.0 Safari/537.36',
+      clientId: '28',
+    },
+    {
+      clientName: 'ANDROID_MUSIC',
+      clientVersion: '6.40.52',
+      userAgent: 'com.google.android.apps.youtube.music/6.40.52 (Linux; U; Android 14; en_US) gzip',
+      clientId: '21',
+    },
+    {
+      clientName: 'WEB_EMBEDDED_PLAYER',
+      clientVersion: '1.20240801.01.00',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+      clientId: '56',
+    },
+    {
       clientName: 'IOS',
       clientVersion: '19.29.1',
       deviceMake: 'Apple',
       deviceModel: 'iPhone16,2',
       userAgent: 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)',
       clientId: '5',
-    },
-    {
-      clientName: 'ANDROID',
-      clientVersion: '19.29.1',
-      userAgent: 'com.google.android.youtube/19.29.1 (Linux; U; Android 14; en_US) gzip',
-      clientId: '3',
-    },
-    {
-      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-      clientVersion: '2.0',
-      userAgent: 'Mozilla/5.0 (PlayStation 4 10.01) AppleWebKit/605.1.15 (KHTML, like Gecko)',
-      clientId: '85',
-    },
-    {
-      clientName: 'WEB_REMIX',
-      clientVersion: '1.20260812.01.00',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0',
-      clientId: '67',
     },
   ];
 

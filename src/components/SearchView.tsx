@@ -201,28 +201,35 @@ export const SearchView: React.FC = () => {
       saveHistory(searchQuery);
       try {
         if (searchMode === 'results') {
-          const [songs, artists, albums, playlists] = await Promise.all([
-            searchYouTubeMusic(searchQuery).catch(() => []),
+          // Fetch songs first for instant results (< 300ms)
+          const songs = await searchYouTubeMusic(searchQuery).catch(() => []);
+          if (!isMounted) return;
+          const validSongs = songs || [];
+          setSearchResults(validSongs);
+          setIsSearching(false);
+
+          // Populate initial fast derived results
+          setArtistResults(deriveArtistsFromSongs(searchQuery, validSongs));
+          setAlbumResults(deriveAlbumsFromSongs(validSongs));
+          setPlaylistResults(derivePlaylistsFromSongs(searchQuery, validSongs));
+
+          // Fetch rich artists, albums, playlists in background without blocking songs
+          void Promise.all([
             searchYouTubeMusicArtists(searchQuery).catch(() => []),
             searchYouTubeMusicAlbums(searchQuery).catch(() => []),
             searchYouTubeMusicPlaylists(searchQuery).catch(() => []),
-          ]);
-
-          if (!isMounted) return;
-
-          const validSongs = songs || [];
-          setSearchResults(validSongs);
-
-          const finalArtists = artists.length > 0 ? artists : deriveArtistsFromSongs(searchQuery, validSongs);
-          const finalAlbums = albums.length > 0 ? albums : deriveAlbumsFromSongs(validSongs);
-          const finalPlaylists = playlists.length > 0 ? playlists : derivePlaylistsFromSongs(searchQuery, validSongs);
-
-          setArtistResults(finalArtists);
-          setAlbumResults(finalAlbums);
-          setPlaylistResults(finalPlaylists);
+          ]).then(([artists, albums, playlists]) => {
+            if (!isMounted) return;
+            if (artists && artists.length > 0) setArtistResults(artists);
+            if (albums && albums.length > 0) setAlbumResults(albums);
+            if (playlists && playlists.length > 0) setPlaylistResults(playlists);
+          });
         } else if (searchMode === 'songs') {
           const r = await searchYouTubeMusic(searchQuery).catch(() => []);
-          if (isMounted) setSearchResults(r || []);
+          if (isMounted) {
+            setSearchResults(r || []);
+            setIsSearching(false);
+          }
         } else if (searchMode === 'artists') {
           let r = await searchYouTubeMusicArtists(searchQuery).catch(() => []);
           if ((!r || r.length === 0) && searchResults.length > 0) {
