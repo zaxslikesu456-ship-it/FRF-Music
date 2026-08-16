@@ -1162,6 +1162,8 @@ async function getAlternatePlaybackCandidates(
     `${artist} - ${title} Topic`,
     `${artist} ${title} official audio`,
     `${artist} ${title} audio`,
+    `${artist} ${title} lyrics`,
+    `${title} ${artist}`,
   ];
 
   let pool: Track[] = [];
@@ -1190,7 +1192,7 @@ async function getAlternatePlaybackCandidates(
           pool.push(t);
         }
       }
-      if (pool.length >= 10) break;
+      if (pool.length >= 15) break;
     } catch {
       // continue
     }
@@ -1207,11 +1209,13 @@ async function getAlternatePlaybackCandidates(
   }
 
   const verified = await filterEmbeddableWithDataApi(pool);
-  const ranked = verified
+  const scored = verified
     .map(track => ({ track, score: alternateRelevance(track, title, artist, expectedDuration) }))
-    .filter(candidate => Number.isFinite(candidate.score) && candidate.score >= 0.7)
+    .filter(candidate => Number.isFinite(candidate.score) && candidate.score >= 0.35)
     .sort((a, b) => b.score - a.score)
     .map(candidate => candidate.track);
+
+  const ranked = scored.length > 0 ? scored : pool;
 
   alternatePlaybackCache.set(cacheKey, ranked);
   if (alternatePlaybackCache.size > 30) {
