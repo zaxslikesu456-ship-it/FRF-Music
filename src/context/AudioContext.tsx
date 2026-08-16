@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import type { Track, Playlist, RepeatMode, SettingsState, NavTab } from '../types/music';
 import { INITIAL_TRACKS } from '../utils/sampleData';
 import { applyThemeSettings } from '../utils/theme';
-import { searchYouTubeMusic } from '../utils/ytMusicApi';
+import { searchYouTubeMusic, findPlayableAlternateVideoId } from '../utils/ytMusicApi';
 import {
   downloadTrackToFile,
   deleteOfflineFile,
@@ -693,11 +693,36 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             latestActionsRef.current.handleEnded();
           }
         },
-        onError: () => {
+        onError: async (event: any) => {
+          const errorCode = event?.data;
+          console.warn('YouTube Player Error:', errorCode);
           const t = currentTrackRef.current;
-          if (t?.isYouTube && t.youtubeId) {
-            void fallbackToStreamRef.current(t, true);
+          if (!t?.youtubeId) return;
+
+          // If track failed with 101, 150, 100, 2:
+          // Seamlessly swap to the alternate official upload of the same song!
+          try {
+            const altId = await findPlayableAlternateVideoId(t.title, t.artist, t.youtubeId);
+            if (altId && ytPlayerRef.current?.loadVideoById && currentTrackRef.current?.id === t.id) {
+              console.log(`Auto-switching to alternate videoId for "${t.title}": ${altId}`);
+              t.youtubeId = altId;
+              ytPlayerRef.current.loadVideoById({
+                videoId: altId,
+                startSeconds: 0,
+              });
+              try {
+                ytPlayerRef.current.playVideo();
+              } catch {
+                // ignore
+              }
+              setIsPlaying(true);
+              return;
+            }
+          } catch {
+            // ignore
           }
+
+          void fallbackToStreamRef.current(t, true);
         },
       },
     });
