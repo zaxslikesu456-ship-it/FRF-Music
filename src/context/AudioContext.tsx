@@ -9,7 +9,6 @@ import {
   getOfflinePlaybackUrl,
   getOfflinePlaybackUrlAsync,
   getOfflineRecord,
-  getCachedStreamUrl,
   setCachedStreamUrl,
   dropCachedStreamUrl,
   isTrackOffline,
@@ -641,9 +640,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       el.setAttribute('aria-hidden', 'true');
       document.body.appendChild(el);
     }
-    // Must be on-screen with non-zero dimensions and opacity > 0 for iOS WebKit to allow media playback
+    // Kept in the DOM rendering tree with opacity:0.99 so iOS WebKit doesn't throttle audio playback
     el.style.cssText =
-      'position:fixed;bottom:0;right:0;width:240px;height:160px;opacity:0.005;pointer-events:none;z-index:-10;';
+      'position:fixed;bottom:0;right:0;width:64px;height:64px;opacity:0.99;pointer-events:none;z-index:-999;clip-path:circle(1px at 0 0);';
     return el;
   };
 
@@ -653,7 +652,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     ytPlayerRef.current = new window.YT.Player('yt-hidden-player', {
       height: '160',
       width: '240',
-      host: 'https://www.youtube.com',
+      host: 'https://www.youtube-nocookie.com',
       playerVars: {
         autoplay: 1,
         controls: 0,
@@ -662,7 +661,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         rel: 0,
         enablejsapi: 1,
         playsinline: 1,
-        origin: window.location.origin,
+        widget_referrer: 'https://www.youtube.com',
       },
       events: {
         onReady: () => {
@@ -705,15 +704,15 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const loadYtApi = (): Promise<void> => {
-    if (isYtReadyRef.current && ytPlayerRef.current) return Promise.resolve();
+    if (isYtReadyRef.current && ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
+      return Promise.resolve();
+    }
     return new Promise(resolve => {
       ytReadyWaitersRef.current.push(resolve);
       window.onYouTubeIframeAPIReady = () => createYtPlayer();
       if (window.YT?.Player) {
         createYtPlayer();
-        return;
-      }
-      if (!document.querySelector('script[data-yt-iframe]')) {
+      } else if (!document.querySelector('script[data-yt-iframe]')) {
         const tag = document.createElement('script');
         tag.src = 'https://www.youtube.com/iframe_api';
         tag.dataset.ytIframe = '1';
@@ -728,6 +727,45 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     void loadYtApi();
   }, []);
+
+  const startIframe = async (track: Track, startTime = 0) => {
+    const currentGen = playGenRef.current;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.removeAttribute('src');
+    }
+    try {
+      await loadYtApi();
+    } catch {
+      return;
+    }
+    if (playGenRef.current !== currentGen) return;
+    const yt = ytPlayerRef.current;
+    if (yt && typeof yt.loadVideoById === 'function') {
+      try {
+        yt.stopVideo();
+      } catch {
+        // ignore
+      }
+      if (playGenRef.current !== currentGen) return;
+      yt.loadVideoById({
+        videoId: track.youtubeId,
+        startSeconds: startTime > 0 ? startTime : 0,
+      });
+      try {
+        yt.unMute?.();
+        yt.setVolume?.(volumeRef.current * 100);
+      } catch {
+        // ignore
+      }
+      try {
+        yt.playVideo();
+      } catch {
+        // ignore
+      }
+      setIsPlaying(true);
+    }
+  };
 
   // Sync Timer interval for progress & duration
   useEffect(() => {
@@ -1028,64 +1066,6 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     fallbackToStreamRef.current = fallbackToStream;
   });
 
-  const startIframe = async (track: Track, startTime = 0) => {
-    const currentGen = playGenRef.current;
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.removeAttribute('src');
-    }
-    try {
-      await loadYtApi();
-    } catch {
-      return;
-    }
-    if (playGenRef.current !== currentGen) return;
-    const yt = ytPlayerRef.current;
-    if (yt?.loadVideoById) {
-      try {
-        yt.stopVideo();
-      } catch {
-        // ignore
-      }
-      if (playGenRef.current !== currentGen) return;
-      yt.loadVideoById({
-        videoId: track.youtubeId,
-        startSeconds: startTime > 0 ? startTime : 0,
-      });
-      try {
-        yt.unMute?.();
-        yt.setVolume?.(volumeRef.current * 100);
-      } catch {
-        // ignore
-      }
-      yt.playVideo();
-      setIsPlaying(true);
-    }
-  };
-
-  // Resolve streams for upcoming queue entries in parallel so skipping is instant
-  const prefetchNextStream = (track: Track) => {
-    const list = queue.length > 0 ? queue : tracks;
-    const idx = list.findIndex(t => t.id === track.id);
-    if (idx === -1) return;
-    const targetIndices = [
-      (idx + 1) % list.length,
-      (idx + 2) % list.length,
-      (idx + 3) % list.length,
-    ];
-    for (const i of targetIndices) {
-      const target = list[i];
-      if (!target?.youtubeId) continue;
-      if (streamUrlCacheRef.current.has(target.youtubeId)) continue;
-      if (getCachedStreamUrl(target.youtubeId)) continue;
-      resolveAudioStreamUrl(target.youtubeId)
-        .then(url => {
-          if (url) streamUrlCacheRef.current.set(target.youtubeId!, url);
-        })
-        .catch(() => {});
-    }
-  };
-
   const playAudioUrl = (track: Track, url: string, startTime = 0) => {
     if (!audioRef.current) return Promise.reject(new Error('no audio'));
     const currentGen = playGenRef.current;
@@ -1205,37 +1185,14 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     });
 
-    // 2. YouTube tracks: Immediate player start + background stream cache
+    // 2. YouTube tracks: Immediate player start via YouTube nocookie player
     if (track.isYouTube && track.youtubeId) {
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.removeAttribute('src');
       }
 
-      const cachedStream =
-        streamUrlCacheRef.current.get(track.youtubeId) ||
-        getCachedStreamUrl(track.youtubeId);
-
-      if (cachedStream && audioRef.current) {
-        playAudioUrl(track, cachedStream, startTime).catch(() => {
-          dropCachedStreamUrl(track.youtubeId!);
-          streamUrlCacheRef.current.delete(track.youtubeId!);
-          void startIframe(track, startTime);
-        });
-      } else {
-        // Start YouTube player IMMEDIATELY upon user click
-        void startIframe(track, startTime);
-        // Pre-fetch direct audio stream in background for next play (don't interrupt current iframe)
-        void resolveAudioStreamUrl(track.youtubeId, false)
-          .then(url => {
-            if (url) {
-              streamUrlCacheRef.current.set(track.youtubeId!, url);
-            }
-          })
-          .catch(() => {});
-      }
-
-      prefetchNextStream(track);
+      void startIframe(track, startTime);
       return;
     }
 
