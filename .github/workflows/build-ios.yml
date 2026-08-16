@@ -1,4 +1,4 @@
-name: Build FRF Music iOS IPA
+name: Build FRF Music iOS IPA & Simulator
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_16.0.app || sudo xcode-select -s /Applications/Xcode_16.1.app || sudo xcode-select -s /Applications/Xcode_16.2.app || sudo xcode-select -s /Applications/Xcode.app || true
           xcodebuild -version
 
-      - name: Build iOS Xcode Archive
+      - name: Build Real Device iOS Archive (.ipa)
         run: |
           xcodebuild \
             -project ios/App/App.xcodeproj \
@@ -48,16 +48,41 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: Package IPA
+      - name: Package Real Device IPA
         run: |
           mkdir -p Payload
           cp -r build/App.xcarchive/Products/Applications/App.app Payload/FRF-Music.app
           zip -r FRF-Music.ipa Payload/
           echo "FRF-Music.ipa created successfully!"
 
-      - name: Upload FRF Music IPA
+      - name: Build iOS Simulator Bundle (for Appetize.io)
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            -configuration Release \
+            -derivedDataPath build/simulator \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+          
+          cd build/simulator/Build/Products/Release-iphonesimulator
+          zip -r ../../../../FRF-Music-Simulator.zip App.app
+          cd ../../../..
+          echo "FRF-Music-Simulator.zip created for Appetize.io!"
+
+      - name: Upload FRF Music IPA (Real iPhone)
         uses: actions/upload-artifact@v4
         with:
           name: FRF-Music-iOS-IPA
           path: FRF-Music.ipa
+          retention-days: 14
+
+      - name: Upload FRF Music Simulator ZIP (Appetize.io)
+        uses: actions/upload-artifact@v4
+        with:
+          name: FRF-Music-iOS-Simulator-Appetize
+          path: FRF-Music-Simulator.zip
           retention-days: 14
