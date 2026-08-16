@@ -173,6 +173,12 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
           hl: 'en',
           gl: 'US',
         },
+        thirdParty: {
+          embedUrl: 'https://www.youtube.com',
+        },
+        user: {
+          lockedSafetyMode: false,
+        },
       },
       videoId: youtubeId,
       contentCheckOk: true,
@@ -189,7 +195,7 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
   );
 
   const status = data?.playabilityStatus?.status;
-  if (status && status !== 'OK') throw new Error('Status not OK');
+  if (status && status !== 'OK') throw new Error(`Status ${status}`);
 
   const url = pickAudioUrl([
     ...(data?.streamingData?.adaptiveFormats || []),
@@ -201,6 +207,14 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
 
 async function resolveFromInnerTube(youtubeId: string): Promise<string> {
   const clients = [
+    // 1. TV HTML5 Simply Embedded Player - specifically has NO age restriction enforcement
+    {
+      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      clientVersion: '2.0',
+      userAgent: 'Mozilla/5.0 (PlayStation 4 5.05) AppleWebKit/537.78 (KHTML, like Gecko)',
+      clientId: '85',
+    },
+    // 2. Android VR (Oculus Quest 3) - high reliability direct stream
     {
       clientName: 'ANDROID_VR',
       clientVersion: '1.60.19',
@@ -211,25 +225,33 @@ async function resolveFromInnerTube(youtubeId: string): Promise<string> {
       userAgent: 'Mozilla/5.0 (Linux; Android 12; Quest 3) AppleWebKit/537.36 (KHTML, like Gecko) OculusBrowser/32.0.0.0.0 Safari/537.36',
       clientId: '28',
     },
+    // 3. Media Connect embed client
+    {
+      clientName: 'MEDIA_CONNECT',
+      clientVersion: '1.0',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+      clientId: '74',
+    },
+    // 4. Android TestSuite
+    {
+      clientName: 'ANDROID_TESTSUITE',
+      clientVersion: '1.9',
+      userAgent: 'com.google.android.youtube.testsuite/1.9 (Linux; U; Android 14; en_US)',
+      clientId: '89',
+    },
+    // 5. Android Music
     {
       clientName: 'ANDROID_MUSIC',
       clientVersion: '6.40.52',
       userAgent: 'com.google.android.apps.youtube.music/6.40.52 (Linux; U; Android 14; en_US) gzip',
       clientId: '21',
     },
+    // 6. Web Embedded Player
     {
       clientName: 'WEB_EMBEDDED_PLAYER',
       clientVersion: '1.20240801.01.00',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
       clientId: '56',
-    },
-    {
-      clientName: 'IOS',
-      clientVersion: '19.29.1',
-      deviceMake: 'Apple',
-      deviceModel: 'iPhone16,2',
-      userAgent: 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)',
-      clientId: '5',
     },
   ];
 
