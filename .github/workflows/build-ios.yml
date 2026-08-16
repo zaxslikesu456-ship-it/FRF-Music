@@ -35,7 +35,7 @@ jobs:
       - name: Build iOS Xcode Archive
         run: |
           xcodebuild \
-            -workspace ios/App/App.xcworkspace \
+            -project ios/App/App.xcodeproj \
             -scheme App \
             -destination "generic/platform=iOS" \
             -configuration Release \
