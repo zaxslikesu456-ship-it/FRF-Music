@@ -16,6 +16,6 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
-        _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, continue: userActivity, restorationHandler: { _ in })
+        _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, continue: userActivity)
     }
 }
