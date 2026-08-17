@@ -49,21 +49,50 @@ export function isTauriRuntime(): boolean {
   return isTauri();
 }
 
+// Merges extra headers over defaults case-insensitively, so e.g. an
+// 'X-YouTube-Client-Name' override actually replaces the default
+// 'X-Youtube-Client-Name' instead of producing a duplicate header pair —
+// contradictory YouTube client identities trigger bot checks.
+function mergeHeaders(
+  base: Record<string, string>,
+  extra?: Record<string, string>
+): Record<string, string> {
+  if (!extra) return base;
+  const out = { ...base };
+  for (const key of Object.keys(extra)) {
+    for (const existing of Object.keys(out)) {
+      if (existing !== key && existing.toLowerCase() === key.toLowerCase()) {
+        delete out[existing];
+      }
+    }
+    out[key] = extra[key];
+  }
+  return out;
+}
+
 export async function httpPostJson(
   url: string,
   body: unknown,
   timeout = 5000,
-  extraHeaders?: Record<string, string>
+  extraHeaders?: Record<string, string>,
+  opts?: { bare?: boolean }
 ): Promise<any> {
-  const headers = {
-    'Content-Type': 'application/json',
-    'User-Agent': UA,
-    Origin: 'https://music.youtube.com',
-    Referer: 'https://music.youtube.com/',
-    'X-Youtube-Client-Name': '6',
-    'X-Youtube-Client-Version': '1.20240801.01.00',
-    ...extraHeaders,
-  };
+  // `bare` sends only Content-Type + the given headers — required for the
+  // /player endpoint, where the WEB_REMIX Origin/Referer/client defaults
+  // would contradict mobile client identities and get flagged.
+  const headers = opts?.bare
+    ? { 'Content-Type': 'application/json', ...(extraHeaders || {}) }
+    : mergeHeaders(
+        {
+          'Content-Type': 'application/json',
+          'User-Agent': UA,
+          Origin: 'https://music.youtube.com',
+          Referer: 'https://music.youtube.com/',
+          'X-Youtube-Client-Name': '6',
+          'X-Youtube-Client-Version': '1.20240801.01.00',
+        },
+        extraHeaders
+      );
 
   if (Capacitor.isNativePlatform()) {
     const res = await CapacitorHttp.post({
@@ -103,13 +132,15 @@ export async function httpGetJson(
   timeout = 5000,
   extraHeaders?: Record<string, string>
 ): Promise<any> {
-  const headers = {
-    'User-Agent': UA,
-    Accept: 'application/json',
-    Origin: 'https://music.youtube.com',
-    Referer: 'https://music.youtube.com/',
-    ...extraHeaders,
-  };
+  const headers = mergeHeaders(
+    {
+      'User-Agent': UA,
+      Accept: 'application/json',
+      Origin: 'https://music.youtube.com',
+      Referer: 'https://music.youtube.com/',
+    },
+    extraHeaders
+  );
 
   if (Capacitor.isNativePlatform()) {
     const res = await CapacitorHttp.get({
