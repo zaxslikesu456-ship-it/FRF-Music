@@ -136,12 +136,43 @@ function raceFirstUrl(tasks: Array<() => Promise<string>>): Promise<string> {
   });
 }
 
+// Short diagnostics trail from the most recent stream resolution, shown to
+// the user (and useful for support) when playback falls back to the player.
+let lastResolveNotes: string[] = [];
+
+export function getLastStreamResolveNotes(): string {
+  return lastResolveNotes.slice(-8).join(' · ');
+}
+
+function noted<T>(label: string, task: () => Promise<T>): () => Promise<T> {
+  return async () => {
+    try {
+      return await task();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      lastResolveNotes.push(`${label}:${msg.replace(/^Error: /, '')}`.slice(0, 60));
+      throw e;
+    }
+  };
+}
+
+function hostOf(base: string): string {
+  try {
+    return new URL(base).host;
+  } catch {
+    return base;
+  }
+}
+
 // On native platforms there is no CORS, so we can cheaply verify that a
 // resolved googlevideo URL actually serves bytes (some InnerTube clients
 // return URLs that answer 403 without a poToken). A dead URL must never win
-// the race over a working one from another client.
+// the race over a working one from another client. Fail-open on transport
+// errors: only a definitive 401/403/404/410 response rejects the URL, so a
+// broken check can never silently kill every stream.
 async function validateStreamUrl(url: string): Promise<string> {
   if (!Capacitor.isNativePlatform()) return url;
+  let status: number;
   try {
     const res = await CapacitorHttp.get({
       url,
@@ -149,12 +180,15 @@ async function validateStreamUrl(url: string): Promise<string> {
       connectTimeout: 2500,
       readTimeout: 2500,
     });
-    if (res.status >= 200 && res.status < 300) return url;
-    throw new Error(`Stream HTTP ${res.status}`);
-  } catch (e) {
-    if (e instanceof Error && e.message.startsWith('Stream HTTP')) throw e;
-    throw new Error('Stream unreachable');
+    status = res.status;
+  } catch {
+    // Transport or plugin failure: let the player itself decide.
+    return url;
   }
+  if (status === 401 || status === 403 || status === 404 || status === 410) {
+    throw new Error(`Stream HTTP ${status}`);
+  }
+  return url;
 }
 
 function validated(task: () => Promise<string>): () => Promise<string> {
@@ -258,7 +292,9 @@ async function resolveFromInnerTube(youtubeId: string): Promise<string> {
     },
   ];
 
-  return raceFirstUrl(clients.map(c => validated(() => resolveFromInnerTubeClient(youtubeId, c))));
+  return raceFirstUrl(
+    clients.map(c => noted(c.clientName, validated(() => resolveFromInnerTubeClient(youtubeId, c))))
+  );
 }
 
 async function resolveFromPiped(base: string, youtubeId: string): Promise<string> {
@@ -295,18 +331,21 @@ async function resolveFromInvidious(
 const inflightResolves = new Map<string, Promise<string>>();
 
 async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string> {
+  lastResolveNotes = [];
   try {
     return await raceFirstUrl([
       () => resolveFromInnerTube(youtubeId),
-      ...getPipedBases().map(base => validated(() => resolveFromPiped(base, youtubeId))),
-      ...getInvidiousBases().map(
-        base => validated(() => resolveFromInvidious(base, youtubeId, false))
+      ...getPipedBases().map(base =>
+        noted(`piped:${hostOf(base)}`, validated(() => resolveFromPiped(base, youtubeId)))
+      ),
+      ...getInvidiousBases().map(base =>
+        noted(`inv:${hostOf(base)}`, validated(() => resolveFromInvidious(base, youtubeId, false)))
       ),
     ]);
   } catch {
     return await raceFirstUrl(
-      getInvidiousBases().map(
-        base => validated(() => resolveFromInvidious(base, youtubeId, true))
+      getInvidiousBases().map(base =>
+        noted(`inv-local:${hostOf(base)}`, validated(() => resolveFromInvidious(base, youtubeId, true)))
       )
     );
   }
