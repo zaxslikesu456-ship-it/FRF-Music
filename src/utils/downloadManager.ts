@@ -1,4 +1,4 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import type { Track } from '../types/music';
 import { httpGetJson, httpPostJson, isTauriRuntime } from './http';
 
@@ -40,14 +40,17 @@ export function cancelDownload(trackId: string) {
 
 function getInvidiousBases() {
   return [
+    'https://invidious.f5.si/api/v1',
     'https://inv.nadeko.net/api/v1',
     'https://invidious.nerdvpn.de/api/v1',
     'https://invidious.private.coffee/api/v1',
+    'https://iv.datura.network/api/v1',
   ];
 }
 
 function getPipedBases() {
   return [
+    'https://pipedapi.kavin.rocks',
     'https://pipedapi.adminforge.de',
     'https://api.piped.private.coffee',
   ];
@@ -70,8 +73,19 @@ function preferredItags(): number[] {
 
 function pickAudioUrl(formats: any[]): string | null {
   if (!Array.isArray(formats) || formats.length === 0) return null;
-  const withUrl = formats.filter(f => typeof f?.url === 'string' && f.url);
+  let withUrl = formats.filter(f => typeof f?.url === 'string' && f.url);
   if (withUrl.length === 0) return null;
+
+  // iOS AVPlayer / WKWebView can only decode MP4/AAC audio (itag 140/139).
+  // Opus-in-WebM (itag 249/250/251) plays on Android/Chromium but fails on iPhone.
+  if (Capacitor.getPlatform() === 'ios') {
+    const mp4Only = withUrl.filter(f => {
+      const itag = Number(f.itag);
+      const mime = String(f.mimeType || f.type || '');
+      return itag === 140 || itag === 139 || mime.includes('mp4') || mime.includes('m4a');
+    });
+    if (mp4Only.length > 0) withUrl = mp4Only;
+  }
 
   for (const itag of preferredItags()) {
     const hit = withUrl.find(f => Number(f.itag) === itag);
@@ -122,28 +136,29 @@ function raceFirstUrl(tasks: Array<() => Promise<string>>): Promise<string> {
   });
 }
 
-async function resolveFromCobalt(youtubeId: string): Promise<string> {
-  const cobaltBases = ['https://api.cobalt.tools'];
-  for (const base of cobaltBases) {
-    try {
-      const data = await httpPostJson(
-        `${base}/api/json`,
-        {
-          url: `https://www.youtube.com/watch?v=${youtubeId}`,
-          isAudioOnly: true,
-          aFormat: 'mp3',
-        },
-        3000,
-        { Accept: 'application/json' }
-      );
-      if (data?.url && typeof data.url === 'string') {
-        return data.url;
-      }
-    } catch {
-      // try next cobalt instance
-    }
+// On native platforms there is no CORS, so we can cheaply verify that a
+// resolved googlevideo URL actually serves bytes (some InnerTube clients
+// return URLs that answer 403 without a poToken). A dead URL must never win
+// the race over a working one from another client.
+async function validateStreamUrl(url: string): Promise<string> {
+  if (!Capacitor.isNativePlatform()) return url;
+  try {
+    const res = await CapacitorHttp.get({
+      url,
+      headers: { Range: 'bytes=0-0' },
+      connectTimeout: 2500,
+      readTimeout: 2500,
+    });
+    if (res.status >= 200 && res.status < 300) return url;
+    throw new Error(`Stream HTTP ${res.status}`);
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('Stream HTTP')) throw e;
+    throw new Error('Stream unreachable');
   }
-  throw new Error('Cobalt failed');
+}
+
+function validated(task: () => Promise<string>): () => Promise<string> {
+  return async () => validateStreamUrl(await task());
 }
 
 const YTM_API_KEY = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30';
@@ -196,6 +211,36 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
 async function resolveFromInnerTube(youtubeId: string): Promise<string> {
   const clients = [
     {
+      clientName: 'ANDROID_VR',
+      clientVersion: '1.65.10',
+      deviceMake: 'Oculus',
+      deviceModel: 'Quest 3',
+      osName: 'Android',
+      osVersion: '12L',
+      userAgent: 'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+      clientId: '28',
+    },
+    {
+      // The embedded-player identity is designed for restricted embed contexts
+      // and still returns playable streams for most music uploads.
+      clientName: 'WEB_EMBEDDED_PLAYER',
+      clientVersion: '1.20240814.00.00',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+      clientId: '56',
+    },
+    {
+      clientName: 'TVHTML5',
+      clientVersion: '7.20240814.00.00',
+      userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 (KHTML, like Gecko) Version/6.5 TV Safari/537.36',
+      clientId: '7',
+    },
+    {
+      clientName: 'ANDROID_MUSIC',
+      clientVersion: '6.40.52',
+      userAgent: 'com.google.android.apps.youtube.music/6.40.52 (Linux; U; Android 14; en_US) gzip',
+      clientId: '21',
+    },
+    {
       clientName: 'IOS',
       clientVersion: '19.29.1',
       deviceMake: 'Apple',
@@ -206,26 +251,14 @@ async function resolveFromInnerTube(youtubeId: string): Promise<string> {
       clientId: '5',
     },
     {
-      clientName: 'ANDROID_MUSIC',
-      clientVersion: '6.40.52',
-      userAgent: 'com.google.android.apps.youtube.music/6.40.52 (Linux; U; Android 14; en_US) gzip',
-      clientId: '21',
-    },
-    {
       clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
       clientVersion: '2.0',
       userAgent: 'Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.50 Safari/605.1.15',
       clientId: '85',
     },
-    {
-      clientName: 'WEB_REMIX',
-      clientVersion: '1.20240801.01.00',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-      clientId: '67',
-    },
   ];
 
-  return raceFirstUrl(clients.map(c => () => resolveFromInnerTubeClient(youtubeId, c)));
+  return raceFirstUrl(clients.map(c => validated(() => resolveFromInnerTubeClient(youtubeId, c))));
 }
 
 async function resolveFromPiped(base: string, youtubeId: string): Promise<string> {
@@ -265,16 +298,15 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
   try {
     return await raceFirstUrl([
       () => resolveFromInnerTube(youtubeId),
-      () => resolveFromCobalt(youtubeId),
-      ...getPipedBases().map(base => () => resolveFromPiped(base, youtubeId)),
+      ...getPipedBases().map(base => validated(() => resolveFromPiped(base, youtubeId))),
       ...getInvidiousBases().map(
-        base => () => resolveFromInvidious(base, youtubeId, false)
+        base => validated(() => resolveFromInvidious(base, youtubeId, false))
       ),
     ]);
   } catch {
     return await raceFirstUrl(
       getInvidiousBases().map(
-        base => () => resolveFromInvidious(base, youtubeId, true)
+        base => validated(() => resolveFromInvidious(base, youtubeId, true))
       )
     );
   }
