@@ -13,6 +13,7 @@ import {
   dropCachedStreamUrl,
   isTrackOffline,
   resolveAudioStreamUrl,
+  getLastStreamResolveNotes,
 } from '../utils/downloadManager';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { createYtBridgePlayer, shouldUseYtBridge } from '../utils/ytBridge';
@@ -575,6 +576,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // Last resort on iPhone: the HTTPS bridge player (plays restricted
           // songs, may include YouTube ads).
           if (shouldUseYtBridge()) {
+            showStatus('Stream stopped working — switching to YouTube player', 6000);
             void startIframe(track, positionRef.current || 0);
             return;
           }
@@ -1158,6 +1160,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setIsPlaying(false);
           // Last resort on iPhone: the HTTPS bridge player.
           if (shouldUseYtBridge()) {
+            showStatus('Stream failed — switching to YouTube player', 6000);
             void startIframe(track, positionRef.current || 0);
             return;
           }
@@ -1455,8 +1458,16 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const url = await resolveAudioStreamUrl(track.youtubeId || '');
       if (playGenRef.current !== currentGen || currentTrackRef.current?.id !== track.id) return;
       await playAudioUrl(track, url, startTime);
-    } catch {
+    } catch (e) {
       if (playGenRef.current !== currentGen || currentTrackRef.current?.id !== track.id) return;
+      const debug = getLastStreamResolveNotes();
+      console.warn('Direct stream unavailable:', debug || e);
+      showStatus(
+        debug
+          ? `Direct audio blocked (${debug.slice(0, 140)}) — using YouTube player`
+          : 'Direct audio unavailable — using YouTube player',
+        10000
+      );
       void startIframe(track, startTime);
     } finally {
       if (playGenRef.current === currentGen) setIsResolvingStream(false);
