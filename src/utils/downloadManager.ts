@@ -141,7 +141,9 @@ function raceFirstUrl(tasks: Array<() => Promise<string>>): Promise<string> {
 let lastResolveNotes: string[] = [];
 
 export function getLastStreamResolveNotes(): string {
-  return lastResolveNotes.slice(-8).join(' · ');
+  // Keep the FIRST notes: the InnerTube clients fail fast and carry the real
+  // reason, while the slow Piped/Invidious timeouts finish last.
+  return lastResolveNotes.slice(0, 8).join(' · ');
 }
 
 function noted<T>(label: string, task: () => Promise<T>): () => Promise<T> {
@@ -231,7 +233,8 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
       racyCheckOk: true,
     },
     3000,
-    headers
+    headers,
+    { bare: true }
   );
 
   const status = data?.playabilityStatus?.status;
