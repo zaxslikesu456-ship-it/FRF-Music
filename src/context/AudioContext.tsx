@@ -572,6 +572,12 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (retryCount >= 2) {
           audioModeTrackIdRef.current = null;
           setIsPlaying(false);
+          // Last resort on iPhone: the HTTPS bridge player (plays restricted
+          // songs, may include YouTube ads).
+          if (shouldUseYtBridge()) {
+            void startIframe(track, positionRef.current || 0);
+            return;
+          }
           showStatus('This song could not start. Please try another upload.', 5000);
           return;
         }
@@ -1150,6 +1156,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (retryCount >= 1) {
           audioModeTrackIdRef.current = null;
           setIsPlaying(false);
+          // Last resort on iPhone: the HTTPS bridge player.
+          if (shouldUseYtBridge()) {
+            void startIframe(track, positionRef.current || 0);
+            return;
+          }
           showStatus('This song could not start. Please try another upload.', 5000);
           return;
         }
@@ -1434,6 +1445,24 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return playHtml5Audio(track, url, startTime, currentGen);
   };
 
+  // iOS: try the ad-free direct audio stream first (native AVPlayer, lock
+  // screen controls, no YouTube ads) and only use the iframe bridge when no
+  // playable stream can be resolved — the bridge plays restricted songs but
+  // serves YouTube ads.
+  const startStreamThenIframe = async (track: Track, startTime: number, currentGen: number) => {
+    setIsResolvingStream(true);
+    try {
+      const url = await resolveAudioStreamUrl(track.youtubeId || '');
+      if (playGenRef.current !== currentGen || currentTrackRef.current?.id !== track.id) return;
+      await playAudioUrl(track, url, startTime);
+    } catch {
+      if (playGenRef.current !== currentGen || currentTrackRef.current?.id !== track.id) return;
+      void startIframe(track, startTime);
+    } finally {
+      if (playGenRef.current === currentGen) setIsResolvingStream(false);
+    }
+  };
+
   const playHtml5Audio = (_track: Track, url: string, startTime: number, currentGen: number) => {
     if (!audioRef.current) return Promise.reject(new Error('no audio'));
     const audio = audioRef.current;
@@ -1550,6 +1579,13 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.removeAttribute('src');
+      }
+
+      // On iPhone, prefer the ad-free direct stream; the bridge player is the
+      // fallback for songs whose streams cannot be resolved.
+      if (shouldUseYtBridge() && !savedYoutubeId) {
+        void startStreamThenIframe(track, startTime, currentGen);
+        return;
       }
 
       void startIframe(
