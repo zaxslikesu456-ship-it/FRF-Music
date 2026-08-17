@@ -15,6 +15,7 @@ import {
   resolveAudioStreamUrl,
 } from '../utils/downloadManager';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { createYtBridgePlayer, shouldUseYtBridge } from '../utils/ytBridge';
 import {
   idbSaveItem,
   idbGetItem,
@@ -403,6 +404,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const ytPlayerRef = useRef<any>(null);
   const isYtReadyRef = useRef(false);
+  const ytBridgeFailedRef = useRef(false);
 
   // Always-fresh action handlers for listeners registered only once (YT iframe, audio element, mediaSession)
   const latestActionsRef = useRef<{
@@ -787,70 +789,51 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return el;
   };
 
-  const createYtPlayer = () => {
-    if (ytPlayerRef.current || !window.YT?.Player) return;
-    ensureYtPlayerElement();
-    ytPlayerRef.current = new window.YT.Player('yt-hidden-player', {
-      height: '200',
-      width: '200',
-      host: 'https://www.youtube-nocookie.com',
-      playerVars: {
-        autoplay: 1,
-        controls: 1,
-        disablekb: 1,
-        fs: 0,
-        rel: 0,
-        enablejsapi: 1,
-        playsinline: 1,
-        // Capacitor pages use a custom URL scheme, which does not provide an
-        // HTTPS Referer. YouTube accepts the installed bundle ID as the API
-        // client identity through these player parameters.
-        origin: YOUTUBE_APP_ORIGIN,
-        widget_referrer: YOUTUBE_APP_ORIGIN,
-      },
-      events: {
-        onReady: () => {
-          isYtReadyRef.current = true;
-          if (ytPlayerRef.current?.setVolume) {
-            try {
-              ytPlayerRef.current.setVolume(volumeRef.current * 100);
-            } catch {
-              // ignore
-            }
+  // Event handlers shared by the inline IFrame player and the hosted HTTPS
+  // bridge player used on iOS (see createYtPlayer below).
+  const ytSharedEvents = {
+    onReady: () => {
+      isYtReadyRef.current = true;
+      if (ytPlayerRef.current?.setVolume) {
+        try {
+          ytPlayerRef.current.setVolume(volumeRef.current * 100);
+        } catch {
+          // ignore
+        }
+      }
+      ytReadyWaitersRef.current.splice(0).forEach(fn => fn());
+    },
+    onStateChange: (event: any) => {
+      if (event.data === 1) {
+        hasPlayedRef.current = true;
+        setIsPlaying(true);
+        const playingTrack = currentTrackRef.current;
+        const activeId = activeYoutubeIdRef.current;
+        if (playingTrack?.isYouTube && activeId && activeId !== playingTrack.youtubeId) {
+          youtubePlaybackOverridesRef.current[playingTrack.id] = activeId;
+          try {
+            localStorage.setItem(
+              YOUTUBE_PLAYBACK_OVERRIDES_KEY,
+              JSON.stringify(youtubePlaybackOverridesRef.current)
+            );
+          } catch {
+            // Storage can be unavailable in private browsing.
           }
-          ytReadyWaitersRef.current.splice(0).forEach(fn => fn());
-        },
-        onStateChange: (event: any) => {
-          if (event.data === 1) {
-            hasPlayedRef.current = true;
-            setIsPlaying(true);
-            const playingTrack = currentTrackRef.current;
-            const activeId = activeYoutubeIdRef.current;
-            if (playingTrack?.isYouTube && activeId && activeId !== playingTrack.youtubeId) {
-              youtubePlaybackOverridesRef.current[playingTrack.id] = activeId;
-              try {
-                localStorage.setItem(
-                  YOUTUBE_PLAYBACK_OVERRIDES_KEY,
-                  JSON.stringify(youtubePlaybackOverridesRef.current)
-                );
-              } catch {
-                // Storage can be unavailable in private browsing.
-              }
-            }
-            if (ytPlayerRef.current?.setVolume) {
-              try {
-                ytPlayerRef.current.setVolume(volumeRef.current * 100);
-              } catch {
-                // ignore
-              }
-            }
+        }
+        if (ytPlayerRef.current?.setVolume) {
+          try {
+            ytPlayerRef.current.setVolume(volumeRef.current * 100);
+          } catch {
+            // ignore
           }
-          if (event.data === 2) setIsPlaying(false);
-          if (event.data === 0) {
-            setIsPlaying(false);
-            latestActionsRef.current.handleEnded();
-          }
-        },
+        }
+      }
+      if (event.data === 2) setIsPlaying(false);
+      if (event.data === 0) {
+        setIsPlaying(false);
+        latestActionsRef.current.handleEnded();
+      }
+    },
         onError: async (event: any) => {
           const errorCode = Number(event?.data);
           console.warn('YouTube Player Error:', errorCode);
@@ -975,8 +958,53 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           showStatus('This song is not available for in-app playback.', 5000);
         },
+  };
+
+  const createInlineYtPlayer = () => {
+    if (ytPlayerRef.current || !window.YT?.Player) return;
+    ensureYtPlayerElement();
+    ytPlayerRef.current = new window.YT.Player('yt-hidden-player', {
+      height: '200',
+      width: '200',
+      host: 'https://www.youtube-nocookie.com',
+      playerVars: {
+        autoplay: 1,
+        controls: 1,
+        disablekb: 1,
+        fs: 0,
+        rel: 0,
+        enablejsapi: 1,
+        playsinline: 1,
+        // Capacitor pages use a custom URL scheme, which does not provide an
+        // HTTPS Referer. YouTube accepts the installed bundle ID as the API
+        // client identity through these player parameters.
+        origin: YOUTUBE_APP_ORIGIN,
+        widget_referrer: YOUTUBE_APP_ORIGIN,
       },
+      events: ytSharedEvents,
     });
+  };
+
+  // On iOS the app runs on a capacitor:// origin, which sends YouTube no HTTPS
+  // Referer, so embed-restricted songs fail with error 150. The bridge hosts
+  // the real IFrame player on an HTTPS origin (GitHub Pages) and relays
+  // commands via postMessage, so restricted playback behaves like Android/PC.
+  // Falls back to the inline player if the bridge page is unreachable.
+  const createYtPlayer = () => {
+    if (ytPlayerRef.current) return;
+    ensureYtPlayerElement();
+    if (shouldUseYtBridge() && !ytBridgeFailedRef.current) {
+      const bridge = createYtBridgePlayer('yt-hidden-player', ytSharedEvents, () => {
+        ytBridgeFailedRef.current = true;
+        ytPlayerRef.current = null;
+        createInlineYtPlayer();
+      });
+      if (bridge) {
+        ytPlayerRef.current = bridge;
+        return;
+      }
+    }
+    createInlineYtPlayer();
   };
 
   const loadYtApi = (): Promise<void> => {
@@ -985,6 +1013,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     return new Promise(resolve => {
       ytReadyWaitersRef.current.push(resolve);
+      // The iOS bridge player does not need the IFrame API script — start it now.
+      if (shouldUseYtBridge() && !ytPlayerRef.current) createYtPlayer();
       window.onYouTubeIframeAPIReady = () => createYtPlayer();
       if (window.YT?.Player) {
         createYtPlayer();

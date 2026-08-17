@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FRF Music Player Bridge</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  #player { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="player"></div>
+<script>
+// FRF Music YouTube bridge.
+// The iOS app embeds this page over HTTPS so YouTube receives a valid HTTPS
+// Referer (WKWebView's capacitor:// origin gets error 150 on restricted
+// videos). The app sends player commands via postMessage; this page relays
+// player events and progress back the same way.
+(function () {
+  'use strict';
+
+  var player = null;
+  var ready = false;
+  var pending = [];
+  var timeTimer = null;
+
+  function send(msg) {
+    if (!window.parent || window.parent === window) return;
+    msg.source = 'frf-yt-bridge';
+    // The parent origin is a custom Capacitor scheme (capacitor://...) which
+    // cannot be targeted by postMessage, so '*' is required here. The page
+    // only receives video IDs and transport commands — no sensitive data.
+    window.parent.postMessage(msg, '*');
+  }
+
+  function flushPending() {
+    for (var i = 0; i < pending.length; i++) run(pending[i]);
+    pending = [];
+  }
+
+  function startTimeTicker() {
+    if (timeTimer) return;
+    timeTimer = setInterval(function () {
+      if (!player || typeof player.getCurrentTime !== 'function') return;
+      var t = 0, d = 0;
+      try { t = player.getCurrentTime() || 0; } catch (e) {}
+      try { d = player.getDuration() || 0; } catch (e) {}
+      send({ event: 'time', currentTime: t, duration: d });
+    }, 500);
+  }
+
+  function createPlayer() {
+    player = new YT.Player('player', {
+      height: '100%',
+      width: '100%',
+      playerVars: {
+        autoplay: 1,
+        controls: 1,
+        disablekb: 1,
+        fs: 0,
+        rel: 0,
+        enablejsapi: 1,
+        playsinline: 1,
+        origin: location.origin
+      },
+      events: {
+        onReady: function () {
+          ready = true;
+          flushPending();
+          startTimeTicker();
+          send({ event: 'ready' });
+        },
+        onStateChange: function (e) {
+          send({ event: 'state', data: e.data });
+          // push an immediate progress update on state flips
+          if (player && typeof player.getCurrentTime === 'function') {
+            var t = 0, d = 0;
+            try { t = player.getCurrentTime() || 0; } catch (err) {}
+            try { d = player.getDuration() || 0; } catch (err) {}
+            send({ event: 'time', currentTime: t, duration: d });
+          }
+        },
+        onError: function (e) {
+          send({ event: 'error', data: e.data });
+        }
+      }
+    });
+  }
+
+  function run(msg) {
+    if (!player) return;
+    switch (msg.cmd) {
+      case 'loadVideoById':
+        if (msg.videoId) {
+          player.loadVideoById({ videoId: msg.videoId, startSeconds: msg.startSeconds || 0 });
+        }
+        break;
+      case 'cueVideoById':
+        if (msg.videoId) {
+          player.cueVideoById({ videoId: msg.videoId, startSeconds: msg.startSeconds || 0 });
+        }
+        break;
+      case 'playVideo': player.playVideo(); break;
+      case 'pauseVideo': player.pauseVideo(); break;
+      case 'stopVideo': player.stopVideo(); break;
+      case 'seekTo':
+        if (typeof msg.seconds === 'number') {
+          player.seekTo(msg.seconds, Boolean(msg.allowSeekAhead));
+        }
+        break;
+      case 'setVolume':
+        if (typeof msg.volume === 'number') player.setVolume(msg.volume);
+        break;
+      case 'unMute': if (player.unMute) player.unMute(); break;
+      case 'mute': if (player.mute) player.mute(); break;
+      case 'setPlaybackRate':
+        if (typeof msg.rate === 'number' && player.setPlaybackRate) player.setPlaybackRate(msg.rate);
+        break;
+    }
+  }
+
+  window.addEventListener('message', function (e) {
+    var msg = e.data;
+    if (!msg || msg.source !== 'frf-app' || !msg.cmd) return;
+    if (!ready) {
+      pending.push(msg);
+      return;
+    }
+    run(msg);
+  });
+
+  window.onYouTubeIframeAPIReady = createPlayer;
+
+  var tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  tag.onerror = function () { send({ event: 'error', data: -1 }); };
+  document.head.appendChild(tag);
+})();
+</script>
+</body>
+</html>
