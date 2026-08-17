@@ -19,6 +19,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private var avPlayer: AVPlayer?
     private var timeObserverToken: Any?
+    private var itemStatusObserver: NSKeyValueObservation?
     private var isConfigured = false
 
     public override func load() {
@@ -141,6 +142,9 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemFailedToPlayToEndTime, object: nil)
+        itemStatusObserver?.invalidate()
+        itemStatusObserver = nil
 
         let playerItem = AVPlayerItem(url: validUrl)
         if avPlayer == nil {
@@ -149,10 +153,27 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             avPlayer?.replaceCurrentItem(with: playerItem)
         }
 
+        // Report stream failures (403, unsupported codec, network errors) to JS
+        // so the web layer can re-resolve another stream instead of playing silence.
+        itemStatusObserver = playerItem.observe(\.status, options: [.new]) { [weak self] item, _ in
+            if item.status == .failed {
+                self?.notifyListeners("playbackError", data: [
+                    "message": item.error?.localizedDescription ?? "AVPlayer item failed"
+                ])
+            }
+        }
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(playerDidFinishPlaying),
             name: .AVPlayerItemDidPlayToEndTime,
+            object: playerItem
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playerFailedToPlayToEnd(_:)),
+            name: .AVPlayerItemFailedToPlayToEndTime,
             object: playerItem
         )
 
@@ -249,6 +270,8 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             player.removeTimeObserver(token)
             timeObserverToken = nil
         }
+        itemStatusObserver?.invalidate()
+        itemStatusObserver = nil
         avPlayer?.pause()
         avPlayer?.replaceCurrentItem(with: nil)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -257,6 +280,12 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc private func playerDidFinishPlaying() {
         notifyListeners("playbackEnded", data: [:])
+    }
+
+    @objc private func playerFailedToPlayToEnd(_ note: Notification) {
+        let message = (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError)?.localizedDescription
+            ?? "Playback failed before the end of the stream"
+        notifyListeners("playbackError", data: ["message": message])
     }
 
     private func updateNowPlaying(

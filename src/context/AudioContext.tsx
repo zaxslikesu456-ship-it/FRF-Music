@@ -70,7 +70,7 @@ const YOUTUBE_APP_ORIGIN =
     ? window.location.origin
     : 'https://music.youtube.com';
 const YOUTUBE_ALTERNATE_ERROR_CODES = new Set([2, 100, 101, 150]);
-const MAX_ALTERNATE_UPLOADS = 6;
+const MAX_ALTERNATE_UPLOADS = 15;
 const YOUTUBE_PLAYBACK_OVERRIDES_KEY = 'frf_youtube_playback_overrides_v1';
 
 function loadYouTubePlaybackOverrides(): Record<string, string> {
@@ -558,6 +558,33 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       (BackgroundAudio as any).addListener('playbackEnded', () => {
         latestActionsRef.current?.handleEnded?.();
       }),
+      // Native AVPlayer could not play the resolved stream (403, unsupported
+      // codec, dropped connection): force a fresh stream resolution, bounded
+      // by the per-track retry counter so we never loop forever.
+      (BackgroundAudio as any).addListener('playbackError', () => {
+        const track = currentTrackRef.current;
+        if (!track?.isYouTube || !track.youtubeId) return;
+        if (audioModeTrackIdRef.current !== track.id) return;
+        if (getOfflinePlaybackUrl(track.id)) return;
+        const retryCount = streamRetryCountRef.current.get(track.id) || 0;
+        if (retryCount >= 2) {
+          audioModeTrackIdRef.current = null;
+          setIsPlaying(false);
+          showStatus('This song could not start. Please try another upload.', 5000);
+          return;
+        }
+        streamRetryCountRef.current.set(track.id, retryCount + 1);
+        const streamYoutubeId = activeYoutubeIdRef.current || track.youtubeId;
+        audioModeTrackIdRef.current = null;
+        streamUrlCacheRef.current.delete(streamYoutubeId);
+        dropCachedStreamUrl(streamYoutubeId);
+        fallbackToStreamRef.current(
+          streamYoutubeId === track.youtubeId
+            ? track
+            : { ...track, youtubeId: streamYoutubeId },
+          true
+        );
+      }),
     ];
 
     return () => {
@@ -854,8 +881,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
 
           // Removed/private/non-embeddable uploads can often be replaced by a
-          // matching official audio upload. Every candidate still goes through
-          // YouTube's IFrame Player and its normal age/embedding checks.
+          // matching official audio upload or played via direct stream extraction.
           if (YOUTUBE_ALTERNATE_ERROR_CODES.has(errorCode)) {
             if (
               isYoutubeRecoveryRunningRef.current ||
@@ -867,6 +893,23 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
             isYoutubeRecoveryRunningRef.current = true;
             try {
+              // Step 1: Try direct audio stream extraction (like Harmony Music)
+              // This bypasses embed restrictions by extracting raw audio via InnerTube ANDROID_VR client
+              try {
+                const directUrl = await resolveAudioStreamUrl(failedId, true);
+                if (
+                  directUrl &&
+                  playGenRef.current === generation &&
+                  currentTrackRef.current?.id === t.id
+                ) {
+                  await playAudioUrl(t, directUrl, 0);
+                  return;
+                }
+              } catch {
+                // Direct extraction failed, try alternate video IDs
+              }
+
+              // Step 2: Find an alternate embeddable upload (Topic / Official Audio)
               const altId = await findBestAlternateVideoId(
                 t.title,
                 t.artist,
@@ -894,14 +937,14 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 return;
               }
 
-              // Direct Audio Stream fallback (bypasses 18+ age gate and embed blocks)
-              const directStream = await fetchDirectAudioStreamUrl(failedId || t.youtubeId || '');
+              // Step 3: Last resort - try Invidious direct stream
+              const invidiousStream = await fetchDirectAudioStreamUrl(failedId || t.youtubeId || '');
               if (
-                directStream &&
+                invidiousStream &&
                 playGenRef.current === generation &&
                 currentTrackRef.current?.id === t.id
               ) {
-                await playAudioUrl(t, directStream, 0);
+                await playAudioUrl(t, invidiousStream, 0);
                 return;
               }
             } catch {
