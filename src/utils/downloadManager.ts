@@ -219,6 +219,7 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
       hl: 'en',
       gl: 'US',
     },
+    user: {},
   };
 
   const data = await httpPostJson(
@@ -226,6 +227,8 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
     {
       context: contextBody,
       videoId: youtubeId,
+      contentCheckOk: true,
+      racyCheckOk: true,
     },
     3000,
     headers
@@ -245,6 +248,27 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
 async function resolveFromInnerTube(youtubeId: string): Promise<string> {
   const clients = [
     {
+      // Verified 2026-08: current-version official clients return plain,
+      // unciphered MP4 audio URLs (itag 140) without login or poToken — even
+      // for VEVO uploads. Outdated client versions get HTTP 400 / LOGIN_REQUIRED.
+      clientName: 'IOS',
+      clientVersion: '20.10.4',
+      deviceMake: 'Apple',
+      deviceModel: 'iPhone16,2',
+      osName: 'iOS',
+      osVersion: '18.5.22F77',
+      userAgent: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_5 like Mac OS X; en_US)',
+      clientId: '5',
+    },
+    {
+      clientName: 'ANDROID',
+      clientVersion: '20.10.38',
+      osName: 'Android',
+      osVersion: '14',
+      userAgent: 'com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip',
+      clientId: '3',
+    },
+    {
       clientName: 'ANDROID_VR',
       clientVersion: '1.65.10',
       deviceMake: 'Oculus',
@@ -255,8 +279,13 @@ async function resolveFromInnerTube(youtubeId: string): Promise<string> {
       clientId: '28',
     },
     {
-      // The embedded-player identity is designed for restricted embed contexts
-      // and still returns playable streams for most music uploads.
+      clientName: 'ANDROID_MUSIC',
+      clientVersion: '6.40.52',
+      userAgent: 'com.google.android.apps.youtube.music/6.40.52 (Linux; U; Android 14; en_US) gzip',
+      clientId: '21',
+    },
+    {
+      // The embedded-player identity is designed for restricted embed contexts.
       clientName: 'WEB_EMBEDDED_PLAYER',
       clientVersion: '1.20240814.00.00',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
@@ -267,22 +296,6 @@ async function resolveFromInnerTube(youtubeId: string): Promise<string> {
       clientVersion: '7.20240814.00.00',
       userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 (KHTML, like Gecko) Version/6.5 TV Safari/537.36',
       clientId: '7',
-    },
-    {
-      clientName: 'ANDROID_MUSIC',
-      clientVersion: '6.40.52',
-      userAgent: 'com.google.android.apps.youtube.music/6.40.52 (Linux; U; Android 14; en_US) gzip',
-      clientId: '21',
-    },
-    {
-      clientName: 'IOS',
-      clientVersion: '19.29.1',
-      deviceMake: 'Apple',
-      deviceModel: 'iPhone16,2',
-      osName: 'iOS',
-      osVersion: '17.5.1.21F90',
-      userAgent: 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)',
-      clientId: '5',
     },
     {
       clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
