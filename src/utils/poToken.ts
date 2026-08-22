@@ -60,7 +60,11 @@ export function getPoTokenMinter(forceRefresh = false): Promise<PoTokenMinter | 
   if (minterPromise && !forceRefresh && Date.now() < minterExpiresAt) {
     return minterPromise;
   }
-  minterPromise = initMinter().catch(() => null);
+  minterPromise = initMinter().catch(() => {
+    // A failed mint must not be cached as valid — force a retry next call.
+    minterExpiresAt = 0;
+    return null;
+  });
   return minterPromise;
 }
 

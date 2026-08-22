@@ -46,6 +46,10 @@ function getInvidiousBases() {
     'https://invidious.nerdvpn.de/api/v1',
     'https://invidious.private.coffee/api/v1',
     'https://iv.datura.network/api/v1',
+    'https://yewtu.be/api/v1',
+    'https://inv.tux.pizza/api/v1',
+    'https://invidious.protokolla.fi/api/v1',
+    'https://iv.ggtyler.dev/api/v1',
   ];
 }
 
@@ -54,6 +58,8 @@ function getPipedBases() {
     'https://pipedapi.kavin.rocks',
     'https://pipedapi.adminforge.de',
     'https://api.piped.private.coffee',
+    'https://pipedapi.reallyaweso.me',
+    'https://api.piped.yt',
   ];
 }
 
@@ -265,13 +271,17 @@ async function resolveFromInnerTubeClient(
   throw new Error('No audio URL found');
 }
 
-async function resolveFromInnerTube(youtubeId: string, usePoToken = false): Promise<string> {
+async function resolveFromInnerTube(
+  youtubeId: string,
+  usePoToken = false,
+  forceRefreshMinter = false
+): Promise<string> {
   // On bot-flagged networks, attach a freshly minted poToken: the player
   // request carries a content-bound token (video ID) and the returned stream
   // URL gets a session-bound pot parameter (visitor data).
   let po: PoContext | undefined;
   if (usePoToken) {
-    const minter = await getPoTokenMinter();
+    const minter = await getPoTokenMinter(forceRefreshMinter);
     if (minter) {
       try {
         po = {
@@ -285,6 +295,16 @@ async function resolveFromInnerTube(youtubeId: string, usePoToken = false): Prom
     }
   }
   const clients = [
+    {
+      // The WebPO attestation flow is built for the WEB client (visitorData +
+      // poToken). This is the identity that clears YouTube's bot gate on
+      // datacenter IPs — e.g. cloud emulators — where mobile clients get 403.
+      clientName: 'WEB',
+      clientVersion: '2.20260617.01.00',
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+      clientId: '1',
+    },
     {
       // Verified 2026-08: current-version official clients return plain,
       // unciphered MP4 audio URLs (itag 140) without login or poToken — even
@@ -388,6 +408,11 @@ const inflightResolves = new Map<string, Promise<string>>();
 
 async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string> {
   lastResolveNotes = [];
+  // Pre-warm the poToken minter in the background so the fallback below does
+  // not have to wait for BotGuard attestation from a cold start.
+  if (IS_NATIVE) {
+    void getPoTokenMinter();
+  }
   try {
     return await raceFirstUrl([
       () => resolveFromInnerTube(youtubeId),
@@ -411,7 +436,13 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
     try {
       return await resolveFromInnerTube(youtubeId, true);
     } catch {
-      // poToken path failed too — keep going
+      // poToken path failed — keep going
+    }
+    // One more pass with a forced-fresh minter: the cached one may be poisoned.
+    try {
+      return await resolveFromInnerTube(youtubeId, true, true);
+    } catch {
+      // fresh minter also failed
     }
   }
 
