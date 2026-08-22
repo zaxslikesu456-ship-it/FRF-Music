@@ -1,6 +1,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import type { Track } from '../types/music';
 import { httpGetJson, httpPostJson, isTauriRuntime } from './http';
+import { getPoTokenMinter } from './poToken';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 const OFFLINE_KEY = 'bw_music_offline_files_v1';
@@ -199,7 +200,21 @@ function validated(task: () => Promise<string>): () => Promise<string> {
 
 const YTM_API_KEY = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30';
 
-async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promise<string> {
+interface PoContext {
+  visitorData: string;
+  contentPoToken: string;
+  sessionPoToken: string;
+}
+
+function appendPot(url: string, sessionPoToken: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}pot=${encodeURIComponent(sessionPoToken)}`;
+}
+
+async function resolveFromInnerTubeClient(
+  youtubeId: string,
+  client: any,
+  po?: PoContext
+): Promise<string> {
   const playerUrl = USE_YT_PROXY
     ? '/api/youtubei/player?prettyPrint=false'
     : `https://www.youtube.com/youtubei/v1/player?key=${YTM_API_KEY}&prettyPrint=false`;
@@ -218,6 +233,7 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
       ...(client.deviceModel ? { deviceModel: client.deviceModel } : {}),
       ...(client.osName ? { osName: client.osName } : {}),
       ...(client.osVersion ? { osVersion: client.osVersion } : {}),
+      ...(po ? { visitorData: po.visitorData } : {}),
       hl: 'en',
       gl: 'US',
     },
@@ -231,6 +247,7 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
       videoId: youtubeId,
       contentCheckOk: true,
       racyCheckOk: true,
+      ...(po ? { serviceIntegrityDimensions: { poToken: po.contentPoToken } } : {}),
     },
     3000,
     headers,
@@ -244,11 +261,29 @@ async function resolveFromInnerTubeClient(youtubeId: string, client: any): Promi
     ...(data?.streamingData?.adaptiveFormats || []),
     ...(data?.streamingData?.formats || []),
   ]);
-  if (url) return url;
+  if (url) return po ? appendPot(url, po.sessionPoToken) : url;
   throw new Error('No audio URL found');
 }
 
-async function resolveFromInnerTube(youtubeId: string): Promise<string> {
+async function resolveFromInnerTube(youtubeId: string, usePoToken = false): Promise<string> {
+  // On bot-flagged networks, attach a freshly minted poToken: the player
+  // request carries a content-bound token (video ID) and the returned stream
+  // URL gets a session-bound pot parameter (visitor data).
+  let po: PoContext | undefined;
+  if (usePoToken) {
+    const minter = await getPoTokenMinter();
+    if (minter) {
+      try {
+        po = {
+          visitorData: minter.visitorData,
+          contentPoToken: await minter.mint(youtubeId),
+          sessionPoToken: await minter.mint(minter.visitorData),
+        };
+      } catch {
+        po = undefined;
+      }
+    }
+  }
   const clients = [
     {
       // Verified 2026-08: current-version official clients return plain,
@@ -309,7 +344,12 @@ async function resolveFromInnerTube(youtubeId: string): Promise<string> {
   ];
 
   return raceFirstUrl(
-    clients.map(c => noted(c.clientName, validated(() => resolveFromInnerTubeClient(youtubeId, c))))
+    clients.map(c =>
+      noted(
+        po ? `${c.clientName}+po` : c.clientName,
+        validated(() => resolveFromInnerTubeClient(youtubeId, c, po))
+      )
+    )
   );
 }
 
@@ -359,12 +399,27 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
       ),
     ]);
   } catch {
-    return await raceFirstUrl(
-      getInvidiousBases().map(base =>
-        noted(`inv-local:${hostOf(base)}`, validated(() => resolveFromInvidious(base, youtubeId, true)))
-      )
-    );
+    // fall through to the retries below
   }
+
+  // Retry: InnerTube with a freshly minted poToken. Bot-flagged networks
+  // (very common on cellular) reject anonymous requests with LOGIN_REQUIRED
+  // and answer googlevideo with 403, so every source above fails. The
+  // ad-free stream is what keeps iOS off the ad-serving YouTube player, so
+  // it is worth the extra mint round-trips before giving up.
+  if (IS_NATIVE) {
+    try {
+      return await resolveFromInnerTube(youtubeId, true);
+    } catch {
+      // poToken path failed too — keep going
+    }
+  }
+
+  return await raceFirstUrl(
+    getInvidiousBases().map(base =>
+      noted(`inv-local:${hostOf(base)}`, validated(() => resolveFromInvidious(base, youtubeId, true)))
+    )
+  );
 }
 
 export async function resolveAudioStreamUrl(

@@ -910,8 +910,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               if (
                 altId &&
                 playGenRef.current === generation &&
-                currentTrackRef.current?.id === t.id &&
-                ytPlayerRef.current?.loadVideoById
+                currentTrackRef.current?.id === t.id
               ) {
                 activeYoutubeIdRef.current = altId;
                 youtubePlaybackOverridesRef.current[t.id] = altId;
@@ -923,9 +922,30 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 } catch {
                   // ignore
                 }
-                ytPlayerRef.current.loadVideoById({ videoId: altId, startSeconds: 0 });
-                ytPlayerRef.current.playVideo?.();
-                return;
+                // Prefer the ad-free stream for the alternate upload; only use
+                // the ad-serving player when no stream can be resolved.
+                try {
+                  const altStream = await resolveAudioStreamUrl(altId, true);
+                  if (
+                    altStream &&
+                    playGenRef.current === generation &&
+                    currentTrackRef.current?.id === t.id
+                  ) {
+                    await playAudioUrl(t, altStream, 0);
+                    return;
+                  }
+                } catch {
+                  // fall through to the player
+                }
+                if (
+                  playGenRef.current === generation &&
+                  currentTrackRef.current?.id === t.id &&
+                  ytPlayerRef.current?.loadVideoById
+                ) {
+                  ytPlayerRef.current.loadVideoById({ videoId: altId, startSeconds: 0 });
+                  ytPlayerRef.current.playVideo?.();
+                  return;
+                }
               }
 
               // Step 3: Last resort - try Invidious direct stream
@@ -1592,10 +1612,12 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         audioRef.current.removeAttribute('src');
       }
 
-      // On iPhone, prefer the ad-free direct stream; the bridge player is the
-      // fallback for songs whose streams cannot be resolved.
-      if (shouldUseYtBridge() && !savedYoutubeId) {
-        void startStreamThenIframe(track, startTime, currentGen);
+      // On iPhone always try the ad-free direct stream first — for the original
+      // upload or a previously-found alternate — and only fall back to the
+      // ad-serving bridge player when no stream can be resolved.
+      if (shouldUseYtBridge()) {
+        const target = savedYoutubeId ? { ...track, youtubeId: savedYoutubeId } : track;
+        void startStreamThenIframe(target, startTime, currentGen);
         return;
       }
 
