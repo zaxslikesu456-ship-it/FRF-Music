@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Overrides @capacitor/android's capacitor_bridge_layout_main.xml (app
+    resources win over library resources during merge). Identical structure,
+    but the WebView is com.frf.music.PlaybackCapacitorWebView so the renderer
+    never reports the page hidden and background audio keeps playing. The id
+    MUST stay @+id/webview — Bridge looks it up by that id.
+-->
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context="com.getcapacitor.BridgeActivity"
+    >
+
+    <com.frf.music.PlaybackCapacitorWebView
+        android:id="@+id/webview"
+        android:layout_width="fill_parent"
+        android:layout_height="fill_parent" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

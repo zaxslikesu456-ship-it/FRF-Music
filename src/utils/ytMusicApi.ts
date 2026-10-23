@@ -344,6 +344,72 @@ async function fetchYouTubeHtmlSearch(query: string): Promise<Track[]> {
   }
 }
 
+// Search suggestions (autocomplete) for the search box. Typed text shows
+// these instead of firing searches — the search itself only runs when the
+// user submits (Enter, a suggestion, a recent search or a trending chip).
+const suggestionCache = new Map<string, { items: string[]; fetchedAt: number }>();
+const suggestionInflight = new Map<string, Promise<string[]>>();
+const SUGGESTION_TTL_MS = 5 * 60 * 1000;
+
+export async function fetchSearchSuggestions(query: string): Promise<string[]> {
+  const clean = query.trim().toLowerCase();
+  if (!clean) return [];
+  const cached = suggestionCache.get(clean);
+  if (cached && Date.now() - cached.fetchedAt < SUGGESTION_TTL_MS) return cached.items;
+  const inflight = suggestionInflight.get(clean);
+  if (inflight) return inflight;
+
+  const pending = (async () => {
+    // YouTube Music's own suggestion endpoint first — it reflects what this
+    // app's search actually returns.
+    try {
+      const data = await httpPostJson(
+        `${getYtmBase()}/music/get_search_suggestions?alt=json&key=${YTM_API_KEY}`,
+        { ...buildClientContext(), input: query.trim() },
+        3000
+      );
+      const items = (data?.contents || [])
+        .map(
+          (c: any) =>
+            c?.searchSuggestionRenderer?.navigationEndpoint?.searchEndpoint?.query ||
+            c?.searchSuggestionRenderer?.suggestion?.simpleText
+        )
+        .filter((s: unknown): s is string => typeof s === 'string' && s.length > 0)
+        .slice(0, 10);
+      if (items.length) {
+        suggestionCache.set(clean, { items, fetchedAt: Date.now() });
+        return items;
+      }
+    } catch {
+      // fall through to the public suggest endpoint
+    }
+
+    // Fallback: Google's public YouTube suggest endpoint (client=firefox
+    // returns plain JSON: [typedQuery, [suggestions]]).
+    try {
+      const data = await httpGetJson(
+        `https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(query.trim())}`,
+        3000
+      );
+      const list = Array.isArray(data?.[1]) ? data[1] : [];
+      const items = list
+        .filter((s: unknown): s is string => typeof s === 'string' && s.length > 0)
+        .slice(0, 10);
+      if (items.length) suggestionCache.set(clean, { items, fetchedAt: Date.now() });
+      return items;
+    } catch {
+      return [];
+    }
+  })();
+
+  suggestionInflight.set(clean, pending);
+  try {
+    return await pending;
+  } finally {
+    suggestionInflight.delete(clean);
+  }
+}
+
 export async function searchYouTubeMusic(query: string): Promise<Track[]> {
   if (!query || !query.trim()) return [];
 

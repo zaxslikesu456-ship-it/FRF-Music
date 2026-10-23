@@ -1,9 +1,39 @@
-import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import type { Track } from '../types/music';
 import { httpGetJson, httpPostJson, isTauriRuntime } from './http';
 import { getPoTokenMinter } from './poToken';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
+
+// Native probe for stream URLs. The player's real request is an open-ended
+// ranged GET, and googlevideo 403s exactly that shape without a poToken while
+// still answering tiny probes (bytes=0-0) — so validation has to match what
+// playback will send or a dead URL wins the resolver race.
+interface StreamProbePlugin {
+  probeStreamUrl(options: { url: string }): Promise<{
+    status?: number;
+    contentType?: string;
+    media?: boolean;
+  }>;
+  mintPoToken?(options: { videoId: string }): Promise<{
+    ok?: boolean;
+    visitorData?: string;
+    contentPot?: string;
+    sessionPot?: string;
+  }>;
+  // Native Cronet download: fetches a resolved stream URL to the app's private
+  // files dir using Chromium's network stack (googlevideo 403s the Java stack
+  // that the patched fetch() uses). Returns the absolute file path + size.
+  downloadUrl?(options: { url: string; fileName: string }): Promise<{
+    path?: string;
+    size?: number;
+  }>;
+  deleteOfflineFile?(options: { path: string }): Promise<void>;
+}
+const StreamProbe = IS_NATIVE
+  ? registerPlugin<StreamProbePlugin>('BackgroundAudio')
+  : null;
+
 const OFFLINE_KEY = 'bw_music_offline_files_v1';
 const USE_YT_PROXY = import.meta.env.DEV && !IS_NATIVE && !isTauriRuntime();
 
@@ -159,6 +189,7 @@ function noted<T>(label: string, task: () => Promise<T>): () => Promise<T> {
       return await task();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`[streamResolve] ${label}: ${msg.slice(0, 120)}`);
       lastResolveNotes.push(`${label}:${msg.replace(/^Error: /, '')}`.slice(0, 60));
       throw e;
     }
@@ -174,14 +205,48 @@ function hostOf(base: string): string {
 }
 
 // On native platforms there is no CORS, so we can cheaply verify that a
-// resolved googlevideo URL actually serves bytes (some InnerTube clients
-// return URLs that answer 403 without a poToken). A dead URL must never win
-// the race over a working one from another client. Fail-open on transport
+// resolved stream URL actually serves bytes. The probe replicates the player's
+// open-ended ranged GET: googlevideo answers small ranged probes without a
+// poToken but rejects unbounded requests, so a URL that fails here is
+// guaranteed to fail the moment playback starts. Fail-open on transport
 // errors: only a definitive 401/403/404/410 response rejects the URL, so a
 // broken check can never silently kill every stream.
 async function validateStreamUrl(url: string): Promise<string> {
-  if (!Capacitor.isNativePlatform()) return url;
-  let status: number;
+  if (!IS_NATIVE) return url;
+  // googlevideo answers the Java probe (HttpURLConnection / OkHttp) with HTTP
+  // 403 purely because of its TLS fingerprint — the very same URL streams fine
+  // through the WebView's Chromium engine and the native Cronet downloader.
+  // Probing it here would reject every good URL and break both resolution and
+  // downloads, so trust googlevideo URLs outright (the InnerTube player already
+  // confirmed the format exists). Non-googlevideo proxies keep the probe below,
+  // where an HTML/JSON anti-bot page genuinely must be rejected.
+  if (/googlevideo\.com/i.test(url)) return url;
+  if (StreamProbe?.probeStreamUrl) {
+    try {
+      const res = await StreamProbe.probeStreamUrl({ url });
+      const status = Number(res?.status ?? 0);
+      console.warn(
+        `[streamProbe] ${status} ${res?.contentType || '?'} media=${res?.media} ${url.slice(0, 100)}`
+      );
+      if (status === 401 || status === 403 || status === 404 || status === 410) {
+        throw new Error(`Stream HTTP ${status}`);
+      }
+      // An anti-bot gate in front of a proxy (Anubis, Cloudflare) answers 200
+      // with an HTML challenge. ExoPlayer cannot tell that apart from a dead
+      // URL until it has already been handed the stream, so a status-only
+      // check let those URLs win the resolver race and background playback
+      // went silent. `media` is only present when the probe actually read
+      // response bytes, so this can never reject on a transport hiccup.
+      if (res?.media === false) {
+        throw new Error(`Stream not media (${res?.contentType || 'unknown type'})`);
+      }
+      return url;
+    } catch (e) {
+      if (e instanceof Error && /^Stream HTTP \d+$/.test(e.message)) throw e;
+      if (e instanceof Error && /^Stream not media/.test(e.message)) throw e;
+      // Probe unavailable or errored — fall through to the legacy check.
+    }
+  }
   try {
     const res = await CapacitorHttp.get({
       url,
@@ -189,13 +254,21 @@ async function validateStreamUrl(url: string): Promise<string> {
       connectTimeout: 2500,
       readTimeout: 2500,
     });
-    status = res.status;
-  } catch {
+    const status = res.status;
+    if (status === 401 || status === 403 || status === 404 || status === 410) {
+      throw new Error(`Stream HTTP ${status}`);
+    }
+    const headers = res.headers || {};
+    const type = String(
+      headers['Content-Type'] || headers['content-type'] || ''
+    ).toLowerCase();
+    if (type.includes('html') || type.includes('json')) {
+      throw new Error(`Stream not media (${type})`);
+    }
+  } catch (e) {
+    if (e instanceof Error && /^Stream HTTP \d+$/.test(e.message)) throw e;
+    if (e instanceof Error && /^Stream not media/.test(e.message)) throw e;
     // Transport or plugin failure: let the player itself decide.
-    return url;
-  }
-  if (status === 401 || status === 403 || status === 404 || status === 410) {
-    throw new Error(`Stream HTTP ${status}`);
   }
   return url;
 }
@@ -267,7 +340,10 @@ async function resolveFromInnerTubeClient(
     ...(data?.streamingData?.adaptiveFormats || []),
     ...(data?.streamingData?.formats || []),
   ]);
-  if (url) return po ? appendPot(url, po.sessionPoToken) : url;
+  // The pot parameter on googlevideo URLs carries the CONTENT-bound proof of
+  // origin (bound to the video ID), matching how YouTube's own player and
+  // yt-dlp attach it; the session-bound token goes in the player request body.
+  if (url) return po ? appendPot(url, po.contentPoToken) : url;
   throw new Error('No audio URL found');
 }
 
@@ -281,17 +357,28 @@ async function resolveFromInnerTube(
   // URL gets a session-bound pot parameter (visitor data).
   let po: PoContext | undefined;
   if (usePoToken) {
-    const minter = await getPoTokenMinter(forceRefreshMinter);
-    if (minter) {
-      try {
-        po = {
-          visitorData: minter.visitorData,
-          contentPoToken: await minter.mint(youtubeId),
-          sessionPoToken: await minter.mint(minter.visitorData),
-        };
-      } catch {
-        po = undefined;
-      }
+    // Preferred: mint inside a hidden native WebView running on the real
+    // youtube.com origin. The BotGuard VM skips its WebPO stage anywhere else
+    // (this app's WebView is https://localhost), so the JS-side minter below
+    // can only ever receive the legacy fallback token.
+    const native = StreamProbe?.mintPoToken
+      ? await StreamProbe.mintPoToken({ videoId: youtubeId }).catch(() => null)
+      : null;
+    if (native?.ok && native.visitorData && native.contentPot) {
+      po = {
+        visitorData: native.visitorData,
+        contentPoToken: native.contentPot,
+        sessionPoToken: native.sessionPot || native.contentPot,
+      };
+    } else {
+      const minter = await getPoTokenMinter(forceRefreshMinter);
+      // Without a token this would just replay the plain-client race below.
+      if (!minter) throw new Error('No poToken minter');
+      po = {
+        visitorData: minter.visitorData,
+        contentPoToken: await minter.mint(youtubeId),
+        sessionPoToken: await minter.mint(minter.visitorData),
+      };
     }
   }
   const clients = [
@@ -406,6 +493,14 @@ async function resolveFromInvidious(
 
 const inflightResolves = new Map<string, Promise<string>>();
 
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(label)), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string> {
   lastResolveNotes = [];
   // Pre-warm the poToken minter in the background so the fallback below does
@@ -413,8 +508,24 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
   if (IS_NATIVE) {
     void getPoTokenMinter();
   }
+  // Android: the full-length TV_SIMPLY/MWEB source goes first, on its own. In
+  // the race below the IOS/ANDROID clients answer fastest, but googlevideo
+  // cuts their streams off after ~1 MiB, so playback would stop seconds in.
+  if (IS_NATIVE && Capacitor.getPlatform() === 'android') {
+    try {
+      return await withTimeout(resolveAudioStreamUrlFull(youtubeId), 20000, 'youtubei timeout');
+    } catch (e) {
+      const msg = String((e as Error)?.message || e);
+      console.warn(`[streamResolve] youtubei: ${msg.slice(0, 120)}`);
+      lastResolveNotes.push(`youtubei:${msg}`.slice(0, 60));
+    }
+  }
   try {
     return await raceFirstUrl([
+      // The poToken'd stream goes first: on bot-gated networks it is the only
+      // kind googlevideo lets a native player stream open-ended, while the
+      // plain mobile-client URLs die with HTTP 403 the moment playback starts.
+      () => resolveFromInnerTube(youtubeId, true),
       () => resolveFromInnerTube(youtubeId),
       ...getPipedBases().map(base =>
         noted(`piped:${hostOf(base)}`, validated(() => resolveFromPiped(base, youtubeId)))
@@ -475,6 +586,39 @@ export async function resolveAudioStreamUrl(
 
   inflightResolves.set(youtubeId, pending);
   return pending;
+}
+
+// Full-length stream via youtubei.js (TV_SIMPLY, then MWEB + the WebPO tokens
+// minted in the native youtube.com WebView). App-client URLs (IOS/ANDROID/VR)
+// 403 after the first ~1 MiB, so these are the sources that download to the end.
+export async function resolveAudioStreamUrlFull(youtubeId: string): Promise<string> {
+  const { resolveFullAudioUrl } = await import('./ytjs');
+  return resolveFullAudioUrl(youtubeId, preferredItags(), async () => {
+    if (!StreamProbe?.mintPoToken) throw new Error('No native poToken minter');
+    const po = await StreamProbe.mintPoToken({ videoId: youtubeId });
+    if (!po?.ok || !po.visitorData || !po.contentPot || !po.sessionPot) {
+      throw new Error('poToken mint failed');
+    }
+    // Keep YouTube's URL-encoded visitorData: the session token is minted
+    // over exactly this string, and a decoded copy no longer matches it.
+    return { visitorData: po.visitorData, contentPot: po.contentPot, sessionPot: po.sessionPot };
+  });
+}
+
+// Resolve a stream URL that carries a valid content-bound poToken. googlevideo
+// answers anonymous Android-app fetches (Cronet / OkHttp / ExoPlayer TLS
+// fingerprint) with HTTP 403 unless the URL has an accepted `pot`, and the
+// general resolver races a fast token-less client that usually wins. Downloads
+// must use this poToken-only path so the native fetch is authorized.
+export async function resolveAudioStreamUrlPoToken(youtubeId: string): Promise<string> {
+  // Try the cached minter first, then a forced-fresh one if the token is
+  // rejected (a poisoned cache would otherwise 403 forever).
+  try {
+    return await resolveFromInnerTube(youtubeId, true);
+  } catch (e) {
+    console.warn(`[streamResolve] po attempt failed for ${youtubeId}: ${String((e as Error)?.message).slice(0, 80)}`);
+    return await resolveFromInnerTube(youtubeId, true, true);
+  }
 }
 
 export interface OfflineFileRecord {
@@ -581,6 +725,28 @@ export function getOfflineRecord(trackId: string): OfflineFileRecord | null {
   }
 }
 
+// A stored record is only trustworthy if the file behind it still exists and is
+// a plausible size. Older builds saved proxy error pages as ".m4a" (a few KB),
+// and Android can clear app files; either way the record then claims the track
+// is offline while nothing playable exists, and downloads were skipped as
+// "already saved". Invalid records are purged so the track can be re-downloaded.
+export async function verifyOfflineRecord(trackId: string): Promise<boolean> {
+  const rec = getOfflineRecord(trackId);
+  if (!rec) return false;
+  if (!(IS_NATIVE && rec.path)) return true;
+  let ok = rec.size >= 20000;
+  if (ok) {
+    try {
+      const res = await fetch(Capacitor.convertFileSrc(rec.path), { method: 'HEAD' });
+      ok = res.ok;
+    } catch {
+      ok = false;
+    }
+  }
+  if (!ok) await removeOfflineTrack(trackId);
+  return ok;
+}
+
 export function isTrackDownloadedLocally(trackId: string): boolean {
   return Boolean(getOfflineRecord(trackId));
 }
@@ -589,11 +755,45 @@ export function isTrackOffline(trackId: string): boolean {
   return Boolean(getOfflineRecord(trackId));
 }
 
+// Pick a file extension for a downloaded stream from its googlevideo `mime`
+// parameter so the WebView's <audio> element decodes the local file correctly.
+function streamExtFromUrl(url: string): string {
+  const m = /[?&]mime=audio[%2f/]+([a-z0-9]+)/i.exec(url);
+  const t = (m?.[1] || '').toLowerCase();
+  if (t.includes('webm') || t.includes('opus')) return 'webm';
+  if (t.includes('ogg')) return 'ogg';
+  return 'm4a'; // audio/mp4, aac, and the default
+}
+
+// Server-side proxy sources. googlevideo 403s the Android-app TLS fingerprint
+// (Cronet/OkHttp/ExoPlayer) for anonymous media, even with a valid poToken, so
+// the app cannot pull bytes from the CDN directly. Piped/Invidious instances
+// fetch googlevideo themselves and re-serve the audio over an ordinary HTTPS
+// connection the app CAN read. Returns a list of candidate stream URLs.
+async function collectProxyStreamUrls(youtubeId: string): Promise<string[]> {
+  const tasks: Array<() => Promise<string>> = [
+    ...getPipedBases().map(base => () => resolveFromPiped(base, youtubeId)),
+    ...getInvidiousBases().map(base => () => resolveFromInvidious(base, youtubeId, true)),
+  ];
+  const settled = await Promise.allSettled(tasks.map(t => t()));
+  const urls: string[] = [];
+  for (const r of settled) {
+    if (r.status === 'fulfilled' && r.value && !urls.includes(r.value)) urls.push(r.value);
+  }
+  return urls;
+}
+
+let lastDownloadError = '';
+export function getLastDownloadError(): string {
+  return lastDownloadError;
+}
+
 export async function downloadTrackToFile(
   track: Track,
   onProgress?: (p: { bytes: number; contentLength: number }) => void
 ): Promise<boolean> {
   if (!track || !track.id) return false;
+  lastDownloadError = '';
   activeDownloadsMap.set(track.id, {
     trackId: track.id,
     title: track.title,
@@ -605,32 +805,75 @@ export async function downloadTrackToFile(
   notifyDownloadListeners();
 
   try {
-    let streamUrl = track.url;
-    if (track.isYouTube && track.youtubeId) {
-      streamUrl = await resolveAudioStreamUrl(track.youtubeId, true);
+    const isAndroidNative = IS_NATIVE && Capacitor.getPlatform() === 'android' && StreamProbe?.downloadUrl;
+    let filePath = '';
+    let size = 0;
+    let webUrl = '';
+
+    if (isAndroidNative && track.isYouTube && track.youtubeId) {
+      // Native Android: googlevideo refuses the app's TLS fingerprint, so pull
+      // the bytes through a server-side proxy (Piped/Invidious). Only if every
+      // proxy fails do we fall back to a direct poToken'd googlevideo URL.
+      let lastErr = 'no source';
+      const candidates: string[] = [];
+      try {
+        candidates.push(await resolveAudioStreamUrlFull(track.youtubeId));
+      } catch (e) {
+        lastErr = `youtubei: ${String((e as Error)?.message || e)}`;
+        console.warn(`[download] ${lastErr}`);
+      }
+      candidates.push(...(await collectProxyStreamUrls(track.youtubeId)));
+      try { candidates.push(await resolveAudioStreamUrlPoToken(track.youtubeId)); } catch { /* direct fallback */ }
+      try { candidates.push(await resolveAudioStreamUrl(track.youtubeId, true)); } catch { /* best effort */ }
+      if (candidates.length === 0) throw new Error('No stream URL');
+
+      activeDownloadsMap.set(track.id, {
+        trackId: track.id, title: track.title, coverUrl: track.coverUrl,
+        bytes: 30, total: 100, status: 'downloading',
+      });
+      notifyDownloadListeners();
+
+      for (const url of candidates) {
+        if (!url) continue;
+        const fileName = `offline-${track.id}.${streamExtFromUrl(url)}`;
+        try {
+          const res = await StreamProbe!.downloadUrl!({ url, fileName });
+          if (res && res.path) {
+            filePath = res.path;
+            size = Number(res.size) || 0;
+            webUrl = Capacitor.convertFileSrc(filePath);
+            break;
+          }
+        } catch (e) {
+          lastErr = String((e as Error)?.message || e);
+        }
+      }
+      if (!filePath) throw new Error(`All download sources failed (${lastErr})`);
+    } else {
+      // Non-Android / no native downloader: resolve and fetch via the web layer.
+      let streamUrl = track.url;
+      if (track.isYouTube && track.youtubeId) {
+        streamUrl = await resolveAudioStreamUrl(track.youtubeId, true);
+      }
+      if (!streamUrl) throw new Error('No stream URL');
+
+      activeDownloadsMap.set(track.id, {
+        trackId: track.id, title: track.title, coverUrl: track.coverUrl,
+        bytes: 30, total: 100, status: 'downloading',
+      });
+      notifyDownloadListeners();
+
+      const res = await fetch(streamUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      await storeBlobOffline(track.id, blob);
+      webUrl = URL.createObjectURL(blob);
+      activeObjectUrls.set(track.id, webUrl);
+      size = blob.size;
     }
-    if (!streamUrl) throw new Error('No stream URL');
-
-    activeDownloadsMap.set(track.id, {
-      trackId: track.id,
-      title: track.title,
-      coverUrl: track.coverUrl,
-      bytes: 30,
-      total: 100,
-      status: 'downloading',
-    });
-    notifyDownloadListeners();
-
-    const res = await fetch(streamUrl);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-
-    await storeBlobOffline(track.id, blob);
-    const webUrl = URL.createObjectURL(blob);
-    activeObjectUrls.set(track.id, webUrl);
 
     if (onProgress) {
-      onProgress({ bytes: blob.size, contentLength: blob.size });
+      onProgress({ bytes: size, contentLength: size });
     }
 
     const saved = localStorage.getItem(OFFLINE_KEY);
@@ -639,9 +882,9 @@ export async function downloadTrackToFile(
     const filtered = records.filter(r => r.trackId !== track.id);
     filtered.push({
       trackId: track.id,
-      path: '',
+      path: filePath,
       webUrl,
-      size: blob.size,
+      size,
       downloadedAt: Date.now(),
     });
     localStorage.setItem(OFFLINE_KEY, JSON.stringify(filtered));
@@ -659,6 +902,7 @@ export async function downloadTrackToFile(
     return true;
   } catch (err) {
     console.error('Download failed for track:', track.id, err);
+    lastDownloadError = String((err as Error)?.message || err).slice(0, 160);
     activeDownloadsMap.set(track.id, {
       trackId: track.id,
       title: track.title,
@@ -688,6 +932,10 @@ export async function removeOfflineTrack(trackId: string): Promise<void> {
       if (objUrl) {
         URL.revokeObjectURL(objUrl);
         activeObjectUrls.delete(trackId);
+      }
+      // Native downloads live on the filesystem; remove the file too.
+      if (rec.path && IS_NATIVE && StreamProbe?.deleteOfflineFile) {
+        void StreamProbe.deleteOfflineFile({ path: rec.path }).catch(() => {});
       }
       try {
         const db = await openDownloadsDB();

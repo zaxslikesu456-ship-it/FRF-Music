@@ -20,6 +20,7 @@ import {
   X,
   Sliders,
   Video as VideoIcon,
+  Timer,
   Volume,
   Volume1,
   Volume2,
@@ -84,10 +85,13 @@ export const NowPlayingScreen: React.FC = () => {
     stopTrack,
     openArtistProfile,
     reorderQueue,
+    removeFromQueue,
     isResolvingStream,
     setIsEqualizerOpen,
     volume,
     setVolume,
+    sleepSecondsRemaining,
+    setSleepTimer,
   } = useAudio();
 
   const lastNonZeroVolumeRef = useRef<number>(volume || 0.8);
@@ -104,6 +108,23 @@ export const NowPlayingScreen: React.FC = () => {
   const [centerMode, setCenterMode] = useState<PlayerCenterMode>('artwork');
   const [rawLyrics, setRawLyrics] = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
+
+  // Double-tap the artwork to like the track, with a heart pop animation.
+  const [heartPop, setHeartPop] = useState(false);
+  const lastArtworkTap = useRef(0);
+  const handleArtworkTap = () => {
+    const now = Date.now();
+    if (now - lastArtworkTap.current < 300) {
+      lastArtworkTap.current = 0;
+      if (!favorites.includes(currentTrack?.id || '')) {
+        toggleFavorite(currentTrack!.id);
+      }
+      setHeartPop(true);
+      window.setTimeout(() => setHeartPop(false), 800);
+    } else {
+      lastArtworkTap.current = now;
+    }
+  };
 
   const activeLyricRef = useRef<HTMLParagraphElement | null>(null);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -289,6 +310,16 @@ export const NowPlayingScreen: React.FC = () => {
             <p className="text-xs text-app-secondary truncate font-medium tracking-wider uppercase">
               {queue.length > 0 ? 'Playing from Queue' : 'Now Playing'}
             </p>
+            {sleepSecondsRemaining != null && sleepSecondsRemaining > 0 && (
+              <button
+                onClick={() => setSleepTimer(null)}
+                className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-app-secondary bg-app-card/70 rounded-full px-2 py-0.5 active:scale-95 transition-transform"
+                title="Sleep timer ends soon — tap to cancel"
+              >
+                <Timer className="w-3 h-3" />
+                {formatTime(sleepSecondsRemaining)}
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-1">
@@ -433,7 +464,10 @@ export const NowPlayingScreen: React.FC = () => {
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0 animate-in fade-in duration-200">
-            <div className="relative w-full max-w-[320px] aspect-square rounded-2xl overflow-hidden shadow-2xl border border-white/10 group">
+            <div
+              onClick={handleArtworkTap}
+              className="relative w-full max-w-[320px] aspect-square rounded-2xl overflow-hidden shadow-2xl border border-white/10 group cursor-pointer active:scale-[0.99] transition-transform"
+            >
               <img
                 src={currentTrack.coverUrl}
                 alt={currentTrack.title}
@@ -442,7 +476,13 @@ export const NowPlayingScreen: React.FC = () => {
                 }`}
               />
               <div className="absolute inset-0 ring-1 ring-inset ring-white/10 rounded-2xl pointer-events-none" />
+              {heartPop && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <Heart className="w-24 h-24 text-red-500 fill-red-500 drop-shadow-[0_4px_16px_rgba(239,68,68,0.6)] animate-[heartPop_0.8s_ease-out_forwards]" />
+                </div>
+              )}
             </div>
+            <p className="text-[11px] text-app-secondary/50 mt-3">Double-tap artwork to like</p>
           </div>
         )}
 
@@ -692,28 +732,40 @@ export const NowPlayingScreen: React.FC = () => {
                     </div>
 
                     {queue.length > 0 && (
-                      <div className="flex flex-col shrink-0">
+                      <div className="flex items-center gap-1 shrink-0">
+                        <div className="flex flex-col">
+                          <button
+                            onClick={e => {
+                              e.stopPropagation();
+                              reorderQueue(idx, idx - 1);
+                            }}
+                            disabled={idx === 0}
+                            className="p-1 text-app-secondary hover:text-app-primary disabled:opacity-20"
+                            title="Move Up"
+                          >
+                            <ArrowUp className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={e => {
+                              e.stopPropagation();
+                              reorderQueue(idx, idx + 1);
+                            }}
+                            disabled={idx === upNextTracks.length - 1}
+                            className="p-1 text-app-secondary hover:text-app-primary disabled:opacity-20"
+                            title="Move Down"
+                          >
+                            <ArrowDown className="w-4 h-4" />
+                          </button>
+                        </div>
                         <button
                           onClick={e => {
                             e.stopPropagation();
-                            reorderQueue(idx, idx - 1);
+                            removeFromQueue(idx);
                           }}
-                          disabled={idx === 0}
-                          className="p-1 text-app-secondary hover:text-app-primary disabled:opacity-20"
-                          title="Move Up"
+                          className="p-1.5 text-app-secondary hover:text-red-400 transition-colors"
+                          title="Remove from queue"
                         >
-                          <ArrowUp className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={e => {
-                            e.stopPropagation();
-                            reorderQueue(idx, idx + 1);
-                          }}
-                          disabled={idx === upNextTracks.length - 1}
-                          className="p-1 text-app-secondary hover:text-app-primary disabled:opacity-20"
-                          title="Move Down"
-                        >
-                          <ArrowDown className="w-4 h-4" />
+                          <X className="w-4 h-4" />
                         </button>
                       </div>
                     )}

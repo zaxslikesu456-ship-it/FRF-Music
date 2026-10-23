@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { Play, Pause, SkipForward, Loader2, X } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 
@@ -15,12 +15,41 @@ export const MiniPlayer: React.FC = () => {
     stopTrack,
   } = useAudio();
 
+  // Swipe the mini-player down to dismiss the current song.
+  const [dragY, setDragY] = useState(0);
+  const dragStartY = useRef<number | null>(null);
+
   if (!currentTrack) return null;
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
+  const onTouchStart = (e: React.TouchEvent) => {
+    dragStartY.current = e.touches[0].clientY;
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (dragStartY.current == null) return;
+    const dy = e.touches[0].clientY - dragStartY.current;
+    // Only track downward drags; upward is handled by the tap-to-open button.
+    setDragY(dy > 0 ? dy : 0);
+  };
+  const onTouchEnd = () => {
+    if (dragY > 90) stopTrack();
+    setDragY(0);
+    dragStartY.current = null;
+  };
+
   return (
-    <div className="w-full bg-app-primary z-30 anim-rise border-t border-app">
+    <div
+      className="w-full bg-app-primary z-30 anim-rise border-t border-app touch-none"
+      style={{
+        transform: dragY > 0 ? `translateY(${dragY}px)` : undefined,
+        opacity: dragY > 0 ? Math.max(0.3, 1 - dragY / 260) : undefined,
+        transition: dragY > 0 ? 'none' : 'transform 0.2s ease, opacity 0.2s ease',
+      }}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
       {/* Thin progress line */}
       <div className="w-full bg-app-card h-0.5">
         <div

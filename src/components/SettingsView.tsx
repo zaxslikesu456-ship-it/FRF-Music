@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Palette,
   Music,
@@ -28,6 +28,7 @@ import type {
   SettingsState,
   IconSize,
 } from '../types/music';
+import { checkBatteryExempt, requestBatteryExemption } from '../utils/battery';
 
 const Switch: React.FC<{ on: boolean; onChange: () => void }> = ({ on, onChange }) => (
   <button
@@ -105,6 +106,18 @@ export const SettingsView: React.FC = () => {
   } = useAudio();
 
   const [open, setOpen] = useState<Section | null>(null);
+  // null = unknown / not Android, so the prompt only appears on devices that
+  // are actually throttling background work.
+  const [batteryExempt, setBatteryExempt] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    void checkBatteryExempt().then(setBatteryExempt);
+  }, []);
+
+  const grantBatteryExemption = async () => {
+    const granted = await requestBatteryExemption();
+    if (granted) setBatteryExempt(true);
+  };
 
   const toggle = (s: Section) => setOpen(prev => (prev === s ? null : s));
 
@@ -415,7 +428,14 @@ export const SettingsView: React.FC = () => {
                           onChange={() => updateSettings({ autoPlayNext: !settings.autoPlayNext })}
                         />
                       </Row>
-                      <Row title="Background playback" subtitle="Local and offline tracks outside the app">
+                      <Row
+                        title="Background playback"
+                        subtitle={
+                          batteryExempt === false
+                            ? 'Tap to let Android keep FRF running while it plays'
+                            : 'Local and offline tracks outside the app'
+                        }
+                      >
                         <Switch
                           on={settings.backgroundPlayback}
                           onChange={() =>
@@ -423,6 +443,20 @@ export const SettingsView: React.FC = () => {
                           }
                         />
                       </Row>
+                      {batteryExempt === false && (
+                        <div className="pb-3 -mt-1">
+                          <button
+                            onClick={() => void grantBatteryExemption()}
+                            className="w-full text-left px-4 py-3 rounded-2xl bg-app-card border border-app-theme text-sm font-semibold text-app-primary"
+                          >
+                            Allow background playback
+                          </button>
+                          <p className="mt-2 px-1 text-xs text-app-secondary leading-relaxed">
+                            Your device is set to pause apps in the background. Without this
+                            exemption Android stops playback a few minutes after you leave FRF.
+                          </p>
+                        </div>
+                      )}
                       <Row
                         title="YouTube mini video"
                         subtitle="Optional: keep YouTube playing while browsing inside FRF"

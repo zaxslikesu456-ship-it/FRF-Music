@@ -57,42 +57,66 @@ export function getPoTokenMinter(forceRefresh = false): Promise<PoTokenMinter | 
   // The BotGuard VM needs a real browser environment, and the token requests
   // need CORS-free HTTP — both are only guaranteed in the native app.
   if (!Capacitor.isNativePlatform()) return Promise.resolve(null);
-  if (minterPromise && !forceRefresh && Date.now() < minterExpiresAt) {
+  if (!forceRefresh && minterPromise && Date.now() < minterExpiresAt) {
     return minterPromise;
   }
-  minterPromise = initMinter().catch(() => {
-    // A failed mint must not be cached as valid — force a retry next call.
-    minterExpiresAt = 0;
-    return null;
-  });
+  if (!forceRefresh && minterPromise) {
+    // Init still in flight: share it. Parallel callers each running their own
+    // BotGuard VM was pure waste — and when several resolves raced (foreground
+    // handover + background requestStream) the herd made minting slower for
+    // everyone.
+    return minterPromise;
+  }
+  minterPromise = initMinter().then(
+    minter => {
+      // A settled failure must be retried on the next call, not cached.
+      if (!minter) minterPromise = null;
+      return minter;
+    },
+    () => {
+      // A failed mint must not be cached as valid — force a retry next call.
+      minterExpiresAt = 0;
+      minterPromise = null;
+      return null;
+    }
+  );
   return minterPromise;
 }
 
 async function initMinter(): Promise<PoTokenMinter | null> {
-  // 1. Attestation challenge (BotGuard program + interpreter script location)
-  const challengeRes = await CapacitorHttp.post({
-    url: `https://www.youtube.com/youtubei/v1/att/get?key=${YT_API_KEY}&prettyPrint=false`,
-    headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
-    data: {
-      context: {
-        client: { clientName: 'WEB', clientVersion: '2.20260617.01.00', hl: 'en', gl: 'US' },
+  // Stage markers surface exactly where on-device minting dies — the whole
+  // flow is swallowed by getPoTokenMinter's catch, and "no stream" is
+  // undebuggable without knowing whether attestation, the VM, or the mint
+  // failed.
+  const stage = (name: string, err?: unknown) => {
+    const detail = err instanceof Error ? err.message : err ? String(err) : '';
+    console.warn(`[poToken] ${name}${detail ? `: ${detail}` : ''}`);
+  };
+  try {
+    // 1. Attestation challenge (BotGuard program + interpreter script location)
+    const challengeRes = await CapacitorHttp.post({
+      url: `https://www.youtube.com/youtubei/v1/att/get?key=${YT_API_KEY}&prettyPrint=false`,
+      headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
+      data: {
+        context: {
+          client: { clientName: 'WEB', clientVersion: '2.20260617.01.00', hl: 'en', gl: 'US' },
+        },
+        engagementType: 'ENGAGEMENT_TYPE_UNBOUND',
       },
-      engagementType: 'ENGAGEMENT_TYPE_UNBOUND',
-    },
-    connectTimeout: 6000,
-    readTimeout: 6000,
-  });
-  const challengeData =
-    typeof challengeRes.data === 'string' ? JSON.parse(challengeRes.data) : challengeRes.data;
-  const bg = challengeData?.bgChallenge;
-  const program: string | undefined = bg?.program;
-  const globalName: string | undefined = bg?.globalName;
-  const interpreterHash: string | undefined = bg?.interpreterHash;
-  const interpreterUrlRaw: string | undefined =
-    bg?.interpreterUrl?.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue;
-  if (!program || !globalName || !interpreterUrlRaw) {
-    throw new Error('No BotGuard challenge');
-  }
+      connectTimeout: 6000,
+      readTimeout: 6000,
+    });
+    const challengeData =
+      typeof challengeRes.data === 'string' ? JSON.parse(challengeRes.data) : challengeRes.data;
+    const bg = challengeData?.bgChallenge;
+    const program: string | undefined = bg?.program;
+    const globalName: string | undefined = bg?.globalName;
+    const interpreterHash: string | undefined = bg?.interpreterHash;
+    const interpreterUrlRaw: string | undefined =
+      bg?.interpreterUrl?.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue;
+    if (!program || !globalName || !interpreterUrlRaw) {
+      throw new Error('No BotGuard challenge');
+    }
 
   const visitorData: string =
     challengeData?.responseContext?.visitorData || randomVisitorData();
@@ -109,6 +133,7 @@ async function initMinter(): Promise<PoTokenMinter | null> {
   });
   const interpreterJavascript = String(jsRes.data || '');
   if (interpreterJavascript.length < 100) throw new Error('Empty BotGuard interpreter');
+  stage('interpreter loaded', `${interpreterJavascript.length} bytes`);
 
   if (!document.getElementById(interpreterHash || 'bg-interpreter')) {
     const script = document.createElement('script');
@@ -120,6 +145,17 @@ async function initMinter(): Promise<PoTokenMinter | null> {
 
   const vm = (window as unknown as Record<string, any>)[globalName];
   if (!vm || typeof vm.a !== 'function') throw new Error('BotGuard VM unavailable');
+
+  // The BotGuard program probes window.yt.config_ (the YouTube page's ytcfg)
+  // while it runs. When it is missing — as in this WebView, which is not the
+  // YouTube site — the program completes but silently skips the WebPO stage:
+  // webPoSignalOutput stays empty and GenerateIT answers with the legacy
+  // fallback instead of an integrity token. Any object at window.yt is enough
+  // for the program to take the WebPO path and mint real tokens.
+  const w = window as unknown as Record<string, any>;
+  if (!w.yt) {
+    w.yt = { config_: {} };
+  }
 
   // 3. Load the program; the VM hands us its functions through the callback
   let resolveFns!: (v: any) => void;
@@ -134,7 +170,13 @@ async function initMinter(): Promise<PoTokenMinter | null> {
   ) => {
     resolveFns({ asyncSnapshotFunction, shutdownFunction, passEventFunction, checkCameraFunction });
   };
-  const loggerFunctions = [() => {}, () => {}, () => {}, () => {}, () => {}];
+  const loggerFunctions = [
+    (event: string, elapsed: number) => stage('vm event', `${event} ${elapsed}ms`),
+    (code: number) => stage('vm client error', String(code)),
+    (size: number) => stage('vm payload size', String(size)),
+    (latency: number, et: number) => stage('vm latency', `${latency} ${et}`),
+    (event: string) => stage('vm event count', event),
+  ];
 
   await vm
     .a(
@@ -148,6 +190,7 @@ async function initMinter(): Promise<PoTokenMinter | null> {
       false,
       loggerFunctions
     )?.[0];
+  stage('vm program loaded');
 
   const vmFunctions = await Promise.race([
     fnsPromise,
@@ -171,6 +214,7 @@ async function initMinter(): Promise<PoTokenMinter | null> {
       setTimeout(() => reject(new Error('Snapshot timeout')), 5000)
     ),
   ]);
+  stage('snapshot ok', `signals=${webPoSignalOutput.length}`);
 
   // 5. Exchange the snapshot for an integrity token
   const itRes = await CapacitorHttp.post({
@@ -187,7 +231,13 @@ async function initMinter(): Promise<PoTokenMinter | null> {
   });
   const itData = typeof itRes.data === 'string' ? JSON.parse(itRes.data) : itRes.data;
   const integrityToken: string | undefined = Array.isArray(itData) ? itData[0] : undefined;
-  if (!integrityToken) throw new Error('No integrity token');
+  if (!integrityToken) {
+    stage(
+      'GenerateIT response',
+      JSON.stringify(itData)?.slice(0, 300) || `status ${itRes.status}`
+    );
+    throw new Error('No integrity token');
+  }
 
   const ttlSecs = Number(Array.isArray(itData) ? itData[1] : 0) || 7200;
   minterExpiresAt = Date.now() + Math.min(ttlSecs, 7200) * 1000 - 60000;
@@ -197,6 +247,7 @@ async function initMinter(): Promise<PoTokenMinter | null> {
   if (typeof getMinter !== 'function') throw new Error('No WebPO minter function');
   const mintCallback = await getMinter(base64ToU8(integrityToken));
   if (!(mintCallback instanceof Function)) throw new Error('WebPO mint callback failed');
+  stage('minter ready');
 
   return {
     visitorData,
@@ -206,4 +257,8 @@ async function initMinter(): Promise<PoTokenMinter | null> {
       return u8ToBase64Url(result);
     },
   };
+  } catch (e) {
+    stage('mint init failed', e);
+    throw e;
+  }
 }

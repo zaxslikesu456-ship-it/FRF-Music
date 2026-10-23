@@ -3,6 +3,8 @@ import {
   X,
   Download,
   ListPlus,
+  ListStart,
+  ListEnd,
   Heart,
   Play,
   Trash2,
@@ -67,6 +69,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
     removeTrackFromPlaylist,
     openArtistProfile,
     startRadio,
+    addToQueue,
     sleepTimerMinutes,
     setSleepTimer,
   } = useAudio();
@@ -277,6 +280,24 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
                 label="Start radio"
                 onClick={() => {
                   startRadio(track);
+                  onClose();
+                }}
+              />
+
+              {/* Play next / Add to queue */}
+              <MenuItem
+                icon={<ListStart className="w-6 h-6" />}
+                label="Play next"
+                onClick={() => {
+                  addToQueue(track, 'next');
+                  onClose();
+                }}
+              />
+              <MenuItem
+                icon={<ListEnd className="w-6 h-6" />}
+                label="Add to queue"
+                onClick={() => {
+                  addToQueue(track, 'last');
                   onClose();
                 }}
               />

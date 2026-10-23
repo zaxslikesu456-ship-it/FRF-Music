@@ -41,6 +41,7 @@ export const HomeView: React.FC = () => {
     tracks,
     favoriteTracks,
     recentlyPlayed,
+    mostPlayed,
     downloads,
     playQueue,
     settings,
@@ -321,6 +322,39 @@ export const HomeView: React.FC = () => {
               </div>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Most played (lifetime play counts) */}
+      {mostPlayed.length >= 3 && (
+        <div className="mt-8 anim-rise">
+          <h2 className={shelfSectionHeaderClass}>Most played</h2>
+          <div className="flex gap-4 overflow-x-auto px-5 pb-2 no-scrollbar">
+            {mostPlayed.map(({ track: t, count }, idx) => (
+              <button
+                key={`mp-${t.id}-${idx}`}
+                onClick={() => playQueue(mostPlayed.map(x => x.track), idx)}
+                className={`${shelfCardClass} hover:opacity-90 active:scale-[0.98] transition-all`}
+              >
+                <div className={shelfImgContainerClass}>
+                  <img
+                    src={t.coverUrl}
+                    alt={t.title}
+                    loading="lazy"
+                    className="w-full h-full object-cover"
+                  />
+                  <PlayCircle className="absolute top-2 left-2 w-5 h-5 text-app-primary fill-black/40" />
+                  {settings.showPlayCounts && (
+                    <span className="absolute bottom-2 right-2 text-[11px] font-bold text-white bg-black/60 rounded-full px-2 py-0.5">
+                      {count} {count === 1 ? 'play' : 'plays'}
+                    </span>
+                  )}
+                </div>
+                <p className={shelfTitleClass}>{t.title}</p>
+                <p className={shelfArtistClass}>{t.artist}</p>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
