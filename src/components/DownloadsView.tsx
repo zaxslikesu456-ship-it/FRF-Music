@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Download, Play, Shuffle, MoreVertical, Trash2, Clock, ChevronLeft } from 'lucide-react';
+import { Download, MoreVertical, Trash2, BarChart3 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
+import { PlaylistHero } from './PlaylistHero';
 import {
   subscribeDownloads,
   getActiveDownloads,
@@ -14,18 +15,30 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
   const { tracks, downloads, downloadedTracks: contextDownloadedTracks, removeDownload, playQueue, currentTrack, isPlaying, toggleShuffle, isShuffle } = useAudio();
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
   const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>(getActiveDownloads());
+  const [sortAz, setSortAz] = useState(false);
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     return subscribeDownloads(() => setActiveDownloads([...getActiveDownloads()]));
   }, []);
 
   // Combine library tracks matching downloads with full downloaded track objects
-  const downloadedTracks = React.useMemo(() => {
+  const allDownloaded = React.useMemo(() => {
     const trackMap = new Map<string, Track>();
     contextDownloadedTracks.forEach(t => trackMap.set(t.id, t));
     tracks.filter(t => downloads.includes(t.id)).forEach(t => trackMap.set(t.id, t));
     return Array.from(trackMap.values());
   }, [tracks, downloads, contextDownloadedTracks]);
+
+  // The list shown below the header: optionally searched and A-Z sorted.
+  const downloadedTracks = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = q
+      ? allDownloaded.filter(t => `${t.title} ${t.artist} ${t.album}`.toLowerCase().includes(q))
+      : allDownloaded;
+    if (sortAz) list = [...list].sort((a, b) => a.title.localeCompare(b.title));
+    return list;
+  }, [allDownloaded, query, sortAz]);
 
   const formatDuration = (secs: number) => {
     if (!secs || isNaN(secs)) return '--:--';
@@ -46,44 +59,21 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
         onClose={() => setSelectedTrack(null)}
       />
 
-      {/* Header Banner */}
-      <div className="flex items-center justify-between pt-1 pb-3 border-b border-app-theme">
-        <div className="flex items-center gap-3">
-          {onBack && (
-            <button onClick={onBack} className="p-1 text-app-primary" title="Back">
-              <ChevronLeft className="w-6 h-6" />
-            </button>
-          )}
-          <div className="w-12 h-12 rounded-2xl bg-app-highlight text-app-inverse flex items-center justify-center font-bold shadow-lg">
-            <Download className="w-6 h-6 fill-current" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black text-app-primary tracking-tight uppercase">DOWNLOADS</h1>
-            <p className="text-xs text-app-secondary font-mono">{downloadedTracks.length} Saved Songs</p>
-          </div>
-        </div>
-
-        {downloadedTracks.length > 0 && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={toggleShuffle}
-              className={`p-2.5 rounded-xl border transition-all ${
-                isShuffle ? 'bg-app-highlight text-app-inverse font-bold border-app-highlight' : 'bg-app-surface border-app-theme text-app-secondary hover:text-app-primary'
-              }`}
-              title="Shuffle Downloads"
-            >
-              <Shuffle className="w-4 h-4" />
-            </button>
-
-            <button
-              onClick={playAllDownloaded}
-              className="flex items-center gap-2 bg-app-highlight text-app-inverse px-4 py-2 rounded-xl font-bold text-xs hover:opacity-90 active:scale-95 transition-all shadow-md"
-            >
-              <Play className="w-4 h-4 fill-current ml-0.5" />
-              <span>PLAY ALL</span>
-            </button>
-          </div>
-        )}
+      <div className="-mx-4 -mt-4">
+        <PlaylistHero
+          title="Downloads"
+          subtitle="playlist"
+          count={allDownloaded.length}
+          onBack={onBack}
+          onPlay={playAllDownloaded}
+          playDisabled={downloadedTracks.length === 0}
+          isShuffle={isShuffle}
+          onShuffle={toggleShuffle}
+          sortAz={sortAz}
+          onToggleSort={() => setSortAz(v => !v)}
+          query={query}
+          onQueryChange={setQuery}
+        />
       </div>
 
       {/* Active Downloads with live progress */}
@@ -146,7 +136,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
       )}
 
       {/* Empty State */}
-      {downloadedTracks.length === 0 && activeDownloads.length === 0 ? (
+      {allDownloaded.length === 0 && activeDownloads.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center py-16 px-4 text-center border-2 border-dashed border-app-theme rounded-3xl my-auto space-y-4">
           <div className="w-16 h-16 rounded-2xl bg-app-surface border border-app-theme flex items-center justify-center text-app-secondary">
             <Download className="w-8 h-8 text-app-secondary" />
@@ -160,7 +150,10 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
         </div>
       ) : (
         /* Downloaded Tracks Listing */
-        <div className="space-y-2">
+        <div className="px-2 pt-2 space-y-1">
+          {downloadedTracks.length === 0 && (
+            <p className="text-center text-sm text-app-secondary py-8">No matching songs</p>
+          )}
           {downloadedTracks.map((track, index) => {
             const isCurrent = currentTrack?.id === track.id;
 
@@ -168,73 +161,53 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
               <div
                 key={track.id}
                 onClick={() => playQueue(downloadedTracks, index)}
-                className={`group p-3 rounded-2xl border transition-all duration-200 flex items-center justify-between cursor-pointer ${
-                  isCurrent
-                    ? 'bg-app-surface border-app-highlight text-app-primary font-bold shadow-lg'
-                    : 'bg-app-card border-app-theme text-app-secondary hover:border-app-highlight hover:text-app-primary'
-                }`}
+                className="w-full flex items-center gap-3.5 p-2 rounded-xl text-left hover:bg-white/5 cursor-pointer transition-colors group"
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-6 text-center font-mono text-xs text-app-secondary shrink-0">
-                    {isCurrent && isPlaying ? (
-                      <div className="flex items-end justify-center gap-0.5 h-4">
-                        <span className="w-0.5 h-full bg-app-highlight animate-pulse" />
-                        <span className="w-0.5 h-1/2 bg-app-highlight animate-pulse delay-75" />
-                        <span className="w-0.5 h-3/4 bg-app-highlight animate-pulse delay-150" />
-                      </div>
-                    ) : (
-                      <span>{index + 1}</span>
-                    )}
-                  </div>
-
-                  <div className="w-12 h-12 rounded-full overflow-hidden bg-app-surface border border-app-theme shrink-0 relative shadow-md">
-                    <img
-                      src={track.coverUrl}
-                      alt={track.title}
-                      className={`w-full h-full object-cover rounded-full ${
-                        isCurrent && isPlaying ? 'animate-[spin_10s_linear_infinite]' : 'opacity-90 scale-95'
-                      }`}
-                    />
-                    <div className="absolute inset-0 m-auto w-3 h-3 rounded-full bg-app-primary border border-app-highlight" />
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-bold truncate text-app-primary">
-                      {track.title}
-                    </h3>
-                    <p className="text-xs text-app-secondary font-mono truncate mt-0.5">
-                      {track.artist} • {track.album}
-                    </p>
-                  </div>
+                <img
+                  src={track.coverUrl}
+                  alt={track.title}
+                  loading="lazy"
+                  className="w-12 h-12 rounded-lg object-cover shrink-0 border border-white/5"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm sm:text-base font-semibold truncate ${isCurrent ? 'text-white font-bold' : 'text-zinc-100'}`}>
+                    {track.title}
+                  </p>
+                  <p className="text-xs text-zinc-400 truncate mt-0.5">{track.artist}</p>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0 pl-2">
-                  <button
-                    onClick={(e) => {
+                <div className="flex items-center gap-3 shrink-0">
+                  {isCurrent && isPlaying && (
+                    <BarChart3 className="w-5 h-5 text-white fill-white/20 animate-pulse" />
+                  )}
+
+                  <span className="text-xs text-zinc-400 font-mono">{formatDuration(track.duration)}</span>
+
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={e => {
                       e.stopPropagation();
                       removeDownload(track.id);
                     }}
-                    className="p-1.5 text-app-secondary hover:text-red-400 transition-colors"
+                    className="p-1.5 text-zinc-500 hover:text-red-400"
                     title="Remove from Downloads"
                   >
                     <Trash2 className="w-4 h-4" />
-                  </button>
+                  </span>
 
-                  <button
-                    onClick={(e) => {
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={e => {
                       e.stopPropagation();
                       setSelectedTrack(track);
                     }}
-                    className="p-1.5 text-app-secondary hover:text-app-primary transition-colors"
-                    title="Options Menu"
+                    className="p-1.5 text-zinc-400 hover:text-white"
+                    title="More Options"
                   >
-                    <MoreVertical className="w-4 h-4" />
-                  </button>
-
-                  <div className="flex items-center gap-1 text-xs font-mono text-app-secondary">
-                    <Clock className="w-3 h-3" />
-                    <span>{formatDuration(track.duration)}</span>
-                  </div>
+                    <MoreVertical className="w-5 h-5" />
+                  </span>
                 </div>
               </div>
             );

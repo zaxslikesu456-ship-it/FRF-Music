@@ -97,7 +97,6 @@ export interface SettingsState {
   sortBy: SortOrder;
   downloadQuality: 'high' | 'low';
   sleepTimerMinutes: 0 | 15 | 30 | 60;
-  backgroundPlayback: boolean;
   youtubeMiniPlayer: boolean;
   showPlayCounts: boolean;
   profileName: string;

@@ -168,8 +168,9 @@ public class BackgroundAudioPlugin extends Plugin {
             }
         } catch (Exception ignored) {}
 
-        PlaybackService svc = PlaybackService.instance;
-        if (svc != null) svc.setEqualizer(enabled, bands, bassBoostLevel, surroundLevel);
+        // Stored globally, so it applies even before the player exists and to every
+        // player created later.
+        AudioEffects.get().set(enabled, bands, bassBoostLevel, surroundLevel);
         call.resolve();
     }
 
@@ -291,7 +292,7 @@ public class BackgroundAudioPlugin extends Plugin {
     // with a recognizable container signature. Anything that announces itself
     // as HTML/JSON, or whose first bytes are markup, is a gate or an error
     // page — never a stream ExoPlayer can decode.
-    private static boolean looksLikeMedia(String contentType, byte[] head, int len) {
+    static boolean looksLikeMedia(String contentType, byte[] head, int len) {
         String type = contentType != null ? contentType.toLowerCase() : "";
         if (type.startsWith("audio/") || type.startsWith("video/")) return true;
         if (type.contains("mpegurl") || type.contains("dash+xml")) return true;
@@ -503,6 +504,18 @@ public class BackgroundAudioPlugin extends Plugin {
     // Delete a previously downloaded offline file. Only touches paths inside
     // the app's private offline directory, so a bad path from JS can't delete
     // anything else.
+    // Save a song's cover art on disk so the notification can show it offline.
+    @PluginMethod
+    public void cacheCover(PluginCall call) {
+        final String url = call.getString("url", "");
+        new Thread(() -> {
+            boolean ok = CoverCache.ensure(getContext(), url);
+            JSObject ret = new JSObject();
+            ret.put("cached", ok);
+            call.resolve(ret);
+        }, "frf-cover-cache").start();
+    }
+
     @PluginMethod
     public void deleteOfflineFile(PluginCall call) {
         String path = call.getString("path", "");
@@ -538,50 +551,6 @@ public class BackgroundAudioPlugin extends Plugin {
             ret.put("ok", false);
             call.resolve(ret);
         });
-    }
-
-    @PluginMethod
-    public void batteryStatus(PluginCall call) {
-        JSObject ret = new JSObject();
-        ret.put("ignoring", isIgnoringBatteryOptimizations());
-        call.resolve(ret);
-    }
-
-    @PluginMethod
-    public void requestBatteryExemption(PluginCall call) {
-        boolean ignoring = isIgnoringBatteryOptimizations();
-        if (!ignoring) {
-            // OEM builds (Xiaomi, Samsung, Huawei, OnePlus) suspend background
-            // work within minutes of leaving the app. The permission was already
-            // declared in the manifest but nothing ever asked for it.
-            try {
-                Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                intent.setData(Uri.parse("package:" + getContext().getPackageName()));
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                getContext().startActivity(intent);
-            } catch (Exception e) {
-                try {
-                    Intent fallback =
-                            new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
-                    fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    getContext().startActivity(fallback);
-                } catch (Exception ignored) {}
-            }
-        }
-        JSObject ret = new JSObject();
-        ret.put("ignoring", ignoring);
-        call.resolve(ret);
-    }
-
-    private boolean isIgnoringBatteryOptimizations() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
-        try {
-            PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
-            return pm != null
-                    && pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
-        } catch (Exception e) {
-            return true;
-        }
     }
 
     private Intent createIntentWithExtras(PluginCall call, String action) {

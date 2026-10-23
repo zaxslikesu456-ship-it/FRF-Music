@@ -13,6 +13,7 @@ import {
   getOfflineRecord,
   setCachedStreamUrl,
   dropCachedStreamUrl,
+  cacheCoverArt,
   resolveAudioStreamUrl,
   getLastStreamResolveNotes,
 } from '../utils/downloadManager';
@@ -209,7 +210,6 @@ const DEFAULT_SETTINGS: SettingsState = {
   sortBy: 'title',
   downloadQuality: 'high',
   sleepTimerMinutes: 0,
-  backgroundPlayback: true,
   youtubeMiniPlayer: false,
   showPlayCounts: true,
   profileName: 'Music Lover',
@@ -299,6 +299,58 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const saved = localStorage.getItem('bw_music_downloaded_objects_v11');
     return saved ? JSON.parse(saved) : [];
   });
+
+  // A playlist download marks every song as downloaded before any file exists,
+  // so interrupted or failed downloads (and files wiped by a reinstall or
+  // Android clearing storage) stay listed as downloaded with nothing behind
+  // them. Check once per launch and drop the entries that have no real file.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let cancelled = false;
+    void (async () => {
+      const candidates = new Map<string, Track>();
+      downloadedTracks.forEach(t => candidates.set(t.id, t));
+      tracks.filter(t => downloads.includes(t.id)).forEach(t => candidates.set(t.id, t));
+      const ghosts = new Set<string>();
+      for (const id of downloads) {
+        const t = candidates.get(id);
+        // Local files and non-YouTube tracks have no offline record to check.
+        if (t && (t.isLocal || !t.youtubeId)) continue;
+        // Read-only on purpose: verifyOfflineRecord deletes files when its
+        // check fails, which is too risky to run blindly at startup.
+        const rec = getOfflineRecord(id);
+        if (!rec || (rec.path && rec.size < 20000)) ghosts.add(id);
+      }
+      if (cancelled || ghosts.size === 0) return;
+      setDownloads(prev => {
+        const updated = prev.filter(id => !ghosts.has(id));
+        localStorage.setItem('bw_music_downloads_v11', JSON.stringify(updated));
+        return updated;
+      });
+      setDownloadedTracks(prev => {
+        const updated = prev.filter(t => !ghosts.has(t.id));
+        localStorage.setItem('bw_music_downloaded_objects_v11', JSON.stringify(updated));
+        return updated;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Songs downloaded before covers were cached still need their picture saved
+  // for the notification; top them up once per launch while online.
+  useEffect(() => {
+    if (!IS_ANDROID || !navigator.onLine) return;
+    const urls = downloadedTracks
+      .filter(t => getOfflineRecord(t.id) && t.coverUrl)
+      .map(t => t.coverUrl);
+    void (async () => {
+      for (const url of urls) await cacheCoverArt(url);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [recentlyPlayed, setRecentlyPlayed] = useState<Track[]>(() => {
     const saved = localStorage.getItem('bw_music_recently_played_v2');
@@ -442,18 +494,16 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [isEqualizerOpen, setIsEqualizerOpen] = useState(false);
   const [artistProfileName, setArtistProfileName] = useState<string | null>(null);
-  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
+  // In-app popup messages are switched off; the field stays so the frames that
+  // read it keep compiling, and showStatus just logs.
+  const downloadStatus: string | null = null;
 
   const openArtistProfile = (name: string) => {
     if (name) setArtistProfileName(name);
   };
   const closeArtistProfile = () => setArtistProfileName(null);
-  const statusTimerRef = useRef<number | null>(null);
-
-  const showStatus = (msg: string, ms = 3000) => {
-    setDownloadStatus(msg);
-    if (statusTimerRef.current) window.clearTimeout(statusTimerRef.current);
-    statusTimerRef.current = window.setTimeout(() => setDownloadStatus(null), ms);
+  const showStatus = (msg: string, _ms?: number) => {
+    console.info('[status]', msg);
   };
 
   // Audio & YT Player refs
@@ -993,6 +1043,15 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     };
 
+    // The equalizer's audio context starts suspended until the page has had a
+    // gesture, and a suspended context makes the element silent. Wake it on the
+    // first tap/key and whenever playback starts.
+    const wakeEqualizer = () => globalEqualizer.resume();
+    audio.addEventListener('play', wakeEqualizer);
+    for (const evt of ['pointerdown', 'keydown', 'touchstart']) {
+      document.addEventListener(evt, wakeEqualizer, { passive: true });
+    }
+
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('durationchange', onDurationChange);
     audio.addEventListener('ended', onEnded);
@@ -1008,6 +1067,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     return () => {
+      audio.removeEventListener('play', wakeEqualizer);
+      for (const evt of ['pointerdown', 'keydown', 'touchstart']) {
+        document.removeEventListener(evt, wakeEqualizer);
+      }
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('durationchange', onDurationChange);
       audio.removeEventListener('ended', onEnded);
@@ -2302,6 +2365,46 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       const targetId = savedYoutubeId || track.youtubeId;
+
+      // Android: resolve the direct stream first and play it on ExoPlayer from
+      // the start. Starting the YouTube iframe to cover the resolve and then
+      // handing over to ExoPlayer meant every song played, cut out while the
+      // native player buffered, and restarted. The iframe is only the fallback
+      // for a stream that cannot be resolved in time.
+      if (IS_ANDROID && BackgroundAudio?.playUrl && targetId) {
+        const nativeTrack = savedYoutubeId ? { ...track, youtubeId: savedYoutubeId } : track;
+        // Only the play generation: stopAllPlayback() bumps it synchronously for
+        // every new start. currentTrackRef lags a render behind, so with a
+        // cached stream (which resolves instantly) comparing it here wrongly
+        // treated the new track as superseded and dropped it.
+        const stale = () => playGenRef.current !== currentGen;
+        setIsResolvingStream(true);
+        const resolved = Promise.race([
+          streamUrlCacheRef.current.get(targetId)
+            ? Promise.resolve(streamUrlCacheRef.current.get(targetId)!)
+            : resolveAudioStreamUrl(targetId),
+          new Promise<string>((_, reject) =>
+            window.setTimeout(() => reject(new Error('stream resolve timeout')), 12000)
+          ),
+        ]);
+        void resolved
+          .then(async url => {
+            if (stale()) return;
+            streamUrlCacheRef.current.set(targetId, url);
+            setCachedStreamUrl(targetId, url);
+            await playAudioUrl(nativeTrack, url, startTime);
+          })
+          .catch(() => {
+            if (stale()) return;
+            console.warn('Direct stream unavailable, using the YouTube player');
+            void startIframe(nativeTrack, startTime);
+          })
+          .finally(() => {
+            if (playGenRef.current === currentGen) setIsResolvingStream(false);
+          });
+        return;
+      }
+
       void startIframe(
         savedYoutubeId ? { ...track, youtubeId: savedYoutubeId } : track,
         startTime
@@ -2472,15 +2575,27 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   };
 
+  const nextShuffleRef = useRef<{ forId: string; track: Track } | null>(null);
+
+  const pickShuffleNext = (list: Track[], currentId?: string): Track => {
+    const others = list.filter(t => t.id !== currentId);
+    const pool = others.length > 0 ? others : list;
+    return pool[Math.floor(Math.random() * pool.length)];
+  };
+
   const nextTrack = () => {
     const list = queue.length > 0 ? queue : tracks;
     if (list.length === 0) return;
 
     if (isShuffle) {
-      const others = list.filter(t => t.id !== currentTrack?.id);
-      const pool = others.length > 0 ? others : list;
-      const randomIndex = Math.floor(Math.random() * pool.length);
-      playTrack(pool[randomIndex]);
+      // Use the song already chosen (and prefetched) for this track, if any.
+      const planned = nextShuffleRef.current;
+      const pick =
+        planned && planned.forId === currentTrack?.id && list.some(t => t.id === planned.track.id)
+          ? planned.track
+          : pickShuffleNext(list, currentTrack?.id);
+      nextShuffleRef.current = null;
+      playTrack(pick);
       return;
     }
 
@@ -2550,6 +2665,48 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       pauseFromRemote,
     };
   });
+
+  // Android: resolve the next song's stream while the current one plays, so
+  // autoplay starts it straight away. Once the app is in the background its web
+  // layer is throttled and a cold resolve can stall, so this has to be done
+  // early, while the app is still awake. Shuffle picks its next song up front
+  // so that one can be prefetched too.
+  useEffect(() => {
+    if (!IS_ANDROID || !isPlaying || !currentTrack) return;
+    const list = queue.length > 0 ? queue : tracks;
+    const idx = list.findIndex(t => t.id === currentTrack.id);
+    if (idx === -1) return;
+
+    let next: Track | undefined;
+    if (isShuffle) {
+      let planned = nextShuffleRef.current;
+      if (!planned || planned.forId !== currentTrack.id || !list.some(t => t.id === planned!.track.id)) {
+        planned = { forId: currentTrack.id, track: pickShuffleNext(list, currentTrack.id) };
+        nextShuffleRef.current = planned;
+      }
+      next = planned.track;
+    } else {
+      next = list[(idx + 1) % list.length];
+    }
+    if (!next || next.id === currentTrack.id || !next.isYouTube || getOfflineRecord(next.id)) return;
+    const vid = youtubePlaybackOverridesRef.current[next.id] || next.youtubeId;
+    if (!vid) return;
+
+    let cancelled = false;
+    let retry: number | undefined;
+    const attempt = (triesLeft: number) => {
+      resolveAudioStreamUrl(vid).catch(() => {
+        // One more try a little later (flaky network, minter warming up).
+        if (!cancelled && triesLeft > 0) retry = window.setTimeout(() => attempt(triesLeft - 1), 8000);
+      });
+    };
+    const timer = window.setTimeout(() => attempt(2), 1500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      if (retry !== undefined) window.clearTimeout(retry);
+    };
+  }, [currentTrack, isPlaying, isShuffle, queue, tracks]);
 
   const seekTo = (time: number) => {
     lastSeekAtRef.current = Date.now();
@@ -2729,9 +2886,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let failed = 0;
     let skipped = 0;
     for (const t of toFetch) {
-      setDownloadStatus(
-        `Downloading ${done + failed + skipped + 1}/${toFetch.length}: ${t.title}`
-      );
+      showStatus(`Downloading ${done + failed + skipped + 1}/${toFetch.length}: ${t.title}`);
       try {
         if (await downloadTrackToFile(t)) done++;
         else failed++;

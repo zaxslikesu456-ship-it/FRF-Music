@@ -90,44 +90,78 @@ export const DEFAULT_EQUALIZER_SETTINGS: EqualizerSettings = {
   surround: 0,
 };
 
-// Web Audio API Equalizer Processor Node graph wrapper
+// The equalizer for the browser and desktop app, built on the Web Audio API.
+// It matches the native one in android/.../ParametricEq.java (same bands, filter
+// types, Q, bass shelf, stereo widening, headroom and soft limiter), so the phone
+// and the PC sound the same.
+const BASS_SHELF_HZ = 80;
+const BASS_DB_PER_STEP = 1.8; // bass boost 0..10 -> 0..18 dB
+const WIDEN_PER_STEP = 0.18; // surround 0..10 -> side gain 1.0 .. 2.8
+const MAX_BAND_DB = 15;
+const LIMIT_KNEE = 0.8;
+
+// Leaves audio below the knee untouched and eases anything above it toward 1.0.
+function buildSoftLimiterCurve(): Float32Array {
+  const size = 2048;
+  const curve = new Float32Array(size);
+  const room = 1 - LIMIT_KNEE;
+  for (let i = 0; i < size; i++) {
+    const x = (i / (size - 1)) * 2 - 1;
+    const a = Math.abs(x);
+    const y = a <= LIMIT_KNEE ? a : LIMIT_KNEE + room * Math.tanh((a - LIMIT_KNEE) / room);
+    curve[i] = x < 0 ? -y : y;
+  }
+  return curve;
+}
+
 export class WebAudioEqualizer {
   private ctx: AudioContext | null = null;
   private sourceNode: MediaElementAudioSourceNode | null = null;
+  private nodes: AudioNode[] = [];
+  private preGain: GainNode | null = null;
   private filters: BiquadFilterNode[] = [];
   private bassBoostNode: BiquadFilterNode | null = null;
+  private widen: { ll: GainNode; lr: GainNode; rl: GainNode; rr: GainNode } | null = null;
   private analyserNode: AnalyserNode | null = null;
   private connectedElement: HTMLAudioElement | null = null;
+  private lastSettings: EqualizerSettings | null = null;
 
   public getAnalyser(): AnalyserNode | null {
     return this.analyserNode;
   }
 
+  // A suspended context outputs silence for every element routed through it, so
+  // it has to be resumed once the page has had a user gesture.
+  public resume() {
+    if (this.ctx && this.ctx.state === 'suspended') {
+      void this.ctx.resume().catch(() => {});
+    }
+  }
+
   public init(audioEl: HTMLAudioElement): AnalyserNode | null {
     if (this.connectedElement === audioEl && this.ctx) {
+      this.resume();
       return this.analyserNode;
     }
 
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return null;
+      if (!this.ctx) this.ctx = new AudioCtx();
+      const ctx = this.ctx!;
+      this.resume();
 
-      if (!this.ctx) {
-        this.ctx = new AudioCtx();
-      }
+      // An element can only be wrapped once, but a new element (hot reload,
+      // remount) needs its own source feeding a fresh graph.
+      this.teardown();
+      this.sourceNode = ctx.createMediaElementSource(audioEl);
+      this.connectedElement = audioEl;
 
-      if (this.ctx.state === 'suspended') {
-        void this.ctx.resume();
-      }
+      this.preGain = ctx.createGain();
 
-      if (!this.sourceNode) {
-        this.sourceNode = this.ctx.createMediaElementSource(audioEl);
-        this.connectedElement = audioEl;
-      }
-
-      // Create 5-band peaking/shelf filters
+      // 5 bands: low shelf, three peaking, high shelf (same as the native EQ).
       this.filters = EQ_FREQUENCIES.map((freq, idx) => {
-        const filter = this.ctx!.createBiquadFilter();
+        const filter = ctx.createBiquadFilter();
         if (idx === 0) {
           filter.type = 'lowshelf';
         } else if (idx === EQ_FREQUENCIES.length - 1) {
@@ -141,63 +175,113 @@ export class WebAudioEqualizer {
         return filter;
       });
 
-      // Bass Boost filter (lowshelf 80Hz)
-      this.bassBoostNode = this.ctx.createBiquadFilter();
+      this.bassBoostNode = ctx.createBiquadFilter();
       this.bassBoostNode.type = 'lowshelf';
-      this.bassBoostNode.frequency.value = 80;
+      this.bassBoostNode.frequency.value = BASS_SHELF_HZ;
       this.bassBoostNode.gain.value = 0;
 
-      // Analyser for visuals
-      this.analyserNode = this.ctx.createAnalyser();
+      // Stereo widening: mid/side, expressed as four gains into a merger.
+      //   L' = a*L + b*R,  R' = a*R + b*L   with a = (1+k)/2, b = (1-k)/2
+      const splitter = ctx.createChannelSplitter(2);
+      const merger = ctx.createChannelMerger(2);
+      const ll = ctx.createGain();
+      const lr = ctx.createGain();
+      const rl = ctx.createGain();
+      const rr = ctx.createGain();
+      splitter.connect(ll, 0);
+      splitter.connect(lr, 0);
+      splitter.connect(rl, 1);
+      splitter.connect(rr, 1);
+      ll.connect(merger, 0, 0);
+      rl.connect(merger, 0, 0);
+      lr.connect(merger, 0, 1);
+      rr.connect(merger, 0, 1);
+      this.widen = { ll, lr, rl, rr };
+
+      const limiter = ctx.createWaveShaper();
+      limiter.curve = buildSoftLimiterCurve() as Float32Array<ArrayBuffer>;
+
+      this.analyserNode = ctx.createAnalyser();
       this.analyserNode.fftSize = 128;
       this.analyserNode.smoothingTimeConstant = 0.8;
 
-      // Connect graph in series: Source -> Filters -> BassBoost -> Analyser -> Destination
-      let lastNode: AudioNode = this.sourceNode;
-      for (const filter of this.filters) {
-        lastNode.connect(filter);
-        lastNode = filter;
+      // Source -> preamp -> bands -> bass -> widen -> limiter -> analyser -> out
+      let last: AudioNode = this.sourceNode;
+      const chain: AudioNode[] = [this.preGain, ...this.filters, this.bassBoostNode];
+      for (const node of chain) {
+        last.connect(node);
+        last = node;
       }
+      last.connect(splitter);
+      merger.connect(limiter);
+      limiter.connect(this.analyserNode);
+      this.analyserNode.connect(ctx.destination);
 
-      lastNode.connect(this.bassBoostNode);
-      this.bassBoostNode.connect(this.analyserNode);
-      this.analyserNode.connect(this.ctx.destination);
+      this.nodes = [this.sourceNode, ...chain, splitter, merger, ll, lr, rl, rr, limiter, this.analyserNode];
 
+      this.setWiden(ctx, 1);
+      if (this.lastSettings) this.update(this.lastSettings);
       return this.analyserNode;
     } catch {
       return null;
     }
   }
 
+  private teardown() {
+    for (const node of this.nodes) {
+      try {
+        node.disconnect();
+      } catch {
+        // already disconnected
+      }
+    }
+    this.nodes = [];
+    this.sourceNode = null;
+    this.connectedElement = null;
+  }
+
+  private setWiden(ctx: AudioContext, k: number) {
+    if (!this.widen) return;
+    const a = (1 + k) / 2;
+    const b = (1 - k) / 2;
+    const now = ctx.currentTime;
+    for (const [node, v] of [
+      [this.widen.ll, a],
+      [this.widen.rr, a],
+      [this.widen.lr, b],
+      [this.widen.rl, b],
+    ] as Array<[GainNode, number]>) {
+      node.gain.setTargetAtTime(v, now, 0.03);
+    }
+  }
+
   public update(settings: EqualizerSettings) {
-    if (!this.ctx) return;
+    this.lastSettings = settings;
+    if (!this.ctx || !this.preGain) return;
+    this.resume();
 
-    if (this.ctx.state === 'suspended') {
-      void this.ctx.resume();
-    }
+    const ctx = this.ctx;
+    const enabled = settings.enabled;
+    const now = ctx.currentTime;
 
-    const isEnabled = settings.enabled;
-    const now = this.ctx.currentTime;
-
-    // Apply band gains
-    this.filters.forEach((filter, idx) => {
-      const targetGain = isEnabled ? (settings.bands[idx] ?? 0) : 0;
-      try {
-        filter.gain.setTargetAtTime(targetGain, now, 0.05);
-      } catch {
-        filter.gain.value = targetGain;
-      }
+    const bands = EQ_FREQUENCIES.map((_, i) => {
+      const g = enabled ? settings.bands[i] ?? 0 : 0;
+      return Math.max(-MAX_BAND_DB, Math.min(MAX_BAND_DB, g));
     });
+    const bassDb = enabled ? Math.max(0, Math.min(10, settings.bassBoost || 0)) * BASS_DB_PER_STEP : 0;
 
-    // Apply Bass Boost (scale 0-10 -> up to +18dB deep bass)
-    if (this.bassBoostNode) {
-      const targetBass = isEnabled ? (settings.bassBoost || 0) * 1.8 : 0;
-      try {
-        this.bassBoostNode.gain.setTargetAtTime(targetBass, now, 0.03);
-      } catch {
-        this.bassBoostNode.gain.value = targetBass;
-      }
-    }
+    this.filters.forEach((filter, idx) => {
+      filter.gain.setTargetAtTime(bands[idx], now, 0.05);
+    });
+    this.bassBoostNode?.gain.setTargetAtTime(bassDb, now, 0.03);
+
+    // Boosting raises peaks: give back half of the largest boost (max 9 dB).
+    const maxBoost = Math.max(0, ...bands, bassDb);
+    const pre = Math.pow(10, -Math.min(9, maxBoost * 0.5) / 20);
+    this.preGain.gain.setTargetAtTime(pre, now, 0.05);
+
+    const surround = enabled ? Math.max(0, Math.min(10, settings.surround || 0)) : 0;
+    this.setWiden(ctx, 1 + surround * WIDEN_PER_STEP);
   }
 }
 

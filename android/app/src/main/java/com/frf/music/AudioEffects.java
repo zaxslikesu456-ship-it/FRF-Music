@@ -1,28 +1,21 @@
 package com.frf.music;
 
-import android.media.audiofx.BassBoost;
-import android.media.audiofx.Equalizer;
 import android.media.audiofx.Visualizer;
-import android.media.audiofx.Virtualizer;
 import android.os.SystemClock;
 import android.util.Log;
 import com.getcapacitor.JSObject;
 
 /**
- * Applies the app's 5-band equalizer to ExoPlayer's output.
+ * Equalizer settings and the spectrum visualizer for native playback.
  *
- * The Web Audio graph in src/utils/equalizer.ts is wired to the &lt;audio&gt;
- * element, so it does nothing once ExoPlayer owns playback. Android's
- * Equalizer attaches to the player's audio session instead. The app's band
- * layout (60/230/910/3600/14000 Hz) is the standard Android 5-band set, so
- * each Android band is mapped to its nearest app band by centre frequency.
+ * The equalizer itself runs in ParametricEq, inside ExoPlayer's audio pipeline
+ * (EqAudioProcessor). It used to use android.media.audiofx.Equalizer, but that
+ * effect depends on the phone maker's drivers and often never attaches, so the
+ * equalizer did nothing. Only the visualizer still uses a platform effect.
  */
 public class AudioEffects {
 
     private static final String TAG = "FRFAudioEffects";
-
-    /** App band centre frequencies, mirroring EQ_FREQUENCIES in equalizer.ts. */
-    private static final int[] APP_BAND_HZ = {60, 230, 910, 3600, 14000};
 
     /** Must match the Web Audio analyser's frequencyBinCount (fftSize 128 / 2). */
     private static final int BIN_COUNT = 64;
@@ -34,17 +27,9 @@ public class AudioEffects {
 
     private static final AudioEffects INSTANCE = new AudioEffects();
 
-    private Equalizer equalizer;
-    private BassBoost bassBoost;
-    private Virtualizer virtualizer;
     private Visualizer visualizer;
     private boolean visualizerEnabled = false;
     private long lastFrameSentAt = 0;
-
-    private boolean enabled = true;
-    private final int[] bandsDb = new int[APP_BAND_HZ.length];
-    private int bassBoostLevel = 0;   // app scale 0..10
-    private int surroundLevel = 0;    // app scale 0..4
 
     private int sessionId = 0;
 
@@ -56,28 +41,11 @@ public class AudioEffects {
 
     /** Called with ExoPlayer's audio session id once it opens an audio track. */
     public synchronized void attach(int audioSessionId) {
-        if (audioSessionId == sessionId && equalizer != null) return;
-        release();
+        if (audioSessionId == sessionId) return;
+        releaseVisualizer();
+        sessionId = 0;
         if (audioSessionId <= 0) return;
         sessionId = audioSessionId;
-
-        try {
-            equalizer = new Equalizer(0, audioSessionId);
-        } catch (Throwable t) {
-            Log.w(TAG, "Equalizer unavailable: " + t.getMessage());
-            equalizer = null;
-        }
-        try {
-            bassBoost = new BassBoost(0, audioSessionId);
-        } catch (Throwable t) {
-            bassBoost = null;
-        }
-        try {
-            virtualizer = new Virtualizer(0, audioSessionId);
-        } catch (Throwable t) {
-            virtualizer = null;
-        }
-        apply();
         applyVisualizer();
     }
 
@@ -171,92 +139,17 @@ public class AudioEffects {
         BackgroundAudioPlugin.sendEvent("visualizerFrame", data);
     }
 
-    public synchronized void set(
-            boolean enabled, int[] bandsDb, int bassBoostLevel, int surroundLevel) {
-        this.enabled = enabled;
-        for (int i = 0; i < this.bandsDb.length; i++) {
-            this.bandsDb[i] = bandsDb != null && i < bandsDb.length ? bandsDb[i] : 0;
+    /** Equalizer settings: band gains in dB, bass boost 0..10, surround 0..10. */
+    public void set(boolean enabled, int[] bandsDb, int bassBoostLevel, int surroundLevel) {
+        double[] bands = new double[5];
+        for (int i = 0; i < bands.length; i++) {
+            bands[i] = bandsDb != null && i < bandsDb.length ? bandsDb[i] : 0;
         }
-        this.bassBoostLevel = Math.max(0, bassBoostLevel);
-        this.surroundLevel = Math.max(0, surroundLevel);
-        apply();
+        ParametricEq.setSettings(enabled, bands, bassBoostLevel, surroundLevel);
     }
 
     public synchronized void release() {
         sessionId = 0;
         releaseVisualizer();
-        if (equalizer != null) {
-            try {
-                equalizer.setEnabled(false);
-                equalizer.release();
-            } catch (Throwable ignored) {}
-            equalizer = null;
-        }
-        if (bassBoost != null) {
-            try {
-                bassBoost.setEnabled(false);
-                bassBoost.release();
-            } catch (Throwable ignored) {}
-            bassBoost = null;
-        }
-        if (virtualizer != null) {
-            try {
-                virtualizer.setEnabled(false);
-                virtualizer.release();
-            } catch (Throwable ignored) {}
-            virtualizer = null;
-        }
-    }
-
-    private void apply() {
-        if (equalizer != null) {
-            try {
-                equalizer.setEnabled(enabled);
-                short bandCount = equalizer.getNumberOfBands();
-                short[] range = equalizer.getBandLevelRange();
-                short minLevel = range != null && range.length > 0 ? range[0] : -1500;
-                short maxLevel = range != null && range.length > 1 ? range[1] : 1500;
-
-                for (short b = 0; b < bandCount; b++) {
-                    int centerHz = equalizer.getCenterFreq(b) / 1000; // milliHz -> Hz
-                    int nearest = nearestAppBand(centerHz);
-                    // App bands are dB; the framework wants millibel.
-                    int millibel = bandsDb[nearest] * 100;
-                    short level = (short) Math.max(minLevel, Math.min(maxLevel, millibel));
-                    equalizer.setBandLevel(b, level);
-                }
-            } catch (Throwable t) {
-                Log.w(TAG, "Failed to apply band levels: " + t.getMessage());
-            }
-        }
-
-        if (bassBoost != null) {
-            try {
-                bassBoost.setEnabled(enabled);
-                // 0..10 -> 0..1000
-                bassBoost.setStrength((short) Math.min(1000, bassBoostLevel * 100));
-            } catch (Throwable ignored) {}
-        }
-
-        if (virtualizer != null) {
-            try {
-                virtualizer.setEnabled(enabled);
-                // 0..4 -> 0..1000
-                virtualizer.setStrength((short) Math.min(1000, surroundLevel * 250));
-            } catch (Throwable ignored) {}
-        }
-    }
-
-    private static int nearestAppBand(int centerHz) {
-        int best = 0;
-        int bestDelta = Integer.MAX_VALUE;
-        for (int i = 0; i < APP_BAND_HZ.length; i++) {
-            int delta = Math.abs(APP_BAND_HZ[i] - centerHz);
-            if (delta < bestDelta) {
-                bestDelta = delta;
-                best = i;
-            }
-        }
-        return best;
     }
 }

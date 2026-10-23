@@ -8,7 +8,6 @@ import { SettingsView } from './SettingsView';
 import { NowPlayingScreen } from './NowPlayingScreen';
 import { ArtistDetailView } from './ArtistDetailView';
 import { AnimatedBackground } from './AnimatedBackground';
-import { BatteryBanner } from './BatteryBanner';
 import { useAudio } from '../context/AudioContext';
 
 import { EqualizerModal } from './EqualizerModal';
@@ -44,7 +43,6 @@ export const AndroidFrame: React.FC = () => {
 
       {/* App Workspace Views */}
       <main className="flex-1 flex flex-col overflow-hidden relative">
-        <BatteryBanner />
         <div key={activeTab} className="flex-1 flex flex-col overflow-hidden anim-fade">
           {activeTab === 'home' && <HomeView />}
           {activeTab === 'search' && <SearchView />}
