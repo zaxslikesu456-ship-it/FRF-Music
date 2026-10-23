@@ -1,6 +1,7 @@
 package com.frf.music;
 
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -43,25 +44,7 @@ public class MainActivity extends BridgeActivity {
             }
         } catch (Exception ignored) {}
 
-        // Request AudioFocus
-        try {
-            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            if (am != null) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    AudioFocusRequest req = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                            .setAudioAttributes(new AudioAttributes.Builder()
-                                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                                    .build())
-                            .setAcceptsDelayedFocusGain(true)
-                            .setOnAudioFocusChangeListener(fc -> {})
-                            .build();
-                    am.requestAudioFocus(req);
-                } else {
-                    am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-                }
-            }
-        } catch (Exception ignored) {}
+
 
         // WebView config
         if (getBridge() != null && getBridge().getWebView() != null) {
@@ -71,38 +54,67 @@ public class MainActivity extends BridgeActivity {
             s.setDomStorageEnabled(true);
             s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
+
+        // Android 13+: without this permission the media notification is
+        // hidden and Samsung treats background playback as low priority.
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                try {
+                    requestPermissions(
+                            new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 1001);
+                } catch (Exception ignored) {}
+            }
+        }
     }
 
     @Override
     public void onPause() {
         super.onPause();
-        // Immediately re-enable WebView timers after Capacitor pauses them
-        if (getBridge() != null && getBridge().getWebView() != null) {
-            getBridge().getWebView().post(() -> {
-                try {
-                    getBridge().getWebView().resumeTimers();
-                    getBridge().getWebView().onResume();
-                } catch (Exception ignored) {}
-            });
+        // Hand playback to ExoPlayer before the page can be reported hidden.
+        // The embedded YouTube player drops its audio the moment that happens,
+        // so waiting until onStop() is too late on devices that hide early.
+        if (PlaybackService.instance != null) {
+            PlaybackService.instance.takeOver();
         }
+        keepWebViewPlaying();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        keepWebViewPlaying();
     }
 
     @Override
     public void onStop() {
         super.onStop();
-        // App is now invisible — hand off to native MediaPlayer in PlaybackService
-        // so audio continues playing outside the app without any WebView dependency
         if (PlaybackService.instance != null) {
             PlaybackService.instance.takeOver();
         }
-        // Also keep WebView timers alive as a safety net
-        if (getBridge() != null && getBridge().getWebView() != null) {
-            getBridge().getWebView().post(() -> {
-                try {
-                    getBridge().getWebView().resumeTimers();
-                } catch (Exception ignored) {}
-            });
-        }
+        keepWebViewPlaying();
+    }
+
+    // Keep the WebView's audio engine alive once the Activity leaves the
+    // foreground. Capacitor's bridge.onPause()/onStop() pause the WebView and
+    // its JS timers; undo that here so the engine keeps running. Page
+    // visibility itself is pinned VISIBLE by PlaybackCapacitorWebView, which is
+    // what stops the embedded YouTube player from pausing on backgrounding.
+    // (Native ExoPlayer can't be the fallback here: Google answers its direct
+    // googlevideo fetches with HTTP 403, so the handover would be silent.)
+    private void keepWebViewPlaying() {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        final android.webkit.WebView webView = getBridge().getWebView();
+        try {
+            webView.onResume();
+            webView.resumeTimers();
+        } catch (Exception ignored) {}
+        webView.post(() -> {
+            try {
+                webView.onResume();
+                webView.resumeTimers();
+            } catch (Exception ignored) {}
+        });
     }
 
     @Override

@@ -302,3 +302,11 @@ input[type="range"]::-moz-range-thumb {
   padding-top: calc(max(env(safe-area-inset-top, 48px), 54px) + 16px);
 }
 
+/* Double-tap-to-like heart burst on the Now Playing artwork */
+@keyframes heartPop {
+  0% { transform: scale(0.3); opacity: 0; }
+  35% { transform: scale(1.15); opacity: 1; }
+  60% { transform: scale(0.95); opacity: 1; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+

@@ -1,17 +1,18 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
 import type { Track, Playlist, RepeatMode, SettingsState, NavTab } from '../types/music';
 import { INITIAL_TRACKS } from '../utils/sampleData';
 import { applyThemeSettings } from '../utils/theme';
 import { searchYouTubeMusic, findBestAlternateVideoId, fetchDirectAudioStreamUrl } from '../utils/ytMusicApi';
 import {
   downloadTrackToFile,
+  getLastDownloadError,
+  verifyOfflineRecord,
   deleteOfflineFile,
   getOfflinePlaybackUrl,
   getOfflinePlaybackUrlAsync,
   getOfflineRecord,
   setCachedStreamUrl,
   dropCachedStreamUrl,
-  isTrackOffline,
   resolveAudioStreamUrl,
   getLastStreamResolveNotes,
 } from '../utils/downloadManager';
@@ -61,11 +62,36 @@ interface BackgroundAudioPlugin {
   resume(): Promise<void>;
   seek(options: { position: number }): Promise<void>;
   stop(): Promise<void>;
+  setVolume(options: { volume: number }): Promise<void>;
+  setSpeed(options: { speed: number }): Promise<void>;
+  setEqualizer(options: {
+    enabled: boolean;
+    bands: number[];
+    bassBoost: number;
+    surround: number;
+  }): Promise<void>;
+  setVisualizerEnabled(options: { enabled: boolean }): Promise<void>;
+  setWebAudible(options: { audible: boolean }): Promise<void>;
+  handoverNow(options: {
+    title: string;
+    artist: string;
+    coverUrl?: string;
+    streamUrl?: string;
+    filePath?: string;
+    position?: number;
+    duration?: number;
+  }): Promise<void>;
 }
 
 const BackgroundAudio = Capacitor.isNativePlatform()
   ? registerPlugin<BackgroundAudioPlugin>('BackgroundAudio')
   : null;
+
+// Android runs the YouTube IFrame player inside the WebView, and that player
+// drops its audio as soon as the page reports hidden (Activity stopped).
+// Native ExoPlayer is the only engine that survives outside the app, so the
+// Android path hands playback over to it as soon as a direct stream exists.
+const IS_ANDROID = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 
 const YOUTUBE_APP_ORIGIN =
   typeof window !== 'undefined' && window.location.origin.startsWith('http')
@@ -118,8 +144,11 @@ interface AudioContextType {
   downloads: string[];
   downloadedTracks: Track[];
   recentlyPlayed: Track[];
+  playCounts: Record<string, number>;
+  mostPlayed: { track: Track; count: number }[];
+  sleepSecondsRemaining: number | null;
   settings: SettingsState;
-  analyserNode: AnalyserNode | null;
+  analyserNode: SpectrumSource | null;
   isResolvingStream: boolean;
   isLoadingApiTracks: boolean;
   downloadStatus: string | null;
@@ -127,7 +156,9 @@ interface AudioContextType {
   // Actions
   playTrack: (track: Track) => void;
   playQueue: (list: Track[], startIndex?: number) => void;
+  addToQueue: (track: Track, position?: 'next' | 'last') => void;
   reorderQueue: (from: number, to: number) => void;
+  removeFromQueue: (index: number) => void;
   togglePlay: () => void;
   nextTrack: () => void;
   previousTrack: () => void;
@@ -216,6 +247,17 @@ function loadLastSession(): { track: Track | null; queue: Track[]; position: num
 
 const LAST_SESSION = loadLastSession();
 
+/**
+ * The subset of AnalyserNode the visualizer actually uses. Exposing this rather
+ * than a concrete AnalyserNode lets ExoPlayer's native FFT stand in during
+ * native playback, where the Web Audio graph receives no signal.
+ */
+export interface SpectrumSource {
+  frequencyBinCount: number;
+  getByteFrequencyData(array: Uint8Array<ArrayBuffer>): void;
+  getByteTimeDomainData(array: Uint8Array<ArrayBuffer>): void;
+}
+
 const AudioContext = createContext<AudioContextType | null>(null);
 
 export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -262,6 +304,19 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const saved = localStorage.getItem('bw_music_recently_played_v2');
     return saved ? JSON.parse(saved) : [];
   });
+
+  // Lifetime play counts per track id, powering the "Most played" stats card.
+  const [playCounts, setPlayCounts] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem('bw_music_play_counts_v1');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Seconds left on the sleep timer, for the Now Playing countdown chip.
+  const [sleepSecondsRemaining, setSleepSecondsRemaining] = useState<number | null>(null);
 
   // Registry of every track object the app has seen, so playlists can show
   // songs that were never added to the library itself.
@@ -414,16 +469,102 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     nextTrack: () => void;
     previousTrack: () => void;
     seekTo: (time: number) => void;
+    applyPosition: (time: number) => void;
+    resumeFromRemote: () => void;
+    pauseFromRemote: () => void;
   }>({
     handleEnded: () => {},
     togglePlay: () => {},
     nextTrack: () => {},
     previousTrack: () => {},
     seekTo: () => {},
+    applyPosition: () => {},
+    resumeFromRemote: () => {},
+    pauseFromRemote: () => {},
   });
 
   // Track currently playing through the <audio> element (offline file or resolved stream)
   const audioModeTrackIdRef = useRef<string | null>(null);
+  // True while ExoPlayer (Android PlaybackService) owns the audio. Controls and
+  // progress must be routed to it instead of the WebView engines.
+  const nativeOwnerRef = useRef(false);
+
+  // Pending "did ExoPlayer actually start?" confirmation. BackgroundAudio.playUrl
+  // resolves the moment the intent is delivered — before ExoPlayer has fetched
+  // a single byte — so treating it as success was the regression that silenced
+  // playback: the WebView player had already been stopped by the time ExoPlayer
+  // failed on the device.
+  // hardFail distinguishes "ExoPlayer explicitly errored" (dead URL — purge it)
+  // from "still buffering when the timeout hit" (may yet start — leave it alone,
+  // late progress ticks adopt it).
+  const nativeConfirmRef = useRef<{
+    resolve: (res: { ok: boolean; hardFail: boolean; msg?: string }) => void;
+  } | null>(null);
+  const confirmTimeoutRef = useRef<number | null>(null);
+
+  const settleNativeConfirm = (ok: boolean, hardFail = false, msg?: string) => {
+    const token = nativeConfirmRef.current;
+    if (!token) return;
+    nativeConfirmRef.current = null;
+    if (confirmTimeoutRef.current != null) {
+      window.clearTimeout(confirmTimeoutRef.current);
+      confirmTimeoutRef.current = null;
+    }
+    token.resolve({ ok, hardFail, msg });
+  };
+
+  const settingsRef = useRef(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  // Latest FFT frame pushed by Android's Visualizer during native playback.
+  const nativeSpectrumRef = useRef<Uint8Array>(new Uint8Array(64));
+
+  // One stable source that reads whichever engine is live right now. Keeping a
+  // single identity means the visualizer's effect never has to re-run when
+  // playback changes hands.
+  const spectrumSourceRef = useRef<SpectrumSource | null>(null);
+  if (!spectrumSourceRef.current) {
+    const webAnalyser = () => globalEqualizer.getAnalyser();
+    spectrumSourceRef.current = {
+      frequencyBinCount: 64,
+      getByteFrequencyData(array: Uint8Array<ArrayBuffer>) {
+        if (nativeOwnerRef.current) {
+          const src = nativeSpectrumRef.current;
+          const n = Math.min(array.length, src.length);
+          for (let i = 0; i < n; i++) array[i] = src[i];
+          return;
+        }
+        const a = webAnalyser();
+        if (a) a.getByteFrequencyData(array);
+        else array.fill(0);
+      },
+      getByteTimeDomainData(array: Uint8Array<ArrayBuffer>) {
+        // Native capture carries no waveform, so hold the line at centre.
+        if (nativeOwnerRef.current) {
+          array.fill(128);
+          return;
+        }
+        const a = webAnalyser();
+        if (a) a.getByteTimeDomainData(array);
+        else array.fill(128);
+      },
+    };
+  }
+
+  // Android's effect chain lives in a Java singleton that resets when the
+  // process dies, so the equalizer has to be re-pushed every time playback
+  // moves to native — not just when the user changes a slider.
+  const pushEqualizerToNative = (eq: SettingsState['equalizer']) => {
+    if (!eq || !BackgroundAudio?.setEqualizer) return;
+    BackgroundAudio.setEqualizer({
+      enabled: eq.enabled,
+      bands: eq.bands,
+      bassBoost: eq.bassBoost,
+      surround: eq.surround,
+    }).catch(() => {});
+  };
   const streamUrlCacheRef = useRef(new Map<string, string>());
   const currentTrackRef = useRef<Track | null>(null);
   const isPlayingRef = useRef(false);
@@ -437,6 +578,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const failedYoutubeIdsRef = useRef(new Set<string>());
   const isYoutubeRecoveryRunningRef = useRef(false);
   const streamRetryCountRef = useRef(new Map<string, number>());
+  // Pausing and stopping the Activity both ask the service to take over within
+  // the same second, and each path resolves a stream when none is cached.
+  // Without this guard two parallel resolves race and the losing handover
+  // clobbers the winner's ExoPlayer start.
+  const handoverResolveInFlightRef = useRef(false);
   const [isResolvingStream, setIsResolvingStream] = useState(false);
   // Restored sessions need a real load on the first play press
   const needsLoadRef = useRef(Boolean(LAST_SESSION.track));
@@ -530,13 +676,38 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const listeners = [
       (BackgroundAudio as any).addListener('remotePlay', () => {
-        latestActionsRef.current?.togglePlay?.();
+        latestActionsRef.current?.resumeFromRemote?.();
       }),
       (BackgroundAudio as any).addListener('remotePause', () => {
-        latestActionsRef.current?.togglePlay?.();
+        latestActionsRef.current?.pauseFromRemote?.();
       }),
       (BackgroundAudio as any).addListener('remoteTogglePlay', () => {
         latestActionsRef.current?.togglePlay?.();
+      }),
+      // The service is about to lose the WebView's audio (app backgrounded) but
+      // has no playable source cached. Resolve a fresh direct stream and hand
+      // it over before Android suspends the page.
+      (BackgroundAudio as any).addListener('requestStream', () => {
+        const track = currentTrackRef.current;
+        if (!track) return;
+        const videoId = activeYoutubeIdRef.current || track.youtubeId;
+        if (!videoId) return;
+        if (nativeOwnerRef.current) return;
+        if (handoverResolveInFlightRef.current) return;
+        handoverResolveInFlightRef.current = true;
+        void resolveAudioStreamUrl(videoId, true)
+          .then(url => {
+            if (!url) return;
+            if (currentTrackRef.current?.id !== track.id) return;
+            if (nativeOwnerRef.current) return;
+            streamUrlCacheRef.current.set(videoId, url);
+            setCachedStreamUrl(videoId, url);
+            void handOffToNativeRef.current(track, url);
+          })
+          .catch(() => {})
+          .finally(() => {
+            handoverResolveInFlightRef.current = false;
+          });
       }),
       (BackgroundAudio as any).addListener('remoteNext', () => {
         latestActionsRef.current?.nextTrack?.();
@@ -546,10 +717,48 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }),
       (BackgroundAudio as any).addListener('remoteSeek', (data: { position?: number }) => {
         if (data && typeof data.position === 'number') {
-          seekTo(data.position);
+          // Apply locally only. Routing this back through seekTo() would ask the
+          // service to seek again, which emits remoteSeek again — an endless
+          // ping-pong between Java and JS.
+          latestActionsRef.current?.applyPosition?.(data.position);
+        }
+      }),
+      (BackgroundAudio as any).addListener('visualizerFrame', (data: { bins?: string }) => {
+        if (typeof data?.bins !== 'string') return;
+        const parts = data.bins.split(',');
+        const buf = nativeSpectrumRef.current;
+        const n = Math.min(parts.length, buf.length);
+        for (let i = 0; i < n; i++) {
+          const v = Number(parts[i]);
+          buf[i] = Number.isFinite(v) ? v : 0;
         }
       }),
       (BackgroundAudio as any).addListener('playbackProgress', (data: { currentTime?: number; duration?: number }) => {
+        if (!nativeOwnerRef.current) {
+          // ExoPlayer is audibly playing but the WebView engine was never told
+          // to stand down — a handover that timed out on a slow network, or a
+          // takeOver the service ran on its own. Adopt the native engine now:
+          // proof of sound is the only safe moment to silence the WebView.
+          nativeOwnerRef.current = true;
+          try {
+            ytPlayerRef.current?.stopVideo?.();
+          } catch {
+            // ignore
+          }
+          if (audioRef.current) {
+            try {
+              audioRef.current.pause();
+              audioRef.current.removeAttribute('src');
+            } catch {
+              // ignore
+            }
+          }
+          hasPlayedRef.current = true;
+          setIsPlaying(true);
+        }
+        // First progress tick is the handoff proof — only now is it safe to
+        // silence the WebView engine.
+        settleNativeConfirm(true);
         if (typeof data.currentTime === 'number') {
           positionRef.current = data.currentTime;
           setCurrentTime(data.currentTime);
@@ -564,7 +773,59 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Native AVPlayer could not play the resolved stream (403, unsupported
       // codec, dropped connection): force a fresh stream resolution, bounded
       // by the per-track retry counter so we never loop forever.
-      (BackgroundAudio as any).addListener('playbackError', () => {
+      (BackgroundAudio as any).addListener('playbackError', (payload: { message?: string }) => {
+        const nativeMsg = typeof payload?.message === 'string' ? payload.message : '';
+        if (nativeMsg) {
+          // Persist so the real ExoPlayer error survives the toast and can be
+          // reported — "it doesn't work" is unfixable, "HTTP 403" is not.
+          try {
+            localStorage.setItem(
+              'frf_native_last_error',
+              JSON.stringify({ t: Date.now(), msg: nativeMsg })
+            );
+          } catch {
+            // ignore
+          }
+          console.warn('[FRF] native playback error:', nativeMsg);
+        }
+        if (nativeConfirmRef.current) {
+          // Handoff attempt failed — caller falls back to WebView playback.
+          settleNativeConfirm(false, true, nativeMsg || undefined);
+          return;
+        }
+        // Backgrounded: ExoPlayer is the ONLY engine that can make sound, so
+        // there is nothing to fall back to. The URL it just choked on is dead
+        // (expired signature, or a proxy that answered with an anti-bot page),
+        // so purge it and hand over a freshly resolved one. Without this the
+        // handover failure was a silent dead end — the branch below only ever
+        // recovered <audio>-element playback, never the iframe engine.
+        if (IS_ANDROID && document.hidden) {
+          const hiddenTrack = currentTrackRef.current;
+          const hiddenVid = hiddenTrack
+            ? activeYoutubeIdRef.current || hiddenTrack.youtubeId
+            : null;
+          if (!hiddenTrack || !hiddenVid) return;
+          const tries = streamRetryCountRef.current.get(hiddenTrack.id) || 0;
+          if (tries >= 2) return;
+          streamRetryCountRef.current.set(hiddenTrack.id, tries + 1);
+          streamUrlCacheRef.current.delete(hiddenVid);
+          dropCachedStreamUrl(hiddenVid);
+          if (handoverResolveInFlightRef.current) return;
+          handoverResolveInFlightRef.current = true;
+          void resolveAudioStreamUrl(hiddenVid, true)
+            .then(url => {
+              if (!url) return;
+              if (currentTrackRef.current?.id !== hiddenTrack.id) return;
+              streamUrlCacheRef.current.set(hiddenVid, url);
+              setCachedStreamUrl(hiddenVid, url);
+              return handOffToNativeRef.current(hiddenTrack, url).then(() => {});
+            })
+            .catch(() => {})
+            .finally(() => {
+              handoverResolveInFlightRef.current = false;
+            });
+          return;
+        }
         const track = currentTrackRef.current;
         if (!track?.isYouTube || !track.youtubeId) return;
         if (audioModeTrackIdRef.current !== track.id) return;
@@ -600,6 +861,110 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => {
       listeners.forEach(p => p?.then?.((l: any) => l?.remove?.()).catch?.(() => {}));
     };
+  }, []);
+
+  // Hooks the Android PlaybackService invokes through bridge.eval(). Without
+  // these the service's handover is a silent no-op: it starts ExoPlayer while
+  // the WebView keeps playing, and position updates from the lock screen go
+  // nowhere.
+  useEffect(() => {
+    const w = window as unknown as {
+      __frfNativePause?: () => void;
+      __frfBgSeek?: (position: number) => void;
+    };
+
+    // ExoPlayer has the audio now. Silence both WebView engines without
+    // touching isPlaying: playback did not stop, it changed owner.
+    w.__frfNativePause = () => {
+      nativeOwnerRef.current = true;
+      try {
+        ytPlayerRef.current?.pauseVideo?.();
+      } catch {
+        // player not ready yet
+      }
+      if (audioRef.current && !audioRef.current.paused) {
+        try {
+          audioRef.current.pause();
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    w.__frfBgSeek = (position: number) => {
+      latestActionsRef.current?.applyPosition?.(position);
+    };
+
+    return () => {
+      delete w.__frfNativePause;
+      delete w.__frfBgSeek;
+    };
+  }, []);
+
+  // Tell the native service whether the WebView engine is the one making
+  // sound. takeOver() uses this to decide whether backgrounding the app
+  // should move playback onto ExoPlayer — the service's own `playing` flag
+  // goes stale-false after any failed native start, which used to make
+  // takeOver bail out exactly when it mattered.
+  const webAudibleRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!IS_ANDROID || !BackgroundAudio?.setWebAudible) return;
+    const audible = isPlaying && !!currentTrack && !nativeOwnerRef.current;
+    if (webAudibleRef.current === audible) return;
+    webAudibleRef.current = audible;
+    BackgroundAudio.setWebAudible({ audible }).catch(() => {});
+  });
+
+  // The moment the page starts hiding, hand the freshest URL and position to
+  // the service and let it start ExoPlayer itself. Waiting for the service to
+  // ask (requestStream) is too late: the WebView's fetch/timer machinery is
+  // already being suspended by then, so the answer may never arrive.
+  useEffect(() => {
+    if (!IS_ANDROID || !BackgroundAudio?.handoverNow) return;
+    const onHidden = () => {
+      if (!document.hidden) return;
+      const track = currentTrackRef.current;
+      if (!track) return;
+      if (!isPlayingRef.current) return;
+      if (nativeOwnerRef.current) return;
+      const vid = activeYoutubeIdRef.current || track.youtubeId;
+      const offline = getOfflineRecord(track.id)?.path || getOfflinePlaybackUrl(track.id) || '';
+      const cached = vid ? streamUrlCacheRef.current.get(vid) || '' : track.url;
+      const send = (src: string) => {
+        BackgroundAudio.handoverNow!({
+          title: track.title,
+          artist: track.artist,
+          coverUrl: track.coverUrl || '',
+          streamUrl: src.startsWith('http') ? src : '',
+          filePath: src && !src.startsWith('http') ? src : '',
+          position: getCurrentPosition(),
+          duration: track.duration || 0,
+        }).catch(() => {});
+      };
+      send(offline || cached);
+      // No playable URL cached? Resolve fresh while the page still has a
+      // pulse (MainActivity keeps WebView timers alive in the background)
+      // and deliver it the moment it lands.
+      if (vid && !offline && !cached) {
+        if (handoverResolveInFlightRef.current) return;
+        handoverResolveInFlightRef.current = true;
+        void resolveAudioStreamUrl(vid, true)
+          .then(url => {
+            if (!url) return;
+            if (currentTrackRef.current?.id !== track.id) return;
+            if (nativeOwnerRef.current) return;
+            streamUrlCacheRef.current.set(vid, url);
+            setCachedStreamUrl(vid, url);
+            send(url);
+          })
+          .catch(() => {})
+          .finally(() => {
+            handoverResolveInFlightRef.current = false;
+          });
+      }
+    };
+    document.addEventListener('visibilitychange', onHidden);
+    return () => document.removeEventListener('visibilitychange', onHidden);
   }, []);
 
   // Initialize HTML5 Audio element and connect Web Audio API Equalizer graph
@@ -773,11 +1138,24 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     applyThemeSettings(settings);
   }, [settings]);
 
+  // Native FFT capture runs a continuous callback, so it is only enabled while
+  // a visualizer mode is actually selected.
+  useEffect(() => {
+    if (!BackgroundAudio?.setVisualizerEnabled) return;
+    BackgroundAudio.setVisualizerEnabled({
+      enabled: settings.visualizerMode !== 'off',
+    }).catch(() => {});
+  }, [settings.visualizerMode]);
+
   // Synchronize Real-time Equalizer & Sound FX settings
   useEffect(() => {
-    if (settings.equalizer) {
-      globalEqualizer.update(settings.equalizer);
-    }
+    if (!settings.equalizer) return;
+    globalEqualizer.update(settings.equalizer);
+
+    // The Web Audio graph only shapes the <audio> element. Once ExoPlayer owns
+    // playback it has to be driven through Android's own effect chain, or the
+    // equalizer silently does nothing.
+    pushEqualizerToNativeRef.current(settings.equalizer);
   }, [settings.equalizer]);
 
   const ytReadyWaitersRef = useRef<Array<() => void>>([]);
@@ -836,7 +1214,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         }
       }
-      if (event.data === 2) setIsPlaying(false);
+      // ExoPlayer taking audio focus makes the embedded player report a pause.
+      // Ignore that while the native engine owns playback, or the UI flips to
+      // "paused" even though audio is running.
+      if (event.data === 2 && !document.hidden && !nativeOwnerRef.current) setIsPlaying(false);
       if (event.data === 0) {
         setIsPlaying(false);
         latestActionsRef.current.handleEnded();
@@ -1075,6 +1456,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
     if (playGenRef.current !== currentGen) return;
+    // ExoPlayer claimed the track while the IFrame API was still loading.
+    // Starting the embedded player now would put two sources on one output.
+    if (nativeOwnerRef.current && currentTrackRef.current?.id === track.id) return;
     const yt = ytPlayerRef.current;
     if (yt && typeof yt.loadVideoById === 'function') {
       try {
@@ -1106,6 +1490,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Sync Timer interval for progress & duration
   useEffect(() => {
     const interval = setInterval(() => {
+      // ExoPlayer pushes progress through playbackProgress events; polling the
+      // WebView engines here would fight it with stale iframe positions.
+      if (nativeOwnerRef.current) return;
       // Don't fight the user while they're seeking
       if (Date.now() - lastSeekAtRef.current < 1200) return;
       const audioMode = isAudioMode(currentTrack);
@@ -1215,10 +1602,57 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, []);
 
-  // Sleep timer: pauses playback after the chosen duration
+  // Sleep timer: fades the volume out over the last 30s, then pauses playback.
   useEffect(() => {
-    if (!settings.sleepTimerMinutes) return;
-    const timer = window.setTimeout(() => {
+    if (!settings.sleepTimerMinutes) {
+      setSleepSecondsRemaining(null);
+      return;
+    }
+    const totalMs = settings.sleepTimerMinutes * 60000;
+    const fadeMs = 30000;
+    const baseVolume = volumeRef.current;
+
+    // Countdown for the Now Playing chip.
+    const startAt = Date.now();
+    setSleepSecondsRemaining(Math.round(totalMs / 1000));
+    const tick = window.setInterval(() => {
+      const left = Math.max(0, Math.ceil((totalMs - (Date.now() - startAt)) / 1000));
+      setSleepSecondsRemaining(left);
+    }, 1000);
+
+    // Adjust the live engines directly. Going through setVolume() would persist
+    // every faded step to localStorage and fight the volume slider.
+    const setEngineVolume = (v: number) => {
+      const level = Math.max(0, Math.min(1, v));
+      try {
+        if (audioRef.current) audioRef.current.volume = level;
+      } catch {
+        // ignore
+      }
+      try {
+        ytPlayerRef.current?.setVolume?.(level * 100);
+      } catch {
+        // ignore
+      }
+      BackgroundAudio?.setVolume?.({ volume: level }).catch(() => {});
+    };
+
+    let fadeInterval: number | null = null;
+    const fadeTimer = window.setTimeout(() => {
+      const steps = 20;
+      const stepMs = fadeMs / steps;
+      let i = 0;
+      fadeInterval = window.setInterval(() => {
+        i += 1;
+        setEngineVolume(baseVolume * Math.max(0, 1 - i / steps));
+        if (i >= steps && fadeInterval != null) {
+          window.clearInterval(fadeInterval);
+          fadeInterval = null;
+        }
+      }, stepMs);
+    }, Math.max(0, totalMs - fadeMs));
+
+    const endTimer = window.setTimeout(() => {
       try {
         ytPlayerRef.current?.pauseVideo?.();
       } catch {
@@ -1226,9 +1660,19 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
       audioRef.current?.pause();
       setIsPlaying(false);
+      setEngineVolume(baseVolume);
       showStatus('Sleep timer ended — playback paused', 4000);
-    }, settings.sleepTimerMinutes * 60000);
-    return () => window.clearTimeout(timer);
+    }, totalMs);
+
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(endTimer);
+      window.clearInterval(tick);
+      if (fadeInterval != null) window.clearInterval(fadeInterval);
+      setEngineVolume(baseVolume);
+      setSleepSecondsRemaining(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.sleepTimerMinutes]);
 
   // Apply playback speed to both engines
@@ -1239,6 +1683,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch {
       // ignore
     }
+    BackgroundAudio?.setSpeed?.({ speed: settings.playbackSpeed }).catch(() => {});
   }, [settings.playbackSpeed, currentTrack]);
 
   // Native notification buttons (prev/play-pause/next) invoke this from the foreground service
@@ -1258,8 +1703,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const rec = getOfflineRecord(currentTrack.id);
       const stream =
         !rec && currentTrack.youtubeId
-          ? streamUrlCacheRef.current.get(currentTrack.youtubeId)
-          : undefined;
+          ? streamUrlCacheRef.current.get(activeYoutubeIdRef.current || currentTrack.youtubeId)
+          : !rec && !currentTrack.isYouTube ? currentTrack.url : undefined;
       const payload = {
         title: currentTrack.title,
         artist: currentTrack.artist,
@@ -1341,7 +1786,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setIsResolvingStream(true);
     try {
-      const url = force
+      let url = force
         ? await resolveAudioStreamUrl(vid, true)
         : streamUrlCacheRef.current.get(vid) || (await resolveAudioStreamUrl(vid));
       if (!url) return false;
@@ -1352,6 +1797,30 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (playGenRef.current !== gen) return false;
       const current = currentTrackRef.current;
       if (!current || current.id !== track.id || !audioRef.current) return false;
+
+      // Recovering inside the WebView would only work until the Activity
+      // stops. Keep recovery on ExoPlayer so a mid-track stream failure does
+      // not silently cost background playback.
+      if (IS_ANDROID && BackgroundAudio?.playUrl) {
+        let res = await handOffToNativeRef.current(track, url);
+        if (!res.handedOver && res.hardFail && !force) {
+          // The cached URL may be exactly what just died on ExoPlayer — drop
+          // it and try once more with a guaranteed-fresh resolve. A timeout
+          // is NOT retried: ExoPlayer may still be buffering the first URL,
+          // and replacing it would just restart the wait.
+          streamUrlCacheRef.current.delete(vid);
+          dropCachedStreamUrl(vid);
+          const fresh = await resolveAudioStreamUrl(vid, true).catch(() => null);
+          if (fresh && playGenRef.current === gen && currentTrackRef.current?.id === track.id) {
+            url = fresh;
+            streamUrlCacheRef.current.set(vid, url);
+            setCachedStreamUrl(vid, url);
+            res = await handOffToNativeRef.current(track, url);
+          }
+        }
+        if (res.handedOver) return true;
+        if (playGenRef.current !== gen) return false;
+      }
 
       let pos = 0;
       const yt = ytPlayerRef.current;
@@ -1422,27 +1891,217 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     fallbackToStreamRef.current = fallbackToStream;
   });
 
+  // Position of whichever engine is currently making sound.
+  const getCurrentPosition = () => {
+    if (nativeOwnerRef.current) return positionRef.current;
+    const yt = ytPlayerRef.current;
+    if (yt?.getCurrentTime) {
+      try {
+        const t = yt.getCurrentTime();
+        if (typeof t === 'number' && t > 0) return t;
+      } catch {
+        // fall through to the audio element
+      }
+    }
+    if (audioRef.current && audioRef.current.currentTime > 0) {
+      return audioRef.current.currentTime;
+    }
+    return positionRef.current;
+  };
+
+  // Ask ExoPlayer to play, but only treat it as real once the first
+  // playbackProgress tick proves audio is actually flowing. playUrl resolves
+  // the moment the intent lands in the service — long before ExoPlayer has
+  // fetched a single byte — so believing it is what silenced playback: the
+  // WebView engine had already been stopped by the time the native side
+  // failed on the device.
+  const playNativeConfirmed = (track: Track, url: string, startTime: number) => {
+    type Result = { ok: boolean; hardFail: boolean; msg?: string };
+    if (!BackgroundAudio?.playUrl) {
+      return Promise.resolve<Result>({ ok: false, hardFail: true });
+    }
+    const currentGen = playGenRef.current;
+    // Cancel any stale pending handoff from a previous track.
+    settleNativeConfirm(false);
+    const confirmed = new Promise<Result>((resolve) => {
+      let settled = false;
+      nativeConfirmRef.current = {
+        resolve: (res) => {
+          if (settled) return;
+          settled = true;
+          resolve(res);
+        },
+      };
+      // 15s: slow mobile networks can buffer longer than a desktop timeout,
+      // and a timeout must NOT kill the native attempt — ExoPlayer may still
+      // start, and the progress listener will adopt it.
+      confirmTimeoutRef.current = window.setTimeout(() => {
+        settleNativeConfirm(false, false);
+      }, 15000);
+      BackgroundAudio.playUrl({
+        url: url.startsWith('http') ? url : undefined,
+        filePath: !url.startsWith('http') ? url : undefined,
+        title: track.title,
+        artist: track.artist,
+        coverUrl: track.coverUrl,
+        startTime,
+        duration: track.duration,
+      }).catch(() => {
+        settleNativeConfirm(false, true);
+      });
+    });
+    return confirmed.then((res) => {
+      if (!res.ok) return res;
+      if (playGenRef.current !== currentGen || currentTrackRef.current?.id !== track.id) {
+        // A newer track superseded this one while we waited for proof.
+        BackgroundAudio.stop?.().catch(() => {});
+        return { ok: false, hardFail: false };
+      }
+      return res;
+    });
+  };
+
+  // Move playback from the WebView onto ExoPlayer at the current position.
+  // This is what keeps music alive once the Activity stops.
+  const handOffToNative = async (
+    track: Track,
+    url: string
+  ): Promise<{ handedOver: boolean; hardFail: boolean; msg?: string }> => {
+    if (!BackgroundAudio?.playUrl) return { handedOver: false, hardFail: true };
+    const startAt = Math.max(0, getCurrentPosition());
+    const res = await playNativeConfirmed(track, url, startAt);
+    if (!res.ok) {
+      // Never stop the native side here: on a hard failure ExoPlayer already
+      // errored out on its own, and on a timeout it may still be buffering —
+      // killing it would destroy a handover that was about to succeed.
+      return { handedOver: false, hardFail: res.hardFail, msg: res.msg };
+    }
+
+    nativeOwnerRef.current = true;
+    audioModeTrackIdRef.current = track.id;
+    positionRef.current = startAt;
+    pendingSeekRef.current = 0;
+    lastSeekAtRef.current = Date.now();
+    // Re-assert the effect chain: the service may have just been created, or
+    // the process may have recycled since the last time it was set.
+    pushEqualizerToNativeRef.current(settingsRef.current?.equalizer);
+
+    try {
+      ytPlayerRef.current?.stopVideo?.();
+    } catch {
+      // ignore
+    }
+    if (audioRef.current) {
+      try {
+        audioRef.current.pause();
+        audioRef.current.removeAttribute('src');
+      } catch {
+        // ignore
+      }
+    }
+    hasPlayedRef.current = true;
+    setIsPlaying(true);
+    return { handedOver: true, hardFail: false };
+  };
+
+  const handOffToNativeRef = useRef(handOffToNative);
+  useEffect(() => {
+    handOffToNativeRef.current = handOffToNative;
+  });
+
+  const pushEqualizerToNativeRef = useRef(pushEqualizerToNative);
+  useEffect(() => {
+    pushEqualizerToNativeRef.current = pushEqualizerToNative;
+  });
+
+  // Lock screen / notification pressed play or pause. These carry intent, so
+  // they must not be routed through the generic toggle: a stale isPlaying flag
+  // would otherwise invert the command the user just gave.
+  const applyPosition = (time: number) => {
+    lastSeekAtRef.current = Date.now();
+    pendingSeekRef.current = 0;
+    positionRef.current = time;
+    setCurrentTime(time);
+  };
+
+  const resumeFromRemote = () => {
+    if (!currentTrackRef.current) return;
+    if (nativeOwnerRef.current && BackgroundAudio?.resume) {
+      void BackgroundAudio.resume().catch(() => {});
+      setIsPlaying(true);
+      return;
+    }
+    if (!isPlayingRef.current) {
+      latestActionsRef.current.togglePlay();
+    } else {
+      setIsPlaying(true);
+    }
+  };
+
+  const pauseFromRemote = () => {
+    if (!currentTrackRef.current) return;
+    if (nativeOwnerRef.current && BackgroundAudio?.pause) {
+      void BackgroundAudio.pause().catch(() => {});
+      setIsPlaying(false);
+      return;
+    }
+    if (isPlayingRef.current) {
+      latestActionsRef.current.togglePlay();
+    } else {
+      setIsPlaying(false);
+    }
+  };
+
   const playAudioUrl = (track: Track, url: string, startTime = 0) => {
     const currentGen = playGenRef.current;
 
     // Stop YouTube iframe to ensure no dual playback
-    if (ytPlayerRef.current) {
-      try {
-        ytPlayerRef.current.stopVideo();
-      } catch {
+    const stopIframe = () => {
+      if (ytPlayerRef.current) {
         try {
-          ytPlayerRef.current.pauseVideo();
+          ytPlayerRef.current.stopVideo();
         } catch {
-          // ignore
+          try {
+            ytPlayerRef.current.pauseVideo();
+          } catch {
+            // ignore
+          }
         }
       }
-    }
+    };
+
+    // Android keeps the iframe alive until ExoPlayer has proven it is making
+    // sound — killing it first is what caused the dead-air regression.
+    if (!IS_ANDROID) stopIframe();
 
     audioModeTrackIdRef.current = track.id;
 
-    // Native iOS AVPlayer playback for local downloaded files and direct audio URLs
+    // Native playback for local downloaded files and direct audio URLs
     if (Capacitor.isNativePlatform() && BackgroundAudio?.playUrl) {
       const rec = getOfflineRecord(track.id);
+      const nativeSource = IS_ANDROID
+        ? rec?.path || rec?.webUrl || url
+        : rec?.webUrl || rec?.path || url;
+
+      if (IS_ANDROID) {
+        return playNativeConfirmed(track, nativeSource, startTime).then((res) => {
+          if (playGenRef.current !== currentGen) return;
+          if (!res.ok) {
+            nativeOwnerRef.current = false;
+            // No BackgroundAudio.stop(): a timeout means ExoPlayer may still
+            // be buffering, and a hard failure already killed it. If it ever
+            // starts, the progress listener adopts it and silences this
+            // element again.
+            return playHtml5Audio(track, url, startTime, currentGen);
+          }
+          stopIframe();
+          nativeOwnerRef.current = true;
+          hasPlayedRef.current = true;
+          setIsPlaying(true);
+          pushEqualizerToNativeRef.current(settingsRef.current?.equalizer);
+        });
+      }
+
       return BackgroundAudio.playUrl({
         url: rec?.webUrl || (url.startsWith('http') ? url : undefined),
         filePath: rec?.path || (!url.startsWith('http') ? url : undefined),
@@ -1457,10 +2116,14 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             BackgroundAudio.stop?.().catch(() => {});
             return;
           }
+          // ExoPlayer is producing the audio from here on, including for
+          // offline files. Controls and progress have to follow it.
+          nativeOwnerRef.current = true;
           hasPlayedRef.current = true;
           setIsPlaying(true);
         })
         .catch(() => {
+          nativeOwnerRef.current = false;
           return playHtml5Audio(track, url, startTime, currentGen);
         });
     }
@@ -1496,6 +2159,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const playHtml5Audio = (_track: Track, url: string, startTime: number, currentGen: number) => {
     if (!audioRef.current) return Promise.reject(new Error('no audio'));
+    nativeOwnerRef.current = false;
     const audio = audioRef.current;
     audio.src = url;
     audio.volume = volumeRef.current;
@@ -1524,6 +2188,13 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     playGenRef.current += 1;
     activeYoutubeIdRef.current = null;
     isYoutubeRecoveryRunningRef.current = false;
+    nativeOwnerRef.current = false;
+    // Native engine too — otherwise the old ExoPlayer track keeps playing
+    // underneath the new track's WebView start (dual audio).
+    if (BackgroundAudio?.stop) {
+      BackgroundAudio.stop().catch(() => {});
+    }
+    settleNativeConfirm(false);
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.removeAttribute('src');
@@ -1577,6 +2248,15 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       localStorage.setItem('bw_music_recently_played_v2', JSON.stringify(updated));
       return updated;
     });
+    setPlayCounts(prev => {
+      const next = { ...prev, [track.id]: (prev[track.id] || 0) + 1 };
+      try {
+        localStorage.setItem('bw_music_play_counts_v1', JSON.stringify(next));
+      } catch {
+        // storage full
+      }
+      return next;
+    });
 
     setCurrentTrack(track);
     audioModeTrackIdRef.current = null;
@@ -1621,10 +2301,45 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return;
       }
 
+      const targetId = savedYoutubeId || track.youtubeId;
       void startIframe(
         savedYoutubeId ? { ...track, youtubeId: savedYoutubeId } : track,
         startTime
       );
+      if (IS_ANDROID && track.youtubeId) {
+        // Resolve the direct stream in parallel and move to ExoPlayer as soon
+        // as it lands. The WebView player only exists to cover the gap — it
+        // cannot survive the Activity being stopped.
+        void resolveAudioStreamUrl(targetId)
+          .then(async url => {
+            if (!url || playGenRef.current !== currentGen) return;
+            if (currentTrackRef.current?.id !== track.id) return;
+            streamUrlCacheRef.current.set(targetId, url);
+            setCachedStreamUrl(targetId, url);
+
+            const res = await handOffToNativeRef.current(track, url);
+            if (!res.handedOver && res.hardFail) {
+              if (playGenRef.current !== currentGen) return;
+              if (currentTrackRef.current?.id !== track.id) return;
+              // The URL ExoPlayer refused is poison — never prime the service
+              // with it. The iframe keeps playing in the foreground; if the
+              // app is backgrounded, handoverNow / requestStream resolve a
+              // fresh URL and retry. Show the real native error so it can be
+              // reported instead of guessed at.
+              streamUrlCacheRef.current.delete(targetId);
+              dropCachedStreamUrl(targetId);
+              showStatus(
+                res.msg
+                  ? `Background audio failed: ${res.msg.slice(0, 120)}`
+                  : 'Background playback unavailable for this song — keep the app open',
+                8000
+              );
+            }
+            // A soft timeout is silent on purpose: ExoPlayer may still be
+            // buffering, and the progress listener adopts it when it starts.
+          })
+          .catch(() => {});
+      }
       return;
     }
 
@@ -1633,14 +2348,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try { ytPlayerRef.current.pauseVideo(); } catch {}
     }
 
-    if (audioRef.current) {
-      audioRef.current.src = track.url;
-      audioRef.current.volume = volumeRef.current;
-      if (startTime > 0) {
-        audioRef.current.currentTime = startTime;
-      }
-      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
-    }
+    // Use the same native path as downloaded tracks. Starting <audio> here
+    // bypassed the foreground service for every ordinary audio URL.
+    void playAudioUrl(track, track.url, startTime).catch(() => {
+      if (playGenRef.current === currentGen) setIsPlaying(false);
+    });
   };
 
   const playTrack = (track: Track) => {
@@ -1662,6 +2374,16 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   };
 
+  // Remove a single entry from the play queue by index.
+  const removeFromQueue = (index: number) => {
+    setQueue(prev => {
+      if (index < 0 || index >= prev.length) return prev;
+      const next = [...prev];
+      next.splice(index, 1);
+      return next;
+    });
+  };
+
   const togglePlay = () => {
     if (!currentTrack) return;
 
@@ -1669,6 +2391,18 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (needsLoadRef.current) {
       needsLoadRef.current = false;
       startTrack(currentTrack, positionRef.current || LAST_SESSION.position || 0);
+      return;
+    }
+
+    // ExoPlayer owns the audio: talk to the service, not the WebView engines.
+    if (nativeOwnerRef.current && BackgroundAudio) {
+      if (isPlaying) {
+        void BackgroundAudio.pause().catch(() => {});
+        setIsPlaying(false);
+      } else {
+        void BackgroundAudio.resume().catch(() => {});
+        setIsPlaying(true);
+      }
       return;
     }
 
@@ -1709,6 +2443,33 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setQueue(list);
     const safeIndex = Math.max(0, Math.min(startIndex, list.length - 1));
     playTrack(list[safeIndex]);
+  };
+
+  // Queue a track without replacing the current play queue. 'next' plays it
+  // immediately after the current song; 'last' appends it to the end. When
+  // nothing is playing yet, the track simply starts.
+  const addToQueue = (track: Track, position: 'next' | 'last' = 'last') => {
+    registerTrack(track);
+    if (!currentTrackRef.current) {
+      playTrack(track);
+      return;
+    }
+    setQueue(prev => {
+      const list = [...prev];
+      if (position === 'next') {
+        const curIdx = list.findIndex(t => t.id === currentTrackRef.current?.id);
+        list.splice(curIdx >= 0 ? curIdx + 1 : 0, 0, track);
+      } else {
+        list.push(track);
+      }
+      return list;
+    });
+    showStatus(
+      position === 'next'
+        ? `Playing "${track.title}" next`
+        : `Added "${track.title}" to the queue`,
+      2500
+    );
   };
 
   const nextTrack = () => {
@@ -1752,6 +2513,14 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Called when a track finishes: honors Repeat 1, otherwise advances through the queue
   const handleEnded = () => {
     if (repeatMode === 'one' && currentTrack) {
+      if (nativeOwnerRef.current && BackgroundAudio) {
+        void BackgroundAudio.seek({ position: 0 }).catch(() => {});
+        void BackgroundAudio.resume().catch(() => {});
+        setCurrentTime(0);
+        positionRef.current = 0;
+        setIsPlaying(true);
+        return;
+      }
       const audioMode = isAudioMode(currentTrack);
       if (currentTrack.isYouTube && !audioMode && ytPlayerRef.current?.seekTo) {
         ytPlayerRef.current.seekTo(0, true);
@@ -1776,6 +2545,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       nextTrack,
       previousTrack,
       seekTo,
+      applyPosition,
+      resumeFromRemote,
+      pauseFromRemote,
     };
   });
 
@@ -1783,6 +2555,13 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     lastSeekAtRef.current = Date.now();
     pendingSeekRef.current = time;
     positionRef.current = time;
+
+    if (nativeOwnerRef.current && BackgroundAudio?.seek) {
+      setCurrentTime(time);
+      void BackgroundAudio.seek({ position: time }).catch(() => {});
+      return;
+    }
+
     const audioMode = isAudioMode(currentTrack);
     if (currentTrack?.isYouTube && !audioMode && ytPlayerRef.current && ytPlayerRef.current.seekTo) {
       ytPlayerRef.current.seekTo(time, true);
@@ -1805,6 +2584,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (ytPlayerRef.current && ytPlayerRef.current.setVolume) {
       ytPlayerRef.current.setVolume(clamped * 100);
     }
+    // ExoPlayer keeps its own output level; the Web Audio graph never sees it.
+    BackgroundAudio?.setVolume?.({ volume: clamped }).catch(() => {});
   };
 
   const toggleRepeatMode = () => {
@@ -1869,21 +2650,26 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    if (isTrackOffline(track.id)) {
+    if (await verifyOfflineRecord(track.id)) {
       registerDownloadedTrack(track);
       showStatus(`"${track.title}" is already saved for offline playback`);
       return;
     }
 
     try {
-      await downloadTrackToFile(track);
+      const ok = await downloadTrackToFile(track);
+      if (!ok) throw new Error('download-failed');
       registerDownloadedTrack(track);
       showStatus(`Downloaded "${track.title}" — plays offline now`);
     } catch (e) {
       if ((e as Error).message === 'cancelled') {
         showStatus(`Skipped "${track.title}"`);
       } else {
-        showStatus(`Download failed for "${track.title}" — retrying next time`, 4000);
+        const reason = getLastDownloadError();
+        showStatus(
+          `Download failed for "${track.title}"${reason ? ` — ${reason}` : ' — retrying next time'}`,
+          8000
+        );
       }
     }
   };
@@ -1926,8 +2712,13 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // 5. Actually download the audio files one by one
     const toFetch = tracksToDownload.filter(
-      t => t.youtubeId && !t.isLocal && !isTrackOffline(t.id)
+      t => t.youtubeId && !t.isLocal
     );
+    const pending: Track[] = [];
+    for (const t of toFetch) {
+      if (!(await verifyOfflineRecord(t.id))) pending.push(t);
+    }
+    toFetch.splice(0, toFetch.length, ...pending);
 
     if (toFetch.length === 0) {
       showStatus(`Playlist "${playlistTitle}" is already available offline`);
@@ -1942,8 +2733,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         `Downloading ${done + failed + skipped + 1}/${toFetch.length}: ${t.title}`
       );
       try {
-        await downloadTrackToFile(t);
-        done++;
+        if (await downloadTrackToFile(t)) done++;
+        else failed++;
       } catch (e) {
         if ((e as Error).message === 'cancelled') skipped++;
         else failed++;
@@ -2259,6 +3050,22 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setIsPlaying(false);
   };
 
+  // Top tracks by lifetime plays, resolved to their track objects. Backs the
+  // "Most played" card on Home.
+  const mostPlayed = useMemo(() => {
+    return Object.entries(playCounts)
+      .map(([id, count]) => {
+        const track =
+          trackStore[id] ||
+          tracks.find(t => t.id === id) ||
+          recentlyPlayed.find(t => t.id === id);
+        return track ? { track, count } : null;
+      })
+      .filter((x): x is { track: Track; count: number } => x !== null)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 12);
+  }, [playCounts, trackStore, tracks, recentlyPlayed]);
+
   return (
     <AudioContext.Provider
       value={{
@@ -2286,8 +3093,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         downloads,
         downloadedTracks,
         recentlyPlayed,
+        playCounts,
+        mostPlayed,
+        sleepSecondsRemaining,
         settings,
-        analyserNode: globalEqualizer.getAnalyser(),
+        analyserNode: spectrumSourceRef.current,
         isResolvingStream,
         isLoadingApiTracks: false,
         downloadStatus,
@@ -2297,7 +3107,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         playTrack,
         playQueue,
+        addToQueue,
         reorderQueue,
+        removeFromQueue,
         togglePlay,
         nextTrack,
         previousTrack,

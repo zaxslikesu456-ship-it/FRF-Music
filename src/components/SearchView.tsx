@@ -7,6 +7,7 @@ import {
   FolderPlus,
   Loader2,
   X,
+  History,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
@@ -18,6 +19,7 @@ import {
   searchYouTubeMusicArtists,
   searchYouTubeMusicAlbums,
   searchYouTubeMusicVideos,
+  fetchSearchSuggestions,
   fetchYouTubePlaylistTracks,
   loadMoreSearchResults,
   loadMorePlaylistResults,
@@ -115,6 +117,14 @@ export const SearchView: React.FC = () => {
 
   const [searchMode, setSearchMode] = useState<SearchMode>('results');
 
+  // The text field holds its own draft state: results only refresh when the
+  // user submits (Enter, a suggestion, a recent search or a trending chip),
+  // never on each keystroke.
+  const [inputValue, setInputValue] = useState<string>(searchQuery);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState<boolean>(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
   const [searchResults, setSearchResults] = useState<Track[]>([]);
   const [artistResults, setArtistResults] = useState<ArtistResult[]>([]);
   const [albumResults, setAlbumResults] = useState<AlbumResult[]>([]);
@@ -189,6 +199,39 @@ export const SearchView: React.FC = () => {
     });
   };
 
+  // Runs the search for a query and records it in history. The only paths
+  // into results — Enter, suggestion rows, recent searches, trending chips —
+  // all go through here.
+  const submitSearch = (raw?: string) => {
+    const q = (raw ?? inputValue).trim();
+    if (!q) return;
+    setInputValue(q);
+    setSearchQuery(q);
+    setShowSuggestions(false);
+    saveHistory(q);
+    inputRef.current?.blur();
+  };
+
+  // Autocomplete suggestions for what is being typed. Debounced so fast
+  // typists do not fire a request per keystroke.
+  useEffect(() => {
+    const q = inputValue.trim();
+    if (!showSuggestions || !q) {
+      setSuggestions([]);
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      void fetchSearchSuggestions(q).then(items => {
+        if (alive) setSuggestions(items);
+      });
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [inputValue, showSuggestions]);
+
   useEffect(() => {
     setNoMoreSongs(false);
     setNoMorePlaylists(false);
@@ -213,9 +256,8 @@ export const SearchView: React.FC = () => {
       if (cached && cached.length > 0) setSearchResults(cached);
     }
 
-    const timer = setTimeout(async () => {
+    const run = async () => {
       setIsSearching(true);
-      saveHistory(searchQuery);
       try {
         if (searchMode === 'results') {
           // Fetch songs first for instant results (< 300ms)
@@ -281,11 +323,12 @@ export const SearchView: React.FC = () => {
       } finally {
         if (isMounted) setIsSearching(false);
       }
-    }, 50);
+    };
+
+    void run();
 
     return () => {
       isMounted = false;
-      clearTimeout(timer);
     };
   }, [searchQuery, searchMode]);
 
@@ -447,6 +490,24 @@ export const SearchView: React.FC = () => {
     />
   );
 
+  const typed = inputValue.trim().toLowerCase();
+  const historyMatches = typed
+    ? searchHistory
+        .filter(q => q.toLowerCase().includes(typed) && q.toLowerCase() !== typed)
+        .slice(0, 3)
+    : [];
+  const remoteMatches = typed
+    ? suggestions
+        .filter(
+          s =>
+            s.toLowerCase() !== typed &&
+            !historyMatches.some(h => h.toLowerCase() === s.toLowerCase())
+        )
+        .slice(0, 8)
+    : [];
+  const showDropdown =
+    showSuggestions && typed.length > 0 && (historyMatches.length > 0 || remoteMatches.length > 0);
+
   if (activeArtist) {
     return (
       <>
@@ -515,7 +576,10 @@ export const SearchView: React.FC = () => {
           {/* Header */}
           <div className="flex items-center gap-4 px-5 safe-top pb-4">
             <button
-              onClick={() => setSearchQuery('')}
+              onClick={() => {
+                setInputValue('');
+                setSearchQuery('');
+              }}
               className="p-1 text-app-primary"
               title="Back"
             >
@@ -536,14 +600,68 @@ export const SearchView: React.FC = () => {
             <div className="relative w-full">
               <Search className="absolute left-4 top-3.5 w-5 h-5 text-app-secondary" />
               <input
+                ref={inputRef}
                 type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
+                value={inputValue}
+                onChange={e => {
+                  setInputValue(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') submitSearch();
+                }}
+                enterKeyHint="search"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
                 placeholder="Songs, artists, albums, playlists..."
                 className="w-full bg-app-surface border border-app-theme rounded-full py-3 pl-12 pr-10 text-base text-app-primary placeholder:text-app-secondary focus:outline-none focus:border-app-theme"
               />
-              {isSearching && (
-                <Loader2 className="absolute right-4 top-3.5 w-5 h-5 text-app-primary animate-spin" />
+              {inputValue ? (
+                <button
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => {
+                    setInputValue('');
+                    inputRef.current?.focus();
+                  }}
+                  className="absolute right-3 top-3 p-0.5 text-app-secondary hover:text-app-primary"
+                  title="Clear"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              ) : (
+                isSearching && (
+                  <Loader2 className="absolute right-4 top-3.5 w-5 h-5 text-app-primary animate-spin" />
+                )
+              )}
+
+              {showDropdown && (
+                <div className="absolute left-0 right-0 top-full mt-2 z-30 rounded-2xl bg-app-card border border-app-theme overflow-hidden shadow-lg">
+                  {historyMatches.map(q => (
+                    <button
+                      key={`h-${q}`}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => submitSearch(q)}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                    >
+                      <History className="w-4 h-4 text-app-secondary shrink-0" />
+                      <span className="text-base text-app-primary truncate">{q}</span>
+                    </button>
+                  ))}
+                  {remoteMatches.map(s => (
+                    <button
+                      key={`s-${s}`}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => submitSearch(s)}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                    >
+                      <Search className="w-4 h-4 text-app-secondary shrink-0" />
+                      <span className="text-base text-app-primary truncate">{s}</span>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           </div>
@@ -575,7 +693,7 @@ export const SearchView: React.FC = () => {
                   {searchHistory.map(q => (
                     <div key={q} className="flex items-center justify-between py-2">
                       <button
-                        onClick={() => setSearchQuery(q)}
+                        onClick={() => submitSearch(q)}
                         className="flex items-center gap-3 min-w-0 text-left"
                       >
                         <Search className="w-4 h-4 text-app-secondary shrink-0" />
@@ -598,7 +716,7 @@ export const SearchView: React.FC = () => {
                 {['Drake', 'Travis Scott', 'Future', 'King Von', 'Lil Baby', 'Kendrick Lamar', 'Metro Boomin', 'Hip Hop Hits'].map(term => (
                   <button
                     key={term}
-                    onClick={() => setSearchQuery(term)}
+                    onClick={() => submitSearch(term)}
                     className="px-4 py-2 rounded-full bg-app-surface border border-app-theme text-sm text-app-primary hover:border-app-primary transition-colors"
                   >
                     {term}
