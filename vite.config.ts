@@ -1,10 +1,25 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { execSync } from 'node:child_process'
+
+// Identifies the exact build (commit and time) so "which version is on my phone?"
+// has a real answer: it shows in Settings > App Info and in the playback report.
+function gitShort(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
+  } catch {
+    return 'dev'
+  }
+}
+const BUILD_ID = `${gitShort()} \u00b7 ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    __APP_BUILD__: JSON.stringify(BUILD_ID),
+  },
   server: {
     host: 'localhost',
     port: 5173,
