@@ -1,4 +1,8 @@
 import React, { useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { formatMb } from '../utils/autoDownload';
+import { PlaybackHealthModal } from './PlaybackHealthModal';
+import { getOfflineUsageBytes } from '../utils/downloadManager';
 import {
   Palette,
   Music,
@@ -13,6 +17,7 @@ import {
   Timer,
   LibraryBig,
   Sliders,
+  Activity,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import {
@@ -102,7 +107,42 @@ export const SettingsView: React.FC = () => {
     exportLibrary,
     importLibrary,
     setIsEqualizerOpen,
+    restoreMusicFolderDownloads,
+    syncMusicFolderCopies,
+    playlists,
   } = useAudio();
+
+  const isAndroidApp = Capacitor.getPlatform() === 'android';
+  const [showHealth, setShowHealth] = useState(false);
+  const [restoreStatus, setRestoreStatus] = useState('');
+  const [restoring, setRestoring] = useState(false);
+
+  const restoreFromMusicFolder = async () => {
+    setRestoring(true);
+    setRestoreStatus('Looking in the Music folder...');
+    try {
+      const res = await restoreMusicFolderDownloads((done, total) =>
+        setRestoreStatus(`Restoring ${done} of ${total}...`)
+      );
+      if (res.unsupported) {
+        setRestoreStatus('This needs Android 10 or newer.');
+      } else if (res.permissionDenied) {
+        setRestoreStatus('Allow access to music and audio so FRF can read the folder, then try again.');
+      } else if (res.restored === 0) {
+        setRestoreStatus(
+          res.skipped > 0
+            ? 'Everything in the Music folder is already in your downloads.'
+            : 'No saved songs found in Music/FRF Music.'
+        );
+      } else {
+        setRestoreStatus(`Restored ${res.restored} song${res.restored === 1 ? '' : 's'}.`);
+      }
+    } catch {
+      setRestoreStatus('Could not restore. Try again.');
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   const [open, setOpen] = useState<Section | null>(null);
   const toggle = (s: Section) => setOpen(prev => (prev === s ? null : s));
@@ -148,6 +188,7 @@ export const SettingsView: React.FC = () => {
 
   return (
     <div className="flex-1 overflow-y-auto pb-28 bg-transparent">
+      <PlaybackHealthModal isOpen={showHealth} onClose={() => setShowHealth(false)} />
       <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-6">Settings</h1>
 
       <div className="px-5 space-y-4 stagger">
@@ -427,6 +468,22 @@ export const SettingsView: React.FC = () => {
                       </Row>
                       <div className="py-2">
                         <button
+                          onClick={() => setShowHealth(true)}
+                          className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-app-card border border-app-theme text-left active:scale-98 transition-all"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-xl bg-app-surface border border-app-theme text-app-primary">
+                              <Activity className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-base font-semibold text-app-primary">Playback health</p>
+                              <p className="text-xs text-app-secondary">See which sources are working</p>
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+                      <div className="py-2">
+                        <button
                           onClick={() => setIsEqualizerOpen(true)}
                           className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-app-card border border-app-theme text-left hover:scale-[1.01] active:scale-98 transition-all"
                         >
@@ -500,6 +557,97 @@ export const SettingsView: React.FC = () => {
                         {settings.downloadQuality === 'low' && <Check className="w-5 h-5 text-app-primary" />}
                       </button>
                       <Row title="Saved songs" subtitle={`${downloads.length} songs on this device`} />
+                      {isAndroidApp && (
+                        <>
+                          <Row
+                            title="Keep a copy in the Music folder"
+                            subtitle="Downloads survive an uninstall (Android 10 or newer)"
+                          >
+                            <Switch
+                              on={settings.keepMusicCopy}
+                              onChange={() => {
+                                const next = !settings.keepMusicCopy;
+                                updateSettings({ keepMusicCopy: next });
+                                // Switching on copies the songs you already have.
+                                if (next) window.setTimeout(() => void syncMusicFolderCopies(), 300);
+                              }}
+                            />
+                          </Row>
+                          <div className="pb-3">
+                            <button
+                              onClick={() => void restoreFromMusicFolder()}
+                              disabled={restoring}
+                              className="w-full text-left px-4 py-3 rounded-2xl bg-app-card border border-app-theme text-sm font-semibold text-app-primary disabled:opacity-60"
+                            >
+                              Restore downloads from Music folder
+                            </button>
+                            <p className="mt-2 px-1 text-xs text-app-secondary leading-relaxed">
+                              {restoreStatus ||
+                                'After reinstalling, tap this to bring back songs saved in Music/FRF Music.'}
+                            </p>
+                          </div>
+                        </>
+                      )}
+
+                      <p className="text-sm text-app-secondary pt-4 pb-1">AUTO-DOWNLOAD</p>
+                      <Row title="Liked songs" subtitle="Download songs when you like them">
+                        <Switch
+                          on={settings.autoDownloadLikes}
+                          onChange={() => updateSettings({ autoDownloadLikes: !settings.autoDownloadLikes })}
+                        />
+                      </Row>
+                      <Row title="Wi-Fi only" subtitle="Don't use mobile data for auto-downloads">
+                        <Switch
+                          on={settings.autoDownloadWifiOnly}
+                          onChange={() =>
+                            updateSettings({ autoDownloadWifiOnly: !settings.autoDownloadWifiOnly })
+                          }
+                        />
+                      </Row>
+                      <div className="py-3">
+                        <p className="text-base text-app-primary">Storage limit</p>
+                        <p className="text-sm text-app-secondary">
+                          Using {formatMb(getOfflineUsageBytes())}; auto-downloads pause at the limit
+                        </p>
+                        <div className="flex gap-2 mt-3 overflow-x-auto no-scrollbar">
+                          {[1024, 2048, 5120, 10240, 0].map(mb => (
+                            <button
+                              key={mb}
+                              onClick={() => updateSettings({ autoDownloadLimitMb: mb })}
+                              className={`px-3.5 py-1.5 rounded-full text-sm font-semibold shrink-0 border ${
+                                settings.autoDownloadLimitMb === mb
+                                  ? 'bg-app-highlight text-app-inverse border-white'
+                                  : 'bg-app-card text-app-secondary border-app-theme'
+                              }`}
+                            >
+                              {mb === 0 ? 'No limit' : `${mb / 1024} GB`}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {playlists.length > 0 && (
+                        <>
+                          <p className="text-sm text-app-secondary pt-2 pb-1">PLAYLISTS TO KEEP DOWNLOADED</p>
+                          {playlists.map(pl => {
+                            const chosen = (settings.autoDownloadPlaylists || []).includes(pl.id);
+                            return (
+                              <Row key={pl.id} title={pl.name} subtitle={`${pl.trackIds.length} songs`}>
+                                <Switch
+                                  on={chosen}
+                                  onChange={() => {
+                                    const ids = settings.autoDownloadPlaylists || [];
+                                    updateSettings({
+                                      autoDownloadPlaylists: chosen
+                                        ? ids.filter(x => x !== pl.id)
+                                        : [...ids, pl.id],
+                                    });
+                                  }}
+                                />
+                              </Row>
+                            );
+                          })}
+                        </>
+                      )}
                     </div>
                   )}
 

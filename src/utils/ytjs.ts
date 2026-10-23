@@ -1,5 +1,6 @@
 import { Innertube, Platform } from 'youtubei.js/web';
 import type { Types } from 'youtubei.js/web';
+import { timed } from './streamHealth';
 
 // googlevideo serves only the first ~1 MiB of IOS / ANDROID / ANDROID_VR /
 // WEB_REMIX streams unless the URL carries a GVS poToken that it accepts, so
@@ -96,15 +97,17 @@ export async function resolveFullAudioUrl(
 ): Promise<string> {
   let po: WebPoTokens | undefined;
   try {
-    po = await mintPoTokens();
+    po = await timed('Token minter', mintPoTokens);
   } catch (e) {
     console.warn(`[ytjs] mint: ${String((e as Error)?.message || e).slice(0, 120)}`);
   }
   try {
-    return await resolveWithClient(youtubeId, 'TV_SIMPLY', preferredItags, po);
+    return await timed('YouTube TV client', () =>
+      resolveWithClient(youtubeId, 'TV_SIMPLY', preferredItags, po)
+    );
   } catch (e) {
     console.warn(`[ytjs] TV_SIMPLY: ${String((e as Error)?.message || e).slice(0, 120)}`);
   }
   if (!po) throw new Error('No poToken for MWEB');
-  return resolveWithClient(youtubeId, 'MWEB', preferredItags, po);
+  return timed('YouTube web client', () => resolveWithClient(youtubeId, 'MWEB', preferredItags, po));
 }

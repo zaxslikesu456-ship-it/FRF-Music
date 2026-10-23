@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
+import { encodeShareCode, shareMessage, songFromTrack } from '../utils/playlistShare';
+import { copyText } from '../utils/clipboard';
 import type { Track } from '../types/music';
 
 interface PlaylistDetailViewProps {
@@ -78,6 +80,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
 
   const [selectedTrackForMenu, setSelectedTrackForMenu] = useState<Track | null>(null);
   const [showTopMenu, setShowTopMenu] = useState(false);
+  const [shareNote, setShareNote] = useState('');
   const [isSortedAZ, setIsSortedAZ] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchFilter, setSearchFilter] = useState('');
@@ -149,12 +152,26 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
     playQueue(processedTracks, 0);
   };
 
-  const handleShare = () => {
-    if (navigator.share) {
-      navigator.share({
-        title: title,
-        text: `Check out playlist "${title}" on FRF Music!`,
-      }).catch(() => {});
+  // Shares the whole playlist as a code that can be pasted in any chat and imported
+  // from Library > Import playlist. The code is also copied, so it still works
+  // when the phone has no share sheet.
+  const handleShare = async () => {
+    const songs = processedTracks.filter(t => t.youtubeId || t.title).map(songFromTrack);
+    if (songs.length === 0) return;
+    const code = await encodeShareCode({ name: title, songs });
+    const message = shareMessage(title, songs.length, code);
+    const copied = await copyText(message);
+    const canShare = typeof navigator.share === 'function';
+    setShareNote(
+      copied
+        ? `Copied! Share it with a friend (${songs.length} songs)`
+        : canShare
+          ? 'Choose where to send the playlist'
+          : 'Could not copy the share code'
+    );
+    window.setTimeout(() => setShareNote(''), 3500);
+    if (canShare) {
+      navigator.share({ title, text: message }).catch(() => {});
     }
   };
 
@@ -488,6 +505,12 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
           </button>
         </div>
       </div>
+
+      {shareNote && (
+        <div className="mx-6 mb-2 px-4 py-2 rounded-xl bg-white text-black text-xs font-semibold text-center">
+          {shareNote}
+        </div>
+      )}
 
       {/* Search Input Bar (if open) */}
       {showSearch && (
