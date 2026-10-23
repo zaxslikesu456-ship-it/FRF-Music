@@ -68,9 +68,16 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
           
+          # Zip into the repo root (an absolute path: the old relative path landed
+          # one folder too deep, so the upload below never found the file and only
+          # the real-device IPA was published, which Appetize rejects with "App is
+          # not a simulator build").
           cd build/simulator/Build/Products/Release-iphonesimulator
-          zip -r ../../../../FRF-Music-Simulator.zip App.app
-          cd ../../../..
+          zip -r "$GITHUB_WORKSPACE/FRF-Music-Simulator.zip" App.app
+          cd "$GITHUB_WORKSPACE"
+          # Prove it really is a simulator build before publishing it.
+          plutil -p build/simulator/Build/Products/Release-iphonesimulator/App.app/Info.plist | grep -i "DTPlatformName" || true
+          ls -la FRF-Music-Simulator.zip
           echo "FRF-Music-Simulator.zip created for Appetize.io!"
 
       - name: Upload FRF Music IPA (Real iPhone)
@@ -78,6 +85,7 @@ jobs:
         with:
           name: FRF-Music-iOS-IPA
           path: FRF-Music.ipa
+          if-no-files-found: error
           retention-days: 14
 
       - name: Upload FRF Music Simulator ZIP (Appetize.io)
@@ -85,4 +93,5 @@ jobs:
         with:
           name: FRF-Music-iOS-Simulator-Appetize
           path: FRF-Music-Simulator.zip
+          if-no-files-found: error
           retention-days: 14
