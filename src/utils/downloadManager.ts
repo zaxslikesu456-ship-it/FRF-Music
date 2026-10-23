@@ -21,6 +21,7 @@ interface StreamProbePlugin {
     visitorData?: string;
     contentPot?: string;
     sessionPot?: string;
+    error?: string;
   }>;
   // Native Cronet download: fetches a resolved stream URL to the app's private
   // files dir using Chromium's network stack (googlevideo 403s the Java stack
@@ -629,7 +630,28 @@ export async function resolveAudioStreamUrlFull(youtubeId: string): Promise<stri
     // shows up as a rejected call. Try the native minter (Android) and fall back to
     // the in-page one (iPhone), which cannot always produce the strongest token
     // but does establish the visitor session the TV client needs to answer.
-    const native = await StreamProbe?.mintPoToken?.({ videoId: youtubeId }).catch(() => null);
+    // The native minter fails now and then (its hidden page can time out), and a
+    // failure used to leave the TV source with no session at all, which made it
+    // answer "unplayable" and pushed the song onto the sources that cut off
+    // after about a minute. A failed attempt resets it, so one retry usually works.
+    let native: Awaited<ReturnType<NonNullable<StreamProbePlugin['mintPoToken']>>> | null = null;
+    let nativeError = '';
+    for (let attempt = 0; attempt < 2 && !native; attempt++) {
+      const tried = await StreamProbe?.mintPoToken?.({ videoId: youtubeId }).catch((e: unknown) => {
+        nativeError = String((e as Error)?.message || e);
+        return null;
+      });
+      if (tried?.ok && tried.visitorData && tried.contentPot && tried.sessionPot) {
+        native = tried;
+      } else {
+        nativeError = tried?.error || nativeError || 'no token returned';
+        if (attempt === 0) await new Promise(r => setTimeout(r, 600));
+      }
+    }
+    if (!native && StreamProbe?.mintPoToken) {
+      // Shown in Playback health even when the in-page minter covers for it.
+      recordSource('Native token minter', false, 0, nativeError);
+    }
     if (native?.ok && native.visitorData && native.contentPot && native.sessionPot) {
       // Keep YouTube's URL-encoded visitorData: the session token is minted
       // over exactly this string, and a decoded copy no longer matches it.
