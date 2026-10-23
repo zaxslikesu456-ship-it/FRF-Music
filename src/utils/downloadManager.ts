@@ -537,10 +537,12 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
   if (IS_NATIVE) {
     void getPoTokenMinter();
   }
-  // Android: the full-length TV_SIMPLY/MWEB source goes first, on its own. In
-  // the race below the IOS/ANDROID clients answer fastest, but googlevideo
-  // cuts their streams off after ~1 MiB, so playback would stop seconds in.
-  if (IS_NATIVE && Capacitor.getPlatform() === 'android') {
+  // Android and iPhone: the full-length TV_SIMPLY/MWEB source goes first, on
+  // its own. In the race below the IOS/ANDROID clients answer fastest, but
+  // googlevideo cuts their streams off after ~1 MiB, so playback would stop
+  // seconds in. On iPhone that failure drops the song to the web player, which
+  // iOS silences the moment the app is backgrounded.
+  if (IS_NATIVE && (Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios')) {
     try {
       return await withTimeout(resolveAudioStreamUrlFull(youtubeId), 20000, 'youtubei timeout');
     } catch (e) {
@@ -623,14 +625,27 @@ export async function resolveAudioStreamUrl(
 export async function resolveAudioStreamUrlFull(youtubeId: string): Promise<string> {
   const { resolveFullAudioUrl } = await import('./ytjs');
   return resolveFullAudioUrl(youtubeId, preferredItags(), async () => {
-    if (!StreamProbe?.mintPoToken) throw new Error('No native poToken minter');
-    const po = await StreamProbe.mintPoToken({ videoId: youtubeId });
-    if (!po?.ok || !po.visitorData || !po.contentPot || !po.sessionPot) {
-      throw new Error('poToken mint failed');
+    // The plugin object accepts any method name, so a missing native method only
+    // shows up as a rejected call. Try the native minter (Android) and fall back to
+    // the in-page one (iPhone), which cannot always produce the strongest token
+    // but does establish the visitor session the TV client needs to answer.
+    const native = await StreamProbe?.mintPoToken?.({ videoId: youtubeId }).catch(() => null);
+    if (native?.ok && native.visitorData && native.contentPot && native.sessionPot) {
+      // Keep YouTube's URL-encoded visitorData: the session token is minted
+      // over exactly this string, and a decoded copy no longer matches it.
+      return {
+        visitorData: native.visitorData,
+        contentPot: native.contentPot,
+        sessionPot: native.sessionPot,
+      };
     }
-    // Keep YouTube's URL-encoded visitorData: the session token is minted
-    // over exactly this string, and a decoded copy no longer matches it.
-    return { visitorData: po.visitorData, contentPot: po.contentPot, sessionPot: po.sessionPot };
+    const minter = await getPoTokenMinter();
+    if (!minter) throw new Error('No poToken minter');
+    return {
+      visitorData: minter.visitorData,
+      contentPot: await minter.mint(youtubeId),
+      sessionPot: await minter.mint(minter.visitorData),
+    };
   });
 }
 
