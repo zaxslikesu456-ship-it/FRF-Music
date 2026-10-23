@@ -733,7 +733,7 @@ export const SettingsView: React.FC = () => {
                   {/* APP INFO */}
                   {s.id === 'info' && (
                     <div className="pt-3">
-                      <Row title="FRF Music" subtitle="Version 7.0 • YouTube streaming player" />
+                      <Row title="FRF Music" subtitle={`Version 7.0 • Build ${__APP_BUILD__}`} />
                       <p className="text-sm text-app-secondary pt-2">
                         Streams are resolved through YouTube Music and public Invidious instances.
                         Downloaded songs are stored on your device for offline playback, and music

@@ -88,6 +88,7 @@ export const PlaybackHealthModal: React.FC<{ isOpen: boolean; onClose: () => voi
   const buildReport = () => {
     const lines: string[] = [];
     lines.push(`FRF Music playback report - ${new Date().toISOString()}`);
+    lines.push(`Build: ${__APP_BUILD__}`);
     lines.push(`Online: ${navigator.onLine}`);
     const native = readNativeError();
     if (native) lines.push(`Last native player error (${formatAgo(native.t)}): ${native.msg}`);
