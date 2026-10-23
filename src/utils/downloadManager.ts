@@ -29,6 +29,8 @@ interface StreamProbePlugin {
     size?: number;
   }>;
   deleteOfflineFile?(options: { path: string }): Promise<void>;
+  // Saves a cover image on disk so the notification can show it offline.
+  cacheCover?(options: { url: string }): Promise<{ cached?: boolean }>;
 }
 const StreamProbe = IS_NATIVE
   ? registerPlugin<StreamProbePlugin>('BackgroundAudio')
@@ -783,6 +785,17 @@ async function collectProxyStreamUrls(youtubeId: string): Promise<string[]> {
   return urls;
 }
 
+// Keep a song's cover on the device so its notification still has a picture
+// when offline.
+export async function cacheCoverArt(url?: string): Promise<void> {
+  if (!url || !StreamProbe?.cacheCover) return;
+  try {
+    await StreamProbe.cacheCover({ url });
+  } catch {
+    // best effort
+  }
+}
+
 let lastDownloadError = '';
 export function getLastDownloadError(): string {
   return lastDownloadError;
@@ -888,6 +901,7 @@ export async function downloadTrackToFile(
       downloadedAt: Date.now(),
     });
     localStorage.setItem(OFFLINE_KEY, JSON.stringify(filtered));
+    void cacheCoverArt(track.coverUrl);
 
     activeDownloadsMap.set(track.id, {
       trackId: track.id,

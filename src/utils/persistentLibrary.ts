@@ -70,7 +70,10 @@ export function loadFromAnyKey<T>(keys: string[], defaultVal: T): T {
       const raw = localStorage.getItem(k);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed as T;
+        // An empty list under the newest key is real data (the user deleted
+        // everything). Skipping it fell through to an older key and brought
+        // the deleted songs back.
+        if (Array.isArray(parsed)) return parsed as T;
         if (!Array.isArray(parsed) && parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
           return parsed as T;
         }

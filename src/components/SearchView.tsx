@@ -5,6 +5,7 @@ import {
   Pause,
   MoreVertical,
   FolderPlus,
+  Check,
   Loader2,
   X,
   History,
@@ -136,6 +137,7 @@ export const SearchView: React.FC = () => {
   const [activeArtist, setActiveArtist] = useState<ArtistResult | null>(null);
   const [activeAlbum, setActiveAlbum] = useState<{ title: string; artist: string; tracks: Track[] } | null>(null);
   const [activeCommunityPlaylist, setActiveCommunityPlaylist] = useState<CommunityPlaylist | null>(null);
+  const [playlistAddState, setPlaylistAddState] = useState<Record<string, 'adding' | 'added' | 'failed'>>({});
   const [communityPlaylistTracks, setCommunityPlaylistTracks] = useState<Track[]>([]);
   const [_isLoadingPlaylistTracks, setIsLoadingPlaylistTracks] = useState(false);
 
@@ -362,6 +364,41 @@ export const SearchView: React.FC = () => {
     }
   };
 
+  // Songs for a community playlist. Real playlists are fetched by id; the
+  // generated ones (derived-pl-*) have no id to look up, so they, and any
+  // playlist that comes back empty, fall back to searching by title.
+  const resolveCommunityPlaylistTracks = async (pl: CommunityPlaylist): Promise<Track[]> => {
+    const cacheKey = pl.browseId || pl.id;
+    const cached = communityPlaylistCache[cacheKey];
+    if (cached && cached.length > 0) return cached;
+
+    let tracks: Track[] = [];
+    try {
+      if (pl.browseId && !pl.browseId.startsWith('derived-pl')) {
+        tracks = await fetchYouTubePlaylistTracks(pl.browseId);
+      }
+    } catch {
+      // fall through to the search fallbacks
+    }
+    if (!tracks || tracks.length === 0) {
+      try {
+        const query = pl.title.replace(/top hits|essentials|best of/gi, '').trim() || pl.title;
+        tracks = (await searchYouTubeMusic(`${query} ${pl.author}`)) || [];
+      } catch {
+        tracks = [];
+      }
+    }
+    if (tracks.length === 0) {
+      try {
+        tracks = (await searchYouTubeMusic(pl.title)) || [];
+      } catch {
+        tracks = [];
+      }
+    }
+    if (tracks.length > 0) updateCommunityPlaylistCache(cacheKey, tracks);
+    return tracks;
+  };
+
   const handleOpenCommunityPlaylist = async (pl: CommunityPlaylist) => {
     setActiveCommunityPlaylist(pl);
     const cacheKey = pl.browseId || pl.id;
@@ -373,29 +410,23 @@ export const SearchView: React.FC = () => {
 
     setIsLoadingPlaylistTracks(true);
     try {
-      let tracks: Track[] = [];
-      if (pl.browseId && !pl.browseId.startsWith('derived-pl')) {
-        tracks = await fetchYouTubePlaylistTracks(pl.browseId);
-      }
-      if (!tracks || tracks.length === 0) {
-        const query = pl.title.replace(/top hits|essentials|best of/gi, '').trim() || pl.title;
-        const res = await searchYouTubeMusic(`${query} ${pl.author}`);
-        tracks = res || [];
-      }
-      setCommunityPlaylistTracks(tracks);
-      updateCommunityPlaylistCache(cacheKey, tracks);
-    } catch {
-      try {
-        const res = await searchYouTubeMusic(pl.title);
-        const tracks = res || [];
-        setCommunityPlaylistTracks(tracks);
-        updateCommunityPlaylistCache(cacheKey, tracks);
-      } catch {
-        setCommunityPlaylistTracks([]);
-      }
+      setCommunityPlaylistTracks(await resolveCommunityPlaylistTracks(pl));
     } finally {
       setIsLoadingPlaylistTracks(false);
     }
+  };
+
+  // Add button on a playlist row. With popups off, the button itself shows
+  // the result.
+  const handleAddCommunityPlaylist = async (pl: CommunityPlaylist) => {
+    setPlaylistAddState(prev => ({ ...prev, [pl.id]: 'adding' }));
+    const tracks = await resolveCommunityPlaylistTracks(pl);
+    if (tracks.length === 0) {
+      setPlaylistAddState(prev => ({ ...prev, [pl.id]: 'failed' }));
+      return;
+    }
+    importPlaylistToLibrary(pl.title, `Imported Search Playlist (${tracks.length} tracks)`, tracks);
+    setPlaylistAddState(prev => ({ ...prev, [pl.id]: 'added' }));
   };
 
   const handleOpenAlbum = async (album: { title: string; artist: string }) => {
@@ -885,26 +916,35 @@ export const SearchView: React.FC = () => {
                     </div>
                   </button>
                   <button
-                    onClick={async (e) => {
+                    onClick={e => {
                       e.stopPropagation();
-                      try {
-                        const tracks = await fetchYouTubePlaylistTracks(pl.id);
-                        if (tracks && tracks.length > 0) {
-                          importPlaylistToLibrary(
-                            pl.title,
-                            `Imported Search Playlist (${tracks.length} tracks)`,
-                            tracks
-                          );
-                        }
-                      } catch {
-                        // ignore
-                      }
+                      if (playlistAddState[pl.id] === 'adding' || playlistAddState[pl.id] === 'added') return;
+                      void handleAddCommunityPlaylist(pl);
                     }}
-                    className="px-3 py-2 bg-white/10 hover:bg-white/20 text-app-primary rounded-xl flex items-center gap-1.5 text-xs font-semibold hover:scale-105 active:scale-95 transition-all shrink-0 cursor-pointer"
+                    disabled={playlistAddState[pl.id] === 'adding' || playlistAddState[pl.id] === 'added'}
+                    className={`px-3 py-2 rounded-xl flex items-center gap-1.5 text-xs font-semibold active:scale-95 transition-all shrink-0 cursor-pointer ${
+                      playlistAddState[pl.id] === 'added'
+                        ? 'bg-white text-black'
+                        : playlistAddState[pl.id] === 'failed'
+                          ? 'bg-red-500/20 text-red-300'
+                          : 'bg-white/10 hover:bg-white/20 text-app-primary hover:scale-105'
+                    }`}
                     title="Add to My Playlists"
                   >
-                    <FolderPlus className="w-4 h-4 text-app-primary" />
-                    <span>Add</span>
+                    {playlistAddState[pl.id] === 'added' ? (
+                      <Check className="w-4 h-4" />
+                    ) : (
+                      <FolderPlus className="w-4 h-4" />
+                    )}
+                    <span>
+                      {playlistAddState[pl.id] === 'adding'
+                        ? 'Adding...'
+                        : playlistAddState[pl.id] === 'added'
+                          ? 'Added'
+                          : playlistAddState[pl.id] === 'failed'
+                            ? 'Retry'
+                            : 'Add'}
+                    </span>
                   </button>
                 </div>
               ))}

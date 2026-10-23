@@ -12,6 +12,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.webkit.WebSettings;
+import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -23,6 +24,20 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BackgroundAudioPlugin.class);
         super.onCreate(savedInstanceState);
+
+        // Pictures are served from a permanent disk cache (works offline).
+        if (getBridge() != null) {
+            getBridge().setWebViewClient(new CachingWebViewClient(getBridge(), this));
+        }
+
+        // Back minimizes instead of finishing, like other music apps, so music
+        // keeps playing. Only closing the app from recents ends playback.
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                moveTaskToBack(true);
+            }
+        });
 
         // Hold partial WakeLock so CPU doesn't sleep during streaming
         try {
@@ -53,18 +68,6 @@ public class MainActivity extends BridgeActivity {
             s.setJavaScriptEnabled(true);
             s.setDomStorageEnabled(true);
             s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        }
-
-        // Android 13+: without this permission the media notification is
-        // hidden and Samsung treats background playback as low priority.
-        if (Build.VERSION.SDK_INT >= 33) {
-            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
-                    != PackageManager.PERMISSION_GRANTED) {
-                try {
-                    requestPermissions(
-                            new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 1001);
-                } catch (Exception ignored) {}
-            }
         }
     }
 
@@ -119,6 +122,13 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        // Closing the app (swiping it away) must end playback. The web layer is
+        // kept alive on purpose while the app is merely in the background, so
+        // without this the music kept going with no app window.
+        final boolean closing = isFinishing();
+        if (closing && PlaybackService.instance != null) {
+            PlaybackService.instance.shutdownNow();
+        }
         if (wakeLock != null && wakeLock.isHeld()) {
             try { wakeLock.release(); } catch (Exception ignored) {}
         }
@@ -126,5 +136,9 @@ public class MainActivity extends BridgeActivity {
             try { wifiLock.release(); } catch (Exception ignored) {}
         }
         super.onDestroy();
+        if (closing) {
+            // Take the web layer down with it so nothing keeps playing.
+            android.os.Process.killProcess(android.os.Process.myPid());
+        }
     }
 }

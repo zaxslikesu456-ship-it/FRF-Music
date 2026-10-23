@@ -29,6 +29,7 @@ import androidx.core.app.NotificationCompat;
 import com.getcapacitor.Bridge;
 import com.getcapacitor.JSObject;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.DefaultRenderersFactory;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.PlaybackException;
@@ -36,6 +37,9 @@ import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.analytics.AnalyticsListener;
 import com.google.android.exoplayer2.audio.AudioAttributes;
+import com.google.android.exoplayer2.audio.AudioProcessor;
+import com.google.android.exoplayer2.audio.AudioSink;
+import com.google.android.exoplayer2.audio.DefaultAudioSink;
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory;
 import com.google.android.exoplayer2.upstream.DefaultDataSource;
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource;
@@ -164,10 +168,32 @@ public class PlaybackService extends Service {
                     .setConnectTimeoutMs(15000)
                     .setReadTimeoutMs(15000);
 
-            DefaultDataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(this, httpDataSourceFactory);
+            // googlevideo throttles one long GET to a few KB/s; chunked range
+            // requests stream at full speed (see GoogleVideoChunkedDataSource).
+            DefaultDataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(
+                    this,
+                    () -> new GoogleVideoChunkedDataSource(httpDataSourceFactory.createDataSource()));
             DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(dataSourceFactory);
 
-            exoPlayer = new ExoPlayer.Builder(this)
+            // The equalizer runs inside the player's audio pipeline (see
+            // EqAudioProcessor) so it works on every device, unlike the platform
+            // audio effects, which often never attach.
+            DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(this) {
+                @Override
+                protected AudioSink buildAudioSink(
+                        Context context,
+                        boolean enableFloatOutput,
+                        boolean enableAudioTrackPlaybackParams,
+                        boolean enableOffload) {
+                    return new DefaultAudioSink.Builder(context)
+                            .setEnableFloatOutput(enableFloatOutput)
+                            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                            .setAudioProcessors(new AudioProcessor[] {new EqAudioProcessor()})
+                            .build();
+                }
+            };
+
+            exoPlayer = new ExoPlayer.Builder(this, renderersFactory)
                     .setMediaSourceFactory(mediaSourceFactory)
                     // The second argument enables ExoPlayer's own audio focus
                     // handling. Without it the WebView's embedded player keeps
@@ -186,6 +212,22 @@ public class PlaybackService extends Service {
                 public void onAudioSessionIdChanged(
                         AnalyticsListener.EventTime eventTime, int audioSessionId) {
                     AudioEffects.get().attach(audioSessionId);
+                }
+
+                @Override
+                public void onPlaybackStateChanged(AnalyticsListener.EventTime eventTime, int state) {
+                    if (state == Player.STATE_BUFFERING) {
+                        Log.d(TAG, "buffering at " + eventTime.currentPlaybackPositionMs + "ms, buffered "
+                                + eventTime.totalBufferedDurationMs + "ms");
+                    }
+                }
+
+                @Override
+                public void onLoadError(AnalyticsListener.EventTime eventTime,
+                                        com.google.android.exoplayer2.source.LoadEventInfo loadEventInfo,
+                                        com.google.android.exoplayer2.source.MediaLoadData mediaLoadData,
+                                        java.io.IOException error, boolean wasCanceled) {
+                    Log.w(TAG, "load error (canceled=" + wasCanceled + "): " + error);
                 }
             });
 
@@ -306,7 +348,7 @@ public class PlaybackService extends Service {
             } else if (ACTION_PREV.equals(action)) {
                 handlePrevCommand();
             } else if (ACTION_STOP.equals(action)) {
-                stopPlaybackAndService();
+                stopPlaybackKeepForeground();
                 return START_NOT_STICKY;
             } else if (ACTION_TAKE_OVER.equals(action)) {
                 handleTakeOverCommand(intent);
@@ -316,6 +358,7 @@ public class PlaybackService extends Service {
                 handleUpdateCommand(intent);
             }
         }
+        if (playing) mainHandler.removeCallbacks(delayedShutdown);
         acquireLocks();
         startForegroundCompat(buildNotification());
         refreshPlaybackState();
@@ -667,7 +710,39 @@ public class PlaybackService extends Service {
         BackgroundAudioPlugin.sendEvent("remotePrev", new JSObject());
     }
 
-    private void stopPlaybackAndService() {
+    // The web layer sends stop and then the next track's play command back to
+    // back. Demoting the service from the foreground in between meant the play
+    // command could not re-promote it while the app was in the background (an
+    // Android 12+ crash). So a stop ends playback but keeps the service in the
+    // foreground for a moment; a play command in that window cancels the
+    // shutdown, and otherwise the service shuts down for real.
+    private static final long STOP_GRACE_MS = 4000;
+
+    private final Runnable delayedShutdown = () -> stopPlaybackAndService(-1);
+
+    private void stopPlaybackKeepForeground() {
+        stopProgressTicker();
+        mainHandler.removeCallbacks(handoverWatchdog);
+        if (exoPlayer != null) {
+            try {
+                exoPlayer.stop();
+                exoPlayer.release();
+            } catch (Exception ignored) {}
+            exoPlayer = null;
+        }
+        playing = false;
+        refreshPlaybackState();
+        mainHandler.removeCallbacks(delayedShutdown);
+        mainHandler.postDelayed(delayedShutdown, STOP_GRACE_MS);
+    }
+
+    // stopSelf(startId), not stopSelf(): the web layer sends stop and then the
+    // next track's play command back to back, and a plain stopSelf() destroyed
+    // the service after it had accepted that play command, silently killing the
+    // new track (it only recovered after the web layer's 15 s confirm timeout).
+    // With the id, Android ignores the stop when a newer command has arrived.
+    private void stopPlaybackAndService(int startId) {
+        mainHandler.removeCallbacks(delayedShutdown);
         stopProgressTicker();
         mainHandler.removeCallbacks(handoverWatchdog);
         if (exoPlayer != null) {
@@ -679,7 +754,20 @@ public class PlaybackService extends Service {
         }
         releaseLocks();
         stopForeground(STOP_FOREGROUND_REMOVE);
-        stopSelf();
+        if (startId < 0) stopSelf();
+        else stopSelf(startId);
+    }
+
+    // The app was closed (swiped away): end playback and the notification now,
+    // not at the end of the song.
+    public void shutdownNow() {
+        stopPlaybackAndService(-1);
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        stopPlaybackAndService(-1);
+        super.onTaskRemoved(rootIntent);
     }
 
     private void startProgressTicker() {
@@ -749,10 +837,18 @@ public class PlaybackService extends Service {
     }
 
     private void startForegroundCompat(Notification notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
+        // Android 12+ refuses startForeground() for an app in the background
+        // that is not allowed to start one (ForegroundServiceStartNotAllowed).
+        // Uncaught here it crashed the whole app the moment a song ended with
+        // the app closed to the background, so never let it escape.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "startForeground refused: " + t);
         }
     }
 
@@ -813,19 +909,17 @@ public class PlaybackService extends Service {
         final String url = coverUrl;
         if (url == null || url.isEmpty()) return;
         new Thread(() -> {
-            try {
-                InputStream in = new URL(url).openStream();
-                final Bitmap bmp = BitmapFactory.decodeStream(in);
-                in.close();
-                if (bmp != null) {
-                    mainHandler.post(() -> {
-                        coverBitmap = bmp;
-                        updateMediaSessionMetadata();
-                        refreshNotification();
-                    });
-                }
-            } catch (Exception ignored) {}
-        }).start();
+            final Bitmap bmp = CoverCache.load(this, url);
+            if (bmp != null) {
+                mainHandler.post(() -> {
+                    // A newer track may have replaced this cover while it loaded.
+                    if (!url.equals(coverUrl)) return;
+                    coverBitmap = bmp;
+                    updateMediaSessionMetadata();
+                    refreshNotification();
+                });
+            }
+        }, "frf-cover").start();
     }
 
     private void registerNoisyReceiver() {
@@ -875,7 +969,12 @@ public class PlaybackService extends Service {
         final Bridge bridge = bridgeRef;
         if (bridge == null || bridge.getWebView() == null) return;
         final String js = script;
-        bridge.getWebView().post(() -> bridge.eval(js, null));
+        bridge.getWebView().post(() -> {
+            // The page may already be gone (app closed); never let that crash.
+            try {
+                bridge.eval(js, null);
+            } catch (Throwable ignored) {}
+        });
     }
 
     private void acquireLocks() {

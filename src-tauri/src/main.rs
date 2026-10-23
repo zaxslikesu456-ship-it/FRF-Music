@@ -60,10 +60,11 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Prevent app from quitting on close; keep playing music in the background!
-                api.prevent_close();
-                let _ = window.hide();
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                // Closing the window quits the app, and the music with it. It used
+                // to hide to the tray and keep playing with no window to control it.
+                // (Clicking the tray icon still hides the window on purpose.)
+                window.app_handle().exit(0);
             }
         })
         .run(tauri::generate_context!())
