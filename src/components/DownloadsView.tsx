@@ -6,21 +6,56 @@ import { PlaylistHero } from './PlaylistHero';
 import {
   subscribeDownloads,
   getActiveDownloads,
-  cancelDownload,
   type ActiveDownload,
 } from '../utils/downloadManager';
+import {
+  getQueue,
+  subscribeQueue,
+  retryDownload,
+  retryAllFailed,
+  removeFromQueue,
+  pauseQueue,
+  resumeQueue,
+  clearQueue,
+  isQueuePaused,
+  MAX_ATTEMPTS,
+  type QueuedDownload,
+} from '../utils/downloadQueue';
 import type { Track } from '../types/music';
 
 export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const { tracks, downloads, downloadedTracks: contextDownloadedTracks, removeDownload, playQueue, currentTrack, isPlaying, toggleShuffle, isShuffle } = useAudio();
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
   const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>(getActiveDownloads());
+  const [queue, setQueue] = useState<QueuedDownload[]>(getQueue());
+  const [paused, setPaused] = useState(isQueuePaused());
+  const [now, setNow] = useState(Date.now());
   const [sortAz, setSortAz] = useState(false);
   const [query, setQuery] = useState('');
 
   useEffect(() => {
     return subscribeDownloads(() => setActiveDownloads([...getActiveDownloads()]));
   }, []);
+
+  useEffect(() => {
+    return subscribeQueue(() => {
+      setQueue(getQueue());
+      setPaused(isQueuePaused());
+    });
+  }, []);
+
+  // Tick the "retrying in Ns" countdown while something is waiting to retry.
+  const hasRetrying = queue.some(q => q.state === 'retrying');
+  useEffect(() => {
+    if (!hasRetrying) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [hasRetrying]);
+
+  // Items that are actually transferring show as progress cards below; the
+  // queue list is everything still waiting, retrying or failed.
+  const queuedItems = queue.filter(q => q.state !== 'downloading');
+  const failedCount = queue.filter(q => q.state === 'failed').length;
 
   // Combine library tracks matching downloads with full downloaded track objects
   const allDownloaded = React.useMemo(() => {
@@ -122,7 +157,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
                 </div>
                 {(d.status === 'resolving' || d.status === 'downloading') && (
                   <button
-                    onClick={() => cancelDownload(d.trackId)}
+                    onClick={() => removeFromQueue(d.trackId)}
                     className="p-2 text-app-secondary hover:text-red-400 shrink-0"
                     title="Skip this download"
                   >
@@ -135,8 +170,76 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
         </div>
       )}
 
+      {/* Download queue: waiting, retrying and failed items */}
+      {queuedItems.length > 0 && (
+        <div className="space-y-2 pb-3">
+          <div className="flex items-center justify-between px-1">
+            <p className="text-xs font-semibold text-app-secondary tracking-wider">
+              DOWNLOAD QUEUE · {queuedItems.length}
+            </p>
+            <div className="flex items-center gap-4 text-xs font-semibold">
+              {failedCount > 0 && (
+                <button onClick={retryAllFailed} className="text-app-primary">
+                  Retry failed
+                </button>
+              )}
+              <button onClick={paused ? resumeQueue : pauseQueue} className="text-app-primary">
+                {paused ? 'Resume' : 'Pause'}
+              </button>
+              <button onClick={clearQueue} className="text-app-secondary">
+                Clear
+              </button>
+            </div>
+          </div>
+          {queuedItems.map(q => {
+            const secs = Math.max(0, Math.ceil((q.nextAttemptAt - now) / 1000));
+            return (
+              <div
+                key={q.track.id}
+                className="p-3 rounded-2xl border border-app-theme bg-app-surface flex items-center gap-3"
+              >
+                <img
+                  src={q.track.coverUrl}
+                  alt={q.track.title}
+                  className="w-11 h-11 rounded-lg object-cover shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-app-primary truncate">{q.track.title}</p>
+                  <p className={`text-[11px] mt-1 ${q.state === 'failed' ? 'text-red-400' : 'text-app-secondary'}`}>
+                    {paused && q.state !== 'failed'
+                      ? 'Paused'
+                      : q.state === 'waiting'
+                        ? q.source === 'auto'
+                          ? 'Waiting (auto-download)'
+                          : 'Waiting'
+                        : q.state === 'retrying'
+                          ? `Retrying (${q.attempts}/${MAX_ATTEMPTS}) in ${secs}s`
+                          : `Failed${q.lastError ? ` — ${q.lastError}` : ''}`}
+                  </p>
+                </div>
+                {q.state === 'failed' && (
+                  <button
+                    onClick={() => retryDownload(q.track.id)}
+                    className="px-3 py-1.5 rounded-xl bg-white/10 text-xs font-semibold text-app-primary shrink-0"
+                  >
+                    Retry
+                  </button>
+                )}
+                <button
+                  onClick={() => removeFromQueue(q.track.id)}
+                  className="p-2 text-app-secondary hover:text-red-400 shrink-0"
+                  title="Remove from queue"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Empty State */}
-      {allDownloaded.length === 0 && activeDownloads.length === 0 ? (
+      {allDownloaded.length === 0 && activeDownloads.length === 0 && queuedItems.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center py-16 px-4 text-center border-2 border-dashed border-app-theme rounded-3xl my-auto space-y-4">
           <div className="w-16 h-16 rounded-2xl bg-app-surface border border-app-theme flex items-center justify-center text-app-secondary">
             <Download className="w-8 h-8 text-app-secondary" />
@@ -151,7 +254,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
       ) : (
         /* Downloaded Tracks Listing */
         <div className="px-2 pt-2 space-y-1">
-          {downloadedTracks.length === 0 && (
+          {downloadedTracks.length === 0 && allDownloaded.length > 0 && (
             <p className="text-center text-sm text-app-secondary py-8">No matching songs</p>
           )}
           {downloadedTracks.map((track, index) => {

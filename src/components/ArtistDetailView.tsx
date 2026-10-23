@@ -204,7 +204,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
                   <button
                     onClick={e => {
                       e.stopPropagation();
-                      toggleFavorite(t.id);
+                      toggleFavorite(t.id, t);
                     }}
                     className="p-2 shrink-0 cursor-pointer"
                     title="Like"

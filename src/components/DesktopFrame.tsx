@@ -175,7 +175,7 @@ const DesktopNowPlaying: React.FC = () => {
               <Video className="w-5 h-5" />
             </button>
           )}
-          <button onClick={() => toggleFavorite(currentTrack.id)} className="p-2" title="Like">
+          <button onClick={() => toggleFavorite(currentTrack.id, currentTrack)} className="p-2" title="Like">
             <Heart className={`w-5 h-5 ${isFav ? 'text-app-primary fill-white' : 'text-app-secondary'}`} />
           </button>
           <button

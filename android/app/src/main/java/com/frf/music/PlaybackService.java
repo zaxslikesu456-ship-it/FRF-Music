@@ -101,6 +101,20 @@ public class PlaybackService extends Service {
     // WebView still audible produced instant silence.
     private volatile boolean webAudible = false;
 
+    // The song queued behind the current one. ExoPlayer plays on into it by itself
+    // when the current song ends, so the next song starts with no gap and without
+    // waiting on the web layer, which Android throttles once the app is in the
+    // background.
+    private static final class NextMeta {
+        String trackId = "";
+        String title = "";
+        String artist = "";
+        String cover = "";
+        String streamUrl = "";
+        String filePath = "";
+        float duration = 0f;
+    }
+
     private ExoPlayer exoPlayer;
     private MediaSessionCompat mediaSession;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -232,6 +246,17 @@ public class PlaybackService extends Service {
             });
 
             exoPlayer.addListener(new Player.Listener() {
+                @Override
+                public void onMediaItemTransition(
+                        @androidx.annotation.Nullable MediaItem item, int reason) {
+                    if (item == null || item.localConfiguration == null) return;
+                    if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
+                            && reason != Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) return;
+                    Object tag = item.localConfiguration.tag;
+                    if (!(tag instanceof NextMeta)) return; // not one of the queued songs
+                    onAdvancedToQueuedItem((NextMeta) tag);
+                }
+
                 @Override
                 public void onPlaybackStateChanged(int state) {
                     if (state == Player.STATE_READY) {
@@ -703,7 +728,88 @@ public class PlaybackService extends Service {
     }
 
     public void handleNextCommand() {
+        // With a song already queued, switch to it right here; no round trip to the
+        // web layer, which may be asleep.
+        if (exoPlayer != null) {
+            try {
+                if (exoPlayer.hasNextMediaItem()) {
+                    exoPlayer.seekToNextMediaItem();
+                    return;
+                }
+            } catch (Exception ignored) {}
+        }
         BackgroundAudioPlugin.sendEvent("remoteNext", new JSObject());
+    }
+
+    /** Queue the song to play after the current one (replaces any earlier choice). */
+    public void setNextItem(String trackId, String url, String file, String newTitle,
+                            String newArtist, String cover, float dur) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(() -> setNextItem(trackId, url, file, newTitle, newArtist, cover, dur));
+            return;
+        }
+        if (exoPlayer == null || exoPlayer.getMediaItemCount() == 0) return;
+        String src = (file != null && !file.isEmpty()) ? absolutePath(file) : url;
+        if (src == null || src.isEmpty()) return;
+        try {
+            clearNextItem();
+            NextMeta meta = new NextMeta();
+            meta.trackId = trackId == null ? "" : trackId;
+            meta.title = newTitle == null ? "" : newTitle;
+            meta.artist = newArtist == null ? "" : newArtist;
+            meta.cover = cover == null ? "" : cover;
+            meta.streamUrl = url == null ? "" : url;
+            meta.filePath = file == null ? "" : file;
+            meta.duration = dur;
+            Uri uri = Uri.parse(src).getScheme() != null
+                    ? Uri.parse(src)
+                    : Uri.fromFile(new File(src.replace("file://", "")));
+            exoPlayer.addMediaItem(new MediaItem.Builder()
+                    .setUri(uri)
+                    .setMediaId(meta.trackId)
+                    .setTag(meta)
+                    .build());
+        } catch (Throwable t) {
+            Log.w(TAG, "Could not queue the next song: " + t);
+        }
+    }
+
+    public void clearNextItem() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(this::clearNextItem);
+            return;
+        }
+        if (exoPlayer == null) return;
+        try {
+            int count = exoPlayer.getMediaItemCount();
+            if (count > 1) exoPlayer.removeMediaItems(1, count);
+        } catch (Exception ignored) {}
+    }
+
+    private void onAdvancedToQueuedItem(NextMeta meta) {
+        Log.d(TAG, "advanced to queued song " + meta.trackId);
+        title = meta.title;
+        artist = meta.artist;
+        streamUrl = meta.streamUrl;
+        filePath = meta.filePath;
+        position = 0f;
+        duration = meta.duration;
+        if (!meta.cover.isEmpty() && !meta.cover.equals(coverUrl)) {
+            coverUrl = meta.cover;
+            coverBitmap = null; // do not show the previous song's picture
+            loadCover();
+        }
+        try {
+            // Keep only the song that is playing now.
+            int index = exoPlayer.getCurrentMediaItemIndex();
+            if (index > 0) exoPlayer.removeMediaItems(0, index);
+        } catch (Exception ignored) {}
+        updateMediaSessionMetadata();
+        refreshNotification();
+        refreshPlaybackState();
+        JSObject data = new JSObject();
+        data.put("trackId", meta.trackId);
+        BackgroundAudioPlugin.sendEvent("trackAdvanced", data);
     }
 
     public void handlePrevCommand() {

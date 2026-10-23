@@ -4,8 +4,6 @@ import { INITIAL_TRACKS } from '../utils/sampleData';
 import { applyThemeSettings } from '../utils/theme';
 import { searchYouTubeMusic, findBestAlternateVideoId, fetchDirectAudioStreamUrl } from '../utils/ytMusicApi';
 import {
-  downloadTrackToFile,
-  getLastDownloadError,
   verifyOfflineRecord,
   deleteOfflineFile,
   getOfflinePlaybackUrl,
@@ -14,9 +12,19 @@ import {
   setCachedStreamUrl,
   dropCachedStreamUrl,
   cacheCoverArt,
+  restoreDownloadsFromMusic,
+  syncMusicCopies,
   resolveAudioStreamUrl,
   getLastStreamResolveNotes,
 } from '../utils/downloadManager';
+import { recordSource } from '../utils/streamHealth';
+import {
+  startDownloadQueue,
+  enqueueDownloads,
+  kickQueue,
+  isAlreadyOffline,
+} from '../utils/downloadQueue';
+import { autoDownloadAllowed, startNetworkMonitor } from '../utils/autoDownload';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { createYtBridgePlayer, shouldUseYtBridge } from '../utils/ytBridge';
 import {
@@ -71,6 +79,18 @@ interface BackgroundAudioPlugin {
     bassBoost: number;
     surround: number;
   }): Promise<void>;
+  // Queue the song to play after the current one; the native player rolls into it
+  // by itself (gapless, and without waiting on this web layer).
+  setNext(options: {
+    trackId: string;
+    url?: string;
+    filePath?: string;
+    title: string;
+    artist: string;
+    coverUrl?: string;
+    duration?: number;
+  }): Promise<void>;
+  clearNext(): Promise<void>;
   setVisualizerEnabled(options: { enabled: boolean }): Promise<void>;
   setWebAudible(options: { audible: boolean }): Promise<void>;
   handoverNow(options: {
@@ -171,9 +191,15 @@ interface AudioContextType {
   setSearchQuery: (query: string) => void;
   setActiveTab: (tab: NavTab) => void;
   setIsPlayerOpen: (open: boolean) => void;
-  toggleFavorite: (trackId: string) => void;
+  toggleFavorite: (trackId: string, track?: Track) => void;
   downloadTrack: (track: Track) => void;
   downloadPlaylist: (playlistTitle: string, tracks: Track[]) => void;
+  // Bring back downloads from the Music/FRF Music folder (after a reinstall).
+  restoreMusicFolderDownloads: (
+    onProgress?: (done: number, total: number) => void
+  ) => Promise<{ restored: number; skipped: number; permissionDenied: boolean; unsupported: boolean }>;
+  // Copy every current download into the Music folder (when the setting is turned on).
+  syncMusicFolderCopies: () => Promise<number>;
   importPlaylistToLibrary: (title: string, description: string, playlistTracks: Track[]) => void;
   removeDownload: (trackId: string) => void;
   addLocalTracks: (files: FileList | File[]) => void;
@@ -211,6 +237,11 @@ const DEFAULT_SETTINGS: SettingsState = {
   downloadQuality: 'high',
   sleepTimerMinutes: 0,
   youtubeMiniPlayer: false,
+  keepMusicCopy: true,
+  autoDownloadLikes: false,
+  autoDownloadPlaylists: [],
+  autoDownloadWifiOnly: true,
+  autoDownloadLimitMb: 2048,
   showPlayCounts: true,
   profileName: 'Music Lover',
   profileAvatar: null,
@@ -336,6 +367,27 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Download queue: resumes saved work, and registers each finished download.
+  const registerDownloadedTrackRef = useRef<(t: Track) => void>(() => {});
+  useEffect(() => {
+    startDownloadQueue({
+      onDownloaded: t => registerDownloadedTrackRef.current(t),
+      // Auto-download items wait while on mobile data (if Wi-Fi only) or over the limit.
+      gate: item => item.source !== 'auto' || autoDownloadAllowed(settingsRef.current),
+    });
+    startNetworkMonitor(() => kickQueue());
+  }, []);
+
+  // Make sure every current download also has its copy in the Music folder.
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+    const timer = window.setTimeout(() => {
+      void syncMusicCopies(downloadedTracks);
+    }, 5000);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -522,6 +574,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     applyPosition: (time: number) => void;
     resumeFromRemote: () => void;
     pauseFromRemote: () => void;
+    adoptAdvancedTrack: (trackId: string) => void;
   }>({
     handleEnded: () => {},
     togglePlay: () => {},
@@ -531,7 +584,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     applyPosition: () => {},
     resumeFromRemote: () => {},
     pauseFromRemote: () => {},
+    adoptAdvancedTrack: () => {},
   });
+
+  // Id of the song currently queued behind the playing one inside the native player.
+  const queuedNextIdRef = useRef<string | null>(null);
 
   // Track currently playing through the <audio> element (offline file or resolved stream)
   const audioModeTrackIdRef = useRef<string | null>(null);
@@ -560,6 +617,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       window.clearTimeout(confirmTimeoutRef.current);
       confirmTimeoutRef.current = null;
     }
+    if (ok) recordSource('Native player', true, 0);
     token.resolve({ ok, hardFail, msg });
   };
 
@@ -820,6 +878,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       (BackgroundAudio as any).addListener('playbackEnded', () => {
         latestActionsRef.current?.handleEnded?.();
       }),
+      // The native player rolled into the song queued behind the previous one.
+      (BackgroundAudio as any).addListener('trackAdvanced', (data: { trackId?: string }) => {
+        if (data?.trackId) latestActionsRef.current?.adoptAdvancedTrack?.(data.trackId);
+      }),
       // Native AVPlayer could not play the resolved stream (403, unsupported
       // codec, dropped connection): force a fresh stream resolution, bounded
       // by the per-track retry counter so we never loop forever.
@@ -837,6 +899,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             // ignore
           }
           console.warn('[FRF] native playback error:', nativeMsg);
+          recordSource('Native player', false, 0, nativeMsg);
         }
         if (nativeConfirmRef.current) {
           // Handoff attempt failed — caller falls back to WebView playback.
@@ -2001,6 +2064,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       confirmTimeoutRef.current = window.setTimeout(() => {
         settleNativeConfirm(false, false);
       }, 15000);
+      // Starting a song replaces the player's playlist, so a queued song is gone.
+      queuedNextIdRef.current = null;
       BackgroundAudio.playUrl({
         url: url.startsWith('http') ? url : undefined,
         filePath: !url.startsWith('http') ? url : undefined,
@@ -2249,6 +2314,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const stopAllPlayback = () => {
     playGenRef.current += 1;
+    queuedNextIdRef.current = null;
     activeYoutubeIdRef.current = null;
     isYoutubeRecoveryRunningRef.current = false;
     nativeOwnerRef.current = false;
@@ -2296,16 +2362,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const startTrack = (track: Track, startTime = 0) => {
-    stopAllPlayback();
-    const currentGen = playGenRef.current;
-    failedYoutubeIdsRef.current.clear();
-    streamRetryCountRef.current.delete(track.id);
-    const savedYoutubeId = track.isYouTube
-      ? youtubePlaybackOverridesRef.current[track.id]
-      : undefined;
-    activeYoutubeIdRef.current = savedYoutubeId || track.youtubeId || null;
-    registerTrack(track);
+  // History and play counts for a song that is starting.
+  const recordPlay = (track: Track) => {
     setRecentlyPlayed(prev => {
       const updated = [track, ...prev.filter(t => t.id !== track.id)].slice(0, 50);
       localStorage.setItem('bw_music_recently_played_v2', JSON.stringify(updated));
@@ -2320,6 +2378,46 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
       return next;
     });
+  };
+
+  // The native player rolled into the song queued behind the previous one without
+  // us starting it. The audio is already playing, so only the app's own state
+  // (current song, history, counters) has to catch up. No player call here.
+  const adoptAdvancedTrack = (trackId: string) => {
+    const known = [currentTrack, ...queue, ...tracks, ...downloadedTracks];
+    const track = trackStore[trackId] || known.find(t => t?.id === trackId);
+    if (!track) return;
+    queuedNextIdRef.current = null;
+    playGenRef.current += 1; // anything still starting the previous song is stale now
+    failedYoutubeIdsRef.current.clear();
+    streamRetryCountRef.current.delete(track.id);
+    const savedYoutubeId = track.isYouTube
+      ? youtubePlaybackOverridesRef.current[track.id]
+      : undefined;
+    activeYoutubeIdRef.current = savedYoutubeId || track.youtubeId || null;
+    registerTrack(track);
+    recordPlay(track);
+    setCurrentTrack(track);
+    audioModeTrackIdRef.current = track.id;
+    nativeOwnerRef.current = true;
+    hasPlayedRef.current = true;
+    pendingSeekRef.current = 0;
+    positionRef.current = 0;
+    setCurrentTime(0);
+    setIsPlaying(true);
+  };
+
+  const startTrack = (track: Track, startTime = 0) => {
+    stopAllPlayback();
+    const currentGen = playGenRef.current;
+    failedYoutubeIdsRef.current.clear();
+    streamRetryCountRef.current.delete(track.id);
+    const savedYoutubeId = track.isYouTube
+      ? youtubePlaybackOverridesRef.current[track.id]
+      : undefined;
+    activeYoutubeIdRef.current = savedYoutubeId || track.youtubeId || null;
+    registerTrack(track);
+    recordPlay(track);
 
     setCurrentTrack(track);
     audioModeTrackIdRef.current = null;
@@ -2663,14 +2761,15 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       applyPosition,
       resumeFromRemote,
       pauseFromRemote,
+      adoptAdvancedTrack,
     };
   });
 
-  // Android: resolve the next song's stream while the current one plays, so
-  // autoplay starts it straight away. Once the app is in the background its web
-  // layer is throttled and a cold resolve can stall, so this has to be done
-  // early, while the app is still awake. Shuffle picks its next song up front
-  // so that one can be prefetched too.
+  // Android: get the next song ready while the current one plays: look up its
+  // stream, then queue it inside the native player. The player rolls into it by
+  // itself when the song ends (gapless), and keeps going even if the web layer
+  // is asleep in the background. Shuffle picks its next song up front so that
+  // one can be prepared too.
   useEffect(() => {
     if (!IS_ANDROID || !isPlaying || !currentTrack) return;
     const list = queue.length > 0 ? queue : tracks;
@@ -2688,17 +2787,64 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } else {
       next = list[(idx + 1) % list.length];
     }
-    if (!next || next.id === currentTrack.id || !next.isYouTube || getOfflineRecord(next.id)) return;
-    const vid = youtubePlaybackOverridesRef.current[next.id] || next.youtubeId;
-    if (!vid) return;
+
+    // Auto-play off or repeat-one: the app decides what happens at the end.
+    const wantNative = settings.autoPlayNext && repeatMode !== 'one';
+    const target = next && next.id !== currentTrack.id ? next : undefined;
+
+    // A song queued earlier may no longer be the right one (queue edited, shuffle
+    // toggled): take it out so it cannot play by mistake.
+    if (queuedNextIdRef.current && (!wantNative || queuedNextIdRef.current !== target?.id)) {
+      queuedNextIdRef.current = null;
+      void BackgroundAudio?.clearNext?.().catch(() => {});
+    }
+    if (!target) return;
+
+    const record = getOfflineRecord(target.id);
+    const vid = target.isYouTube
+      ? youtubePlaybackOverridesRef.current[target.id] || target.youtubeId
+      : undefined;
+    if (!record && !vid) return;
 
     let cancelled = false;
     let retry: number | undefined;
+
+    const queueNatively = async (url?: string) => {
+      if (!wantNative || cancelled || !BackgroundAudio?.setNext) return;
+      if (queuedNextIdRef.current === target.id) return;
+      // The player ignores a queued song until it owns playback.
+      for (let i = 0; i < 8 && !nativeOwnerRef.current; i++) {
+        await new Promise(r => window.setTimeout(r, 750));
+        if (cancelled) return;
+      }
+      if (cancelled || !nativeOwnerRef.current) return;
+      try {
+        await BackgroundAudio.setNext({
+          trackId: target.id,
+          url: record ? undefined : url,
+          filePath: record?.path || undefined,
+          title: target.title,
+          artist: target.artist,
+          coverUrl: target.coverUrl,
+          duration: target.duration,
+        });
+        queuedNextIdRef.current = target.id;
+      } catch {
+        // the app still advances on its own when the song ends
+      }
+    };
+
     const attempt = (triesLeft: number) => {
-      resolveAudioStreamUrl(vid).catch(() => {
-        // One more try a little later (flaky network, minter warming up).
-        if (!cancelled && triesLeft > 0) retry = window.setTimeout(() => attempt(triesLeft - 1), 8000);
-      });
+      if (record) {
+        void queueNatively();
+        return;
+      }
+      resolveAudioStreamUrl(vid!)
+        .then(url => queueNatively(url))
+        .catch(() => {
+          // One more try a little later (flaky network, minter warming up).
+          if (!cancelled && triesLeft > 0) retry = window.setTimeout(() => attempt(triesLeft - 1), 8000);
+        });
     };
     const timer = window.setTimeout(() => attempt(2), 1500);
     return () => {
@@ -2706,7 +2852,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       window.clearTimeout(timer);
       if (retry !== undefined) window.clearTimeout(retry);
     };
-  }, [currentTrack, isPlaying, isShuffle, queue, tracks]);
+  }, [currentTrack, isPlaying, isShuffle, queue, tracks, settings.autoPlayNext, repeatMode]);
 
   const seekTo = (time: number) => {
     lastSeekAtRef.current = Date.now();
@@ -2756,15 +2902,18 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const setRepeatModeDirect = (mode: RepeatMode) => setRepeatMode(mode);
   const toggleShuffle = () => setIsShuffle(prev => !prev);
 
-  const toggleFavorite = (trackId: string) => {
+  const toggleFavorite = (trackId: string, knownTrack?: Track) => {
     const isFav = favorites.includes(trackId);
     setFavorites(prev =>
       prev.includes(trackId) ? prev.filter(id => id !== trackId) : [...prev, trackId]
     );
 
     if (!isFav) {
+      // The caller's own copy wins: a song liked straight from a search result is
+      // not in any of the app's lists yet, and without its details it would be
+      // saved as a bare id (missing from Liked Music and from auto-download).
       const source = [currentTrack, ...queue, ...tracks, ...downloadedTracks];
-      const trackObj = source.find(t => t?.id === trackId);
+      const trackObj = knownTrack || trackStore[trackId] || source.find(t => t?.id === trackId);
       if (trackObj) {
         setFavoriteTracks(prev => {
           if (prev.some(t => t.id === trackId)) return prev;
@@ -2800,6 +2949,30 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     addTrackToLibrary(track);
   };
 
+  registerDownloadedTrackRef.current = registerDownloadedTrack;
+
+  // Auto-download: queue liked songs and the chosen playlists. Enqueueing skips
+  // anything already saved or already queued, so running this often is safe.
+  useEffect(() => {
+    const want = new Map<string, Track>();
+    if (settings.autoDownloadLikes) favoriteTracks.forEach(t => want.set(t.id, t));
+    for (const pid of settings.autoDownloadPlaylists || []) {
+      const pl = playlists.find(p => p.id === pid);
+      if (!pl) continue;
+      for (const id of pl.trackIds) {
+        const t = tracks.find(x => x.id === id);
+        if (t) want.set(t.id, t);
+      }
+    }
+    const fresh = [...want.values()].filter(t => t.youtubeId && !t.isLocal && !isAlreadyOffline(t.id));
+    if (fresh.length > 0) enqueueDownloads(fresh, 'auto');
+  }, [settings.autoDownloadLikes, settings.autoDownloadPlaylists, favoriteTracks, playlists, tracks]);
+
+  // Changing the Wi-Fi rule or the size limit may release held-back downloads now.
+  useEffect(() => {
+    kickQueue();
+  }, [settings.autoDownloadWifiOnly, settings.autoDownloadLimitMb]);
+
   const downloadTrack = async (track: Track) => {
     // Local files already live on the device — just register them.
     if (track.isLocal || !track.youtubeId) {
@@ -2813,44 +2986,15 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    try {
-      const ok = await downloadTrackToFile(track);
-      if (!ok) throw new Error('download-failed');
-      registerDownloadedTrack(track);
-      showStatus(`Downloaded "${track.title}" — plays offline now`);
-    } catch (e) {
-      if ((e as Error).message === 'cancelled') {
-        showStatus(`Skipped "${track.title}"`);
-      } else {
-        const reason = getLastDownloadError();
-        showStatus(
-          `Download failed for "${track.title}"${reason ? ` — ${reason}` : ' — retrying next time'}`,
-          8000
-        );
-      }
-    }
+    // The queue downloads it (with retries) and registers it once the file exists.
+    enqueueDownloads([track], 'manual');
   };
 
   const downloadPlaylist = async (playlistTitle: string, tracksToDownload: Track[]) => {
     if (!tracksToDownload || tracksToDownload.length === 0) return;
 
-    // 1. Save all tracks to downloadedTracks in localStorage
-    setDownloadedTracks(prev => {
-      const ids = new Set(prev.map(t => t.id));
-      const newUnique = tracksToDownload.filter(t => !ids.has(t.id));
-      const updated = [...newUnique, ...prev];
-      localStorage.setItem('bw_music_downloaded_objects_v11', JSON.stringify(updated));
-      return updated;
-    });
-
-    // 2. Save all track IDs to downloads
-    setDownloads(prev => {
-      const ids = new Set(prev);
-      tracksToDownload.forEach(t => ids.add(t.id));
-      const updated = Array.from(ids);
-      localStorage.setItem('bw_music_downloads_v11', JSON.stringify(updated));
-      return updated;
-    });
+    // Songs are only marked as downloaded once their file really exists (the
+    // queue registers each one on success), not up front.
 
     // 3. Add all tracks to Library
     tracksToDownload.forEach(t => addTrackToLibrary(t));
@@ -2867,40 +3011,26 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setPlaylists(prev => [...prev, newPlaylist]);
 
-    // 5. Actually download the audio files one by one
-    const toFetch = tracksToDownload.filter(
-      t => t.youtubeId && !t.isLocal
+    // 5. Queue the audio files: retried on failure, resumed after a restart.
+    enqueueDownloads(
+      tracksToDownload.filter(t => t.youtubeId && !t.isLocal),
+      'manual'
     );
-    const pending: Track[] = [];
-    for (const t of toFetch) {
-      if (!(await verifyOfflineRecord(t.id))) pending.push(t);
-    }
-    toFetch.splice(0, toFetch.length, ...pending);
-
-    if (toFetch.length === 0) {
-      showStatus(`Playlist "${playlistTitle}" is already available offline`);
-      return;
-    }
-
-    let done = 0;
-    let failed = 0;
-    let skipped = 0;
-    for (const t of toFetch) {
-      showStatus(`Downloading ${done + failed + skipped + 1}/${toFetch.length}: ${t.title}`);
-      try {
-        if (await downloadTrackToFile(t)) done++;
-        else failed++;
-      } catch (e) {
-        if ((e as Error).message === 'cancelled') skipped++;
-        else failed++;
-      }
-    }
-
-    showStatus(
-      `"${playlistTitle}" saved: ${done} offline${skipped ? `, ${skipped} skipped` : ''}${failed ? `, ${failed} failed` : ''}`,
-      5000
-    );
+    showStatus(`Queued ${tracksToDownload.length} songs from "${playlistTitle}" for download`);
   };
+
+  const restoreMusicFolderDownloads = async (onProgress?: (done: number, total: number) => void) => {
+    const res = await restoreDownloadsFromMusic(onProgress);
+    res.tracks.forEach(t => registerDownloadedTrack(t));
+    return {
+      restored: res.tracks.length,
+      skipped: res.skipped,
+      permissionDenied: res.permissionDenied,
+      unsupported: res.unsupported,
+    };
+  };
+
+  const syncMusicFolderCopies = () => syncMusicCopies(downloadedTracks);
 
   const importPlaylistToLibrary = (title: string, description: string, playlistTracks: Track[]) => {
     if (!playlistTracks || playlistTracks.length === 0) return;
@@ -3279,6 +3409,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         toggleFavorite,
         downloadTrack,
         downloadPlaylist,
+        restoreMusicFolderDownloads,
+        syncMusicFolderCopies,
         importPlaylistToLibrary,
         removeDownload,
         addLocalTracks,

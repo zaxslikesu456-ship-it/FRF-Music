@@ -98,6 +98,14 @@ export interface SettingsState {
   downloadQuality: 'high' | 'low';
   sleepTimerMinutes: 0 | 15 | 30 | 60;
   youtubeMiniPlayer: boolean;
+  // Keep a second copy of downloads in the phone's Music folder so they survive
+  // an uninstall (Android 10+).
+  keepMusicCopy: boolean;
+  // Auto-download: songs you like and chosen playlists are downloaded for you.
+  autoDownloadLikes: boolean;
+  autoDownloadPlaylists: string[]; // playlist ids
+  autoDownloadWifiOnly: boolean;
+  autoDownloadLimitMb: number; // 0 = no limit
   showPlayCounts: boolean;
   profileName: string;
   profileAvatar: string | null;

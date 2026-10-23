@@ -27,13 +27,22 @@ import org.chromium.net.CronetEngine;
 import org.chromium.net.CronetException;
 import org.chromium.net.UrlRequest;
 import org.chromium.net.UrlResponseInfo;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 
-@CapacitorPlugin(name = "BackgroundAudio")
+@CapacitorPlugin(
+        name = "BackgroundAudio",
+        permissions = {
+            @Permission(alias = "audioMedia", strings = {"android.permission.READ_MEDIA_AUDIO"}),
+            @Permission(alias = "audioStorage", strings = {"android.permission.READ_EXTERNAL_STORAGE"})
+        })
 public class BackgroundAudioPlugin extends Plugin {
 
     public static volatile BackgroundAudioPlugin instance;
@@ -504,6 +513,185 @@ public class BackgroundAudioPlugin extends Plugin {
     // Delete a previously downloaded offline file. Only touches paths inside
     // the app's private offline directory, so a bad path from JS can't delete
     // anything else.
+    // Queue the song to play after the current one; the player rolls into it by itself.
+    @PluginMethod
+    public void setNext(PluginCall call) {
+        PlaybackService svc = PlaybackService.instance;
+        if (svc != null) {
+            Float dur = call.getFloat("duration", 0f);
+            svc.setNextItem(
+                    call.getString("trackId", ""),
+                    call.getString("url", ""),
+                    call.getString("filePath", ""),
+                    call.getString("title", ""),
+                    call.getString("artist", ""),
+                    call.getString("coverUrl", ""),
+                    dur != null ? dur : 0f);
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void clearNext(PluginCall call) {
+        PlaybackService svc = PlaybackService.instance;
+        if (svc != null) svc.clearNextItem();
+        call.resolve();
+    }
+
+    // Is the phone online, on Wi-Fi/ethernet, and is the connection metered (mobile data)?
+    @PluginMethod
+    public void networkStatus(PluginCall call) {
+        boolean connected = false;
+        boolean unmetered = false;
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                    getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            android.net.Network net = cm.getActiveNetwork();
+            android.net.NetworkCapabilities caps = net == null ? null : cm.getNetworkCapabilities(net);
+            connected = caps != null
+                    && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET);
+            unmetered = connected && !cm.isActiveNetworkMetered();
+        } catch (Exception ignored) {}
+        JSObject ret = new JSObject();
+        ret.put("connected", connected);
+        ret.put("unmetered", unmetered);
+        call.resolve(ret);
+    }
+
+    // ---- Music folder copy (downloads that survive an uninstall) ----
+
+    private String musicPermissionAlias() {
+        return Build.VERSION.SDK_INT >= 33 ? "audioMedia" : "audioStorage";
+    }
+
+    private boolean hasMusicPermission() {
+        String perm = Build.VERSION.SDK_INT >= 33
+                ? "android.permission.READ_MEDIA_AUDIO"
+                : "android.permission.READ_EXTERNAL_STORAGE";
+        return ContextCompat.checkSelfPermission(getContext(), perm)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    @PluginMethod
+    public void musicBackupInfo(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("supported", MusicBackup.supported());
+        ret.put("granted", hasMusicPermission());
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void requestMusicPermission(PluginCall call) {
+        if (hasMusicPermission()) {
+            JSObject ret = new JSObject();
+            ret.put("granted", true);
+            call.resolve(ret);
+            return;
+        }
+        requestPermissionForAlias(musicPermissionAlias(), call, "musicPermissionDone");
+    }
+
+    @PermissionCallback
+    private void musicPermissionDone(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("granted", getPermissionState(musicPermissionAlias()) == PermissionState.GRANTED);
+        call.resolve(ret);
+    }
+
+    // Only files inside the app's own offline folder may be exported.
+    private File offlineFile(String path) {
+        if (path == null || path.isEmpty()) return null;
+        try {
+            File dir = new File(getContext().getFilesDir(), "offline").getCanonicalFile();
+            File f = new File(path).getCanonicalFile();
+            return f.getPath().startsWith(dir.getPath() + File.separator) && f.exists() ? f : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    @PluginMethod
+    public void exportToMusic(PluginCall call) {
+        final File src = offlineFile(call.getString("path", ""));
+        final String title = call.getString("title", "Song");
+        final String artist = call.getString("artist", "");
+        final String youtubeId = call.getString("youtubeId", "");
+        if (src == null || youtubeId == null || youtubeId.isEmpty() || !MusicBackup.supported()) {
+            JSObject ret = new JSObject();
+            ret.put("ok", false);
+            call.resolve(ret);
+            return;
+        }
+        new Thread(() -> {
+            String name = src.getName();
+            int dot = name.lastIndexOf('.');
+            String ext = dot >= 0 ? name.substring(dot + 1) : "m4a";
+            boolean ok = MusicBackup.export(getContext(), src, title, artist, youtubeId, ext);
+            JSObject ret = new JSObject();
+            ret.put("ok", ok);
+            call.resolve(ret);
+        }, "frf-music-export").start();
+    }
+
+    @PluginMethod
+    public void deleteMusicCopy(PluginCall call) {
+        final String youtubeId = call.getString("youtubeId", "");
+        new Thread(() -> {
+            boolean deleted = youtubeId != null && !youtubeId.isEmpty()
+                    && MusicBackup.delete(getContext(), youtubeId);
+            JSObject ret = new JSObject();
+            ret.put("deleted", deleted);
+            call.resolve(ret);
+        }, "frf-music-delete").start();
+    }
+
+    @PluginMethod
+    public void listMusicBackups(PluginCall call) {
+        new Thread(() -> {
+            JSArray items = new JSArray();
+            for (MusicBackup.Item it : MusicBackup.list(getContext())) {
+                JSObject o = new JSObject();
+                o.put("uri", it.uri);
+                o.put("name", it.name);
+                o.put("title", it.title);
+                o.put("artist", it.artist);
+                o.put("duration", it.durationMs / 1000);
+                o.put("size", it.size);
+                o.put("youtubeId", it.youtubeId);
+                items.put(o);
+            }
+            JSObject ret = new JSObject();
+            ret.put("items", items);
+            call.resolve(ret);
+        }, "frf-music-list").start();
+    }
+
+    @PluginMethod
+    public void restoreFromMusic(PluginCall call) {
+        final String uri = call.getString("uri", "");
+        final String fileName = call.getString("fileName", "");
+        if (uri == null || uri.isEmpty() || fileName == null || fileName.isEmpty()) {
+            call.reject("uri and fileName are required");
+            return;
+        }
+        new Thread(() -> {
+            File dir = new File(getContext().getFilesDir(), "offline");
+            if (!dir.exists() && !dir.mkdirs()) {
+                call.reject("Could not create offline directory");
+                return;
+            }
+            File dest = new File(dir, fileName.replaceAll("[^A-Za-z0-9._-]", "_"));
+            if (MusicBackup.restore(getContext(), Uri.parse(uri), dest)) {
+                JSObject ret = new JSObject();
+                ret.put("path", dest.getAbsolutePath());
+                ret.put("size", dest.length());
+                call.resolve(ret);
+            } else {
+                call.reject("Could not read the file from the Music folder");
+            }
+        }, "frf-music-restore").start();
+    }
+
     // Save a song's cover art on disk so the notification can show it offline.
     @PluginMethod
     public void cacheCover(PluginCall call) {

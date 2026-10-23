@@ -2,6 +2,7 @@ import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import type { Track } from '../types/music';
 import { httpGetJson, httpPostJson, isTauriRuntime } from './http';
 import { getPoTokenMinter } from './poToken';
+import { recordSource } from './streamHealth';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -31,6 +32,28 @@ interface StreamProbePlugin {
   deleteOfflineFile?(options: { path: string }): Promise<void>;
   // Saves a cover image on disk so the notification can show it offline.
   cacheCover?(options: { url: string }): Promise<{ cached?: boolean }>;
+  // A second copy of downloads in the shared Music folder (survives uninstall).
+  musicBackupInfo?(): Promise<{ supported?: boolean; granted?: boolean }>;
+  requestMusicPermission?(): Promise<{ granted?: boolean }>;
+  exportToMusic?(options: {
+    path: string;
+    title: string;
+    artist: string;
+    youtubeId: string;
+  }): Promise<{ ok?: boolean }>;
+  deleteMusicCopy?(options: { youtubeId: string }): Promise<{ deleted?: boolean }>;
+  listMusicBackups?(): Promise<{
+    items?: Array<{
+      uri: string;
+      name: string;
+      title?: string;
+      artist?: string;
+      duration?: number;
+      size?: number;
+      youtubeId: string;
+    }>;
+  }>;
+  restoreFromMusic?(options: { uri: string; fileName: string }): Promise<{ path?: string; size?: number }>;
 }
 const StreamProbe = IS_NATIVE
   ? registerPlugin<StreamProbePlugin>('BackgroundAudio')
@@ -187,9 +210,13 @@ export function getLastStreamResolveNotes(): string {
 
 function noted<T>(label: string, task: () => Promise<T>): () => Promise<T> {
   return async () => {
+    const started = Date.now();
     try {
-      return await task();
+      const value = await task();
+      recordSource(label.replace(/^(piped|inv|inv-local):.*/, '$1 mirrors'), true, Date.now() - started);
+      return value;
     } catch (e) {
+      recordSource(label.replace(/^(piped|inv|inv-local):.*/, '$1 mirrors'), false, Date.now() - started, e);
       const msg = e instanceof Error ? e.message : String(e);
       console.warn(`[streamResolve] ${label}: ${msg.slice(0, 120)}`);
       lastResolveNotes.push(`${label}:${msg.replace(/^Error: /, '')}`.slice(0, 60));
@@ -629,6 +656,173 @@ export interface OfflineFileRecord {
   webUrl: string;
   size: number;
   downloadedAt: number;
+  // Kept so a download can be matched to its Music-folder copy.
+  youtubeId?: string;
+  title?: string;
+  artist?: string;
+}
+
+const IS_ANDROID_NATIVE = IS_NATIVE && Capacitor.getPlatform() === 'android';
+
+// Total size of all downloads on this device (used by the auto-download limit).
+let usageCache: { at: number; bytes: number } | null = null;
+export function getOfflineUsageBytes(): number {
+  if (usageCache && Date.now() - usageCache.at < 3000) return usageCache.bytes;
+  let bytes = 0;
+  try {
+    const saved = localStorage.getItem(OFFLINE_KEY);
+    const records: OfflineFileRecord[] = saved ? JSON.parse(saved) : [];
+    for (const r of records) bytes += Number(r.size) || 0;
+  } catch {
+    // unreadable: report 0
+  }
+  usageCache = { at: Date.now(), bytes };
+  return bytes;
+}
+
+export function keepMusicCopyEnabled(): boolean {
+  try {
+    const raw =
+      localStorage.getItem('bw_music_settings_v11') || localStorage.getItem('bw_music_settings_v1');
+    return !raw || JSON.parse(raw).keepMusicCopy !== false;
+  } catch {
+    return true;
+  }
+}
+
+function youtubeIdFor(trackId: string, rec?: OfflineFileRecord): string {
+  return rec?.youtubeId || /^yt-([A-Za-z0-9_-]{11})$/.exec(trackId)?.[1] || '';
+}
+
+// Put a copy of a downloaded song in the Music folder, so it survives an uninstall.
+async function exportToMusicFolder(track: Track, path: string): Promise<void> {
+  if (!IS_ANDROID_NATIVE || !StreamProbe?.exportToMusic || !path || !keepMusicCopyEnabled()) return;
+  const youtubeId = track.youtubeId || youtubeIdFor(track.id);
+  if (!youtubeId) return;
+  try {
+    await StreamProbe.exportToMusic({ path, title: track.title, artist: track.artist, youtubeId });
+  } catch {
+    // best effort: the private copy is what plays
+  }
+}
+
+// Make sure every current download also has its Music-folder copy (used when the
+// setting is switched on, and once per launch).
+export async function syncMusicCopies(tracks: Track[]): Promise<number> {
+  if (!IS_ANDROID_NATIVE || !StreamProbe?.exportToMusic || !keepMusicCopyEnabled()) return 0;
+  const info = await StreamProbe.musicBackupInfo?.().catch(() => null);
+  if (!info?.supported) return 0;
+  let done = 0;
+  for (const t of tracks) {
+    const rec = getOfflineRecord(t.id);
+    if (!rec?.path) continue;
+    await exportToMusicFolder(t, rec.path);
+    done++;
+  }
+  return done;
+}
+
+export interface RestoreResult {
+  tracks: Track[];
+  skipped: number;
+  permissionDenied: boolean;
+  unsupported: boolean;
+}
+
+// "Artist - Title [id].m4a" -> artist and title. Older copies have no artist part.
+export function parseMusicFileName(name: string): { title: string; artist: string } {
+  const withoutId = name.replace(/\s*\[[A-Za-z0-9_-]{11}\]\.[A-Za-z0-9]+$/, '');
+  const split = withoutId.indexOf(' - ');
+  if (split > 0) {
+    return { artist: withoutId.slice(0, split).trim(), title: withoutId.slice(split + 3).trim() };
+  }
+  return { artist: '', title: withoutId.trim() };
+}
+
+function isAlreadyOfflineQuick(trackId: string): boolean {
+  const rec = getOfflineRecord(trackId);
+  return !!rec && (rec.path ? rec.size >= 20000 : rec.size > 0);
+}
+
+// After a reinstall: find songs in the Music/FRF Music folder and bring them
+// back as downloads. Needs the audio permission, because the new install does not
+// own the files the old one created.
+export async function restoreDownloadsFromMusic(
+  onProgress?: (done: number, total: number) => void
+): Promise<RestoreResult> {
+  const result: RestoreResult = { tracks: [], skipped: 0, permissionDenied: false, unsupported: false };
+  if (!IS_ANDROID_NATIVE || !StreamProbe?.listMusicBackups || !StreamProbe.restoreFromMusic) {
+    result.unsupported = true;
+    return result;
+  }
+  const info = await StreamProbe.musicBackupInfo?.().catch(() => null);
+  if (!info?.supported) {
+    result.unsupported = true;
+    return result;
+  }
+  if (!info.granted) {
+    const perm = await StreamProbe.requestMusicPermission?.().catch(() => null);
+    if (!perm?.granted) {
+      result.permissionDenied = true;
+      return result;
+    }
+  }
+
+  const listing = await StreamProbe.listMusicBackups();
+  const items = listing?.items || [];
+  let index = 0;
+  for (const it of items) {
+    index++;
+    onProgress?.(index, items.length);
+    const trackId = 'yt-' + it.youtubeId;
+    if (isAlreadyOfflineQuick(trackId)) {
+      result.skipped++;
+      continue;
+    }
+    const ext = /\.([A-Za-z0-9]+)$/.exec(it.name)?.[1] || 'm4a';
+    try {
+      const res = await StreamProbe.restoreFromMusic({
+        uri: it.uri,
+        fileName: 'offline-' + trackId + '.' + ext,
+      });
+      if (!res?.path) continue;
+      // The file name is the reliable source: the media scanner overwrites any
+      // title/artist stored in the media database.
+      const parsed = parseMusicFileName(it.name);
+      const title = parsed.title || it.title || 'Song';
+      const track: Track = {
+        id: trackId,
+        title,
+        artist: parsed.artist || 'Unknown artist',
+        album: 'FRF Music',
+        duration: Number(it.duration) || 0,
+        url: '',
+        coverUrl: 'https://i.ytimg.com/vi/' + it.youtubeId + '/hqdefault.jpg',
+        isYouTube: true,
+        youtubeId: it.youtubeId,
+        addedAt: Date.now(),
+      };
+      const saved = localStorage.getItem(OFFLINE_KEY);
+      const records: OfflineFileRecord[] = (saved ? JSON.parse(saved) : []).filter(
+        (r: OfflineFileRecord) => r.trackId !== trackId
+      );
+      records.push({
+        trackId,
+        path: res.path,
+        webUrl: Capacitor.convertFileSrc(res.path),
+        size: Number(res.size) || 0,
+        downloadedAt: Date.now(),
+        youtubeId: it.youtubeId,
+        title,
+        artist: track.artist,
+      });
+      localStorage.setItem(OFFLINE_KEY, JSON.stringify(records));
+      result.tracks.push(track);
+    } catch {
+      // skip a file that cannot be read; the rest still restore
+    }
+  }
+  return result;
 }
 
 const streamUrlCache = new Map<string, string>();
@@ -806,6 +1000,7 @@ export async function downloadTrackToFile(
   onProgress?: (p: { bytes: number; contentLength: number }) => void
 ): Promise<boolean> {
   if (!track || !track.id) return false;
+  const downloadStartedAt = Date.now();
   lastDownloadError = '';
   activeDownloadsMap.set(track.id, {
     trackId: track.id,
@@ -899,9 +1094,14 @@ export async function downloadTrackToFile(
       webUrl,
       size,
       downloadedAt: Date.now(),
+      youtubeId: track.youtubeId,
+      title: track.title,
+      artist: track.artist,
     });
     localStorage.setItem(OFFLINE_KEY, JSON.stringify(filtered));
     void cacheCoverArt(track.coverUrl);
+    void exportToMusicFolder(track, filePath);
+    recordSource('Download', true, Date.now() - downloadStartedAt);
 
     activeDownloadsMap.set(track.id, {
       trackId: track.id,
@@ -917,6 +1117,7 @@ export async function downloadTrackToFile(
   } catch (err) {
     console.error('Download failed for track:', track.id, err);
     lastDownloadError = String((err as Error)?.message || err).slice(0, 160);
+    recordSource('Download', false, Date.now() - downloadStartedAt, err);
     activeDownloadsMap.set(track.id, {
       trackId: track.id,
       title: track.title,
@@ -950,6 +1151,11 @@ export async function removeOfflineTrack(trackId: string): Promise<void> {
       // Native downloads live on the filesystem; remove the file too.
       if (rec.path && IS_NATIVE && StreamProbe?.deleteOfflineFile) {
         void StreamProbe.deleteOfflineFile({ path: rec.path }).catch(() => {});
+      }
+      // A deleted song must not come back from the Music folder after a reinstall.
+      const youtubeId = youtubeIdFor(trackId, rec);
+      if (youtubeId && IS_ANDROID_NATIVE && StreamProbe?.deleteMusicCopy) {
+        void StreamProbe.deleteMusicCopy({ youtubeId }).catch(() => {});
       }
       try {
         const db = await openDownloadsDB();

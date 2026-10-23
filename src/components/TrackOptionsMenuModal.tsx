@@ -368,7 +368,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
                 }
                 label={isFav ? 'Remove from Liked' : 'Like song'}
                 onClick={() => {
-                  toggleFavorite(track.id);
+                  toggleFavorite(track.id, track);
                   onClose();
                 }}
               />

@@ -117,7 +117,7 @@ export const NowPlayingScreen: React.FC = () => {
     if (now - lastArtworkTap.current < 300) {
       lastArtworkTap.current = 0;
       if (!favorites.includes(currentTrack?.id || '')) {
-        toggleFavorite(currentTrack!.id);
+        toggleFavorite(currentTrack!.id, currentTrack!);
       }
       setHeartPop(true);
       window.setTimeout(() => setHeartPop(false), 800);
@@ -503,7 +503,7 @@ export const NowPlayingScreen: React.FC = () => {
 
           <div className="flex items-center gap-1 shrink-0">
             <button
-              onClick={() => toggleFavorite(currentTrack.id)}
+              onClick={() => toggleFavorite(currentTrack.id, currentTrack)}
               className="p-2 active:scale-95 transition-transform"
               title="Like"
             >

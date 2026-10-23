@@ -9,6 +9,7 @@ import {
   ArrowDownAZ,
   Search,
   FolderPlus,
+  ClipboardPaste,
   Disc3,
   X,
 } from 'lucide-react';
@@ -18,6 +19,7 @@ import { ArtistDetailView } from './ArtistDetailView';
 import { LikedMusicView } from './LikedMusicView';
 import { DownloadsView } from './DownloadsView';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
+import { ImportPlaylistModal } from './ImportPlaylistModal';
 import type { Track } from '../types/music';
 
 type LibTab = 'songs' | 'playlists' | 'albums' | 'artists' | 'discover';
@@ -88,6 +90,7 @@ export const LibraryView: React.FC = () => {
 
   const [tab, setTab] = useState<LibTab>('playlists');
   const [subView, setSubView] = useState<SubView>(null);
+  const [showImport, setShowImport] = useState(false);
   const [sortAsc, setSortAsc] = useState(true);
   const [selectedTrackForMenu, setSelectedTrackForMenu] = useState<Track | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -268,10 +271,19 @@ export const LibraryView: React.FC = () => {
         className="hidden"
       />
 
+      <ImportPlaylistModal isOpen={showImport} onClose={() => setShowImport(false)} />
+
       {/* Header */}
       <div className="flex items-center justify-between px-5 safe-top pb-4">
         <h1 className="text-3xl font-bold text-app-primary">Library</h1>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowImport(true)}
+            className="p-3 rounded-full bg-app-card text-app-primary"
+            title="Import playlist"
+          >
+            <ClipboardPaste className="w-5 h-5" />
+          </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             className="p-3 rounded-full bg-app-card text-app-primary"
