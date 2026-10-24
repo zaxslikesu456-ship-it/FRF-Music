@@ -627,9 +627,21 @@ export async function resolveAudioStreamUrl(
 // Full-length stream via youtubei.js (TV_SIMPLY, then MWEB + the WebPO tokens
 // minted in the native youtube.com WebView). App-client URLs (IOS/ANDROID/VR)
 // 403 after the first ~1 MiB, so these are the sources that download to the end.
+// Token minting, one request at a time. The Android and PC minters each run in a
+// single hidden page and turn away a second request while one is in progress, so
+// several downloads (plus playback preparing the next song) asking at once
+// mostly got refused, failed and were retried over and over. Queued here, each
+// waits its turn instead; a warm minter answers in well under a second.
+let mintChain: Promise<unknown> = Promise.resolve();
+function oneMintAtATime<T>(fn: () => Promise<T>): Promise<T> {
+  const run = mintChain.then(fn, fn);
+  mintChain = run.catch(() => undefined);
+  return run;
+}
+
 export async function resolveAudioStreamUrlFull(youtubeId: string): Promise<string> {
   const { resolveFullAudioUrl } = await import('./ytjs');
-  return resolveFullAudioUrl(youtubeId, preferredItags(), async () => {
+  return resolveFullAudioUrl(youtubeId, preferredItags(), () => oneMintAtATime(async () => {
     // The plugin object accepts any method name, so a missing native method only
     // shows up as a rejected call. Try the native minter (Android) and fall back to
     // the in-page one (iPhone), which cannot always produce the strongest token
@@ -690,7 +702,7 @@ export async function resolveAudioStreamUrlFull(youtubeId: string): Promise<stri
       contentPot: await minter.mint(youtubeId),
       sessionPot: await minter.mint(minter.visitorData),
     };
-  });
+  }));
 }
 
 // Resolve a stream URL that carries a valid content-bound poToken. googlevideo
@@ -1025,6 +1037,48 @@ function streamExtFromUrl(url: string): string {
 // the app cannot pull bytes from the CDN directly. Piped/Invidious instances
 // fetch googlevideo themselves and re-serve the audio over an ordinary HTTPS
 // connection the app CAN read. Returns a list of candidate stream URLs.
+// PC: the page cannot fetch googlevideo itself (the browser engine blocks it),
+// so the file is pulled through the desktop app's audio proxy
+// (src-tauri/src/audio_proxy.rs), which serves at most 1 MiB per request.
+// Four ranges are fetched at a time and joined in order.
+async function fetchThroughDesktopProxy(url: string, onProgress?: (fraction: number) => void): Promise<Blob> {
+  const proxied = `http://frfaudio.localhost/?u=${encodeURIComponent(url)}`;
+  const CHUNK = 1024 * 1024;
+  const getRange = async (start: number): Promise<{ data: ArrayBuffer; total: number }> => {
+    let lastError = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(proxied, { headers: { Range: `bytes=${start}-${start + CHUNK - 1}` } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const range = res.headers.get('Content-Range') || '';
+        const total = Number(range.split('/')[1]) || 0;
+        return { data: await res.arrayBuffer(), total };
+      } catch (e) {
+        lastError = String((e as Error)?.message || e);
+        await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+      }
+    }
+    throw new Error(`Download stopped at ${Math.round(start / 1024)} KB (${lastError})`);
+  };
+
+  const first = await getRange(0);
+  const total = first.total || first.data.byteLength;
+  const parts: ArrayBuffer[] = [first.data];
+  const starts: number[] = [];
+  for (let s = first.data.byteLength; s < total; s += CHUNK) starts.push(s);
+  let done = 1;
+  const count = starts.length + 1;
+  onProgress?.(done / count);
+  for (let i = 0; i < starts.length; i += 4) {
+    const batch = await Promise.all(starts.slice(i, i + 4).map(getRange));
+    for (const b of batch) parts.push(b.data);
+    done += batch.length;
+    onProgress?.(done / count);
+  }
+  const type = url.includes('mime=audio%2Fwebm') || url.includes('mime=audio/webm') ? 'audio/webm' : 'audio/mp4';
+  return new Blob(parts, { type });
+}
+
 async function collectProxyStreamUrls(youtubeId: string): Promise<string[]> {
   const tasks: Array<() => Promise<string>> = [
     ...getPipedBases().map(base => () => resolveFromPiped(base, youtubeId)),
@@ -1081,38 +1135,47 @@ export async function downloadTrackToFile(
       // Native Android: googlevideo refuses the app's TLS fingerprint, so pull
       // the bytes through a server-side proxy (Piped/Invidious). Only if every
       // proxy fails do we fall back to a direct poToken'd googlevideo URL.
+      // Sources are tried one at a time, best first, and the slower ones (mirrors,
+      // the other clients) are only looked up if the earlier ones fail. Looking
+      // them all up before every download took tens of seconds per song.
       let lastErr = 'no source';
-      const candidates: string[] = [];
-      try {
-        candidates.push(await resolveAudioStreamUrlFull(track.youtubeId));
-      } catch (e) {
-        lastErr = `youtubei: ${String((e as Error)?.message || e)}`;
-        console.warn(`[download] ${lastErr}`);
-      }
-      candidates.push(...(await collectProxyStreamUrls(track.youtubeId)));
-      try { candidates.push(await resolveAudioStreamUrlPoToken(track.youtubeId)); } catch { /* direct fallback */ }
-      try { candidates.push(await resolveAudioStreamUrl(track.youtubeId, true)); } catch { /* best effort */ }
-      if (candidates.length === 0) throw new Error('No stream URL');
-
-      activeDownloadsMap.set(track.id, {
-        trackId: track.id, title: track.title, coverUrl: track.coverUrl,
-        bytes: 30, total: 100, status: 'downloading',
-      });
-      notifyDownloadListeners();
-
-      for (const url of candidates) {
-        if (!url) continue;
-        const fileName = `offline-${track.id}.${streamExtFromUrl(url)}`;
+      const youtubeId = track.youtubeId;
+      const sources: Array<() => Promise<string[]>> = [
+        async () => [await resolveAudioStreamUrlFull(youtubeId)],
+        async () => [await resolveAudioStreamUrlPoToken(youtubeId)],
+        () => collectProxyStreamUrls(youtubeId),
+        async () => [await resolveAudioStreamUrl(youtubeId, true)],
+      ];
+      const tried = new Set<string>();
+      for (const source of sources) {
+        if (filePath) break;
+        let urls: string[] = [];
         try {
-          const res = await StreamProbe!.downloadUrl!({ url, fileName });
-          if (res && res.path) {
-            filePath = res.path;
-            size = Number(res.size) || 0;
-            webUrl = Capacitor.convertFileSrc(filePath);
-            break;
-          }
+          urls = await source();
         } catch (e) {
           lastErr = String((e as Error)?.message || e);
+          continue;
+        }
+        for (const url of urls) {
+          if (!url || tried.has(url)) continue;
+          tried.add(url);
+          activeDownloadsMap.set(track.id, {
+            trackId: track.id, title: track.title, coverUrl: track.coverUrl,
+            bytes: 30, total: 100, status: 'downloading',
+          });
+          notifyDownloadListeners();
+          const fileName = `offline-${track.id}.${streamExtFromUrl(url)}`;
+          try {
+            const res = await StreamProbe!.downloadUrl!({ url, fileName });
+            if (res && res.path) {
+              filePath = res.path;
+              size = Number(res.size) || 0;
+              webUrl = Capacitor.convertFileSrc(filePath);
+              break;
+            }
+          } catch (e) {
+            lastErr = String((e as Error)?.message || e);
+          }
         }
       }
       if (!filePath) throw new Error(`All download sources failed (${lastErr})`);
@@ -1130,9 +1193,20 @@ export async function downloadTrackToFile(
       });
       notifyDownloadListeners();
 
-      const res = await fetch(streamUrl);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
+      const blob = isTauriRuntime()
+        ? await fetchThroughDesktopProxy(streamUrl, pct => {
+            activeDownloadsMap.set(track.id, {
+              trackId: track.id, title: track.title, coverUrl: track.coverUrl,
+              bytes: 30 + Math.round(pct * 70), total: 100, status: 'downloading',
+            });
+            notifyDownloadListeners();
+          })
+        : await (async () => {
+            const res = await fetch(streamUrl);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.blob();
+          })();
+      if (blob.size < 20000) throw new Error(`File too small (${blob.size} bytes)`);
       await storeBlobOffline(track.id, blob);
       webUrl = URL.createObjectURL(blob);
       activeObjectUrls.set(track.id, webUrl);

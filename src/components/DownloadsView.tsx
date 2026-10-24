@@ -18,6 +18,7 @@ import {
   resumeQueue,
   clearQueue,
   isQueuePaused,
+  getQueuePauseReason,
   MAX_ATTEMPTS,
   type QueuedDownload,
 } from '../utils/downloadQueue';
@@ -29,6 +30,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
   const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>(getActiveDownloads());
   const [queue, setQueue] = useState<QueuedDownload[]>(getQueue());
   const [paused, setPaused] = useState(isQueuePaused());
+  const [pauseReason, setPauseReason] = useState(getQueuePauseReason());
   const [now, setNow] = useState(Date.now());
   const [sortAz, setSortAz] = useState(false);
   const [query, setQuery] = useState('');
@@ -41,6 +43,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
     return subscribeQueue(() => {
       setQueue(getQueue());
       setPaused(isQueuePaused());
+      setPauseReason(getQueuePauseReason());
     });
   }, []);
 
@@ -191,6 +194,11 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
               </button>
             </div>
           </div>
+          {pauseReason && (
+            <p className="px-3 py-2 rounded-xl bg-red-500/15 border border-red-500/30 text-xs text-red-300">
+              {pauseReason}
+            </p>
+          )}
           {queuedItems.map(q => {
             const secs = Math.max(0, Math.ceil((q.nextAttemptAt - now) / 1000));
             return (
