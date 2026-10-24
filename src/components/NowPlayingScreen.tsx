@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { flyCover, miniCoverRect } from '../utils/coverTransition';
+import { onBackButton } from '../utils/backButton';
 import { AudioVisualizer } from './AudioVisualizer';
 import { parseLrc, lineProgress } from '../utils/lyricsSync';
 import { fetchLyrics } from '../utils/lyrics';
@@ -259,6 +260,14 @@ export const NowPlayingScreen: React.FC = () => {
     root?.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: 'ease-in', fill: 'forwards' });
     void flyCover(el, from, 'close').then(() => setIsPlayerOpen(false));
   };
+
+  // Phone back button closes Now Playing (the cover shrinks back as usual).
+  const closeRef = useRef(closePlayer);
+  closeRef.current = closePlayer;
+  useEffect(() => {
+    if (!isPlayerOpen) return;
+    return onBackButton(() => closeRef.current());
+  }, [isPlayerOpen]);
 
   if (!isPlayerOpen || !currentTrack) return null;
 

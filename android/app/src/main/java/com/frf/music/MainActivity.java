@@ -37,7 +37,17 @@ public class MainActivity extends BridgeActivity {
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                moveTaskToBack(true);
+                // Let the app close an open screen first (a settings page, Now
+                // Playing); with nothing open it goes to the background.
+                try {
+                    getBridge().getWebView().evaluateJavascript(
+                            "(window.__frfBack && window.__frfBack()) ? 'handled' : 'no'",
+                            result -> {
+                                if (result == null || !result.contains("handled")) moveTaskToBack(true);
+                            });
+                } catch (Exception e) {
+                    moveTaskToBack(true);
+                }
             }
         });
 

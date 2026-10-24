@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
+import { onBackButton } from '../utils/backButton';
 import { formatMb } from '../utils/autoDownload';
 import { PlaybackHealthModal } from './PlaybackHealthModal';
 import { SmartDownloadsSettings } from './SmartDownloadsSettings';
@@ -19,6 +20,8 @@ import {
   History,
   Settings2,
   Info,
+  ChevronLeft,
+  ChevronRight,
   Check,
   Trash2,
   Timer,
@@ -158,8 +161,23 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  // Tabs, like other apps' settings: one section is shown at a time.
-  const [tab, setTab] = useState<Section>('personalisation');
+  // Phones: a menu of sections; tapping one opens it as its own page (with a
+  // back button). PC: the menu stays on the left and the section shows beside it.
+  const [wide, setWide] = useState(() => window.matchMedia('(min-width: 768px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const on = () => setWide(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  const [picked, setPicked] = useState<Section | null>(null);
+  const tab: Section | null = picked ?? (wide ? 'personalisation' : null);
+  const setTab = (s: Section | null) => setPicked(s);
+  // Phone back button: from a section page back to the menu.
+  useEffect(() => {
+    if (wide || !picked) return;
+    return onBackButton(() => setPicked(null));
+  }, [wide, picked]);
 
   const readFile = (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -175,15 +193,16 @@ export const SettingsView: React.FC = () => {
     e.target.value = '';
   };
 
-  const sections: { id: Section; label: string; icon: React.ElementType }[] = [
-    { id: 'personalisation', label: 'Personalisation', icon: Palette },
-    { id: 'content', label: 'Content', icon: LibraryBig },
-    { id: 'playback', label: 'Music & Playback', icon: Music },
-    { id: 'download', label: 'Download', icon: Download },
-    { id: 'backup', label: 'Backup & Restore', icon: History },
-    { id: 'misc', label: 'Misc', icon: Settings2 },
-    { id: 'info', label: 'App Info', icon: Info },
+  const sections: { id: Section; label: string; icon: React.ElementType; hint: string }[] = [
+    { id: 'personalisation', label: 'Personalisation', icon: Palette, hint: 'Theme, colours, album art, background' },
+    { id: 'content', label: 'Content', icon: LibraryBig, hint: 'Sorting and what you see' },
+    { id: 'playback', label: 'Music & Playback', icon: Music, hint: 'Crossfade, equalizer, alarm, sync, stats' },
+    { id: 'download', label: 'Download', icon: Download, hint: 'Quality, auto and smart downloads' },
+    { id: 'backup', label: 'Backup & Restore', icon: History, hint: 'Keep your library safe' },
+    { id: 'misc', label: 'Misc', icon: Settings2, hint: 'Keyboard shortcuts' },
+    { id: 'info', label: 'App Info', icon: Info, hint: 'Version and build' },
   ];
+  const current = sections.find(x => x.id === tab);
 
   const themes: { id: AppTheme; label: string; dot: string }[] = [
     { id: 'black-white', label: 'Classic Black', dot: 'bg-app-highlight' },
@@ -206,38 +225,85 @@ export const SettingsView: React.FC = () => {
       <ListeningStatsModal isOpen={showStats} onClose={() => setShowStats(false)} />
       <DeviceSyncModal isOpen={showSync} onClose={() => setShowSync(false)} />
       <AlarmModal isOpen={showAlarm} onClose={() => setShowAlarm(false)} />
-      <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-4">Settings</h1>
+      {/* Title: "Settings" on the menu (and on PC), the section's name with a back
+          button on a phone section page */}
+      {!wide && current ? (
+        <div className="sticky top-0 z-20 flex items-center gap-2 px-3 safe-top pb-3 bg-app-primary/95 backdrop-blur-md">
+          <button
+            onClick={() => setTab(null)}
+            className="p-2 rounded-full text-app-primary hover:bg-app-card active:scale-95 transition-transform"
+            title="Back"
+          >
+            <ChevronLeft className="w-7 h-7" />
+          </button>
+          <h1 className="text-2xl font-bold text-app-primary truncate">{current.label}</h1>
+        </div>
+      ) : (
+        <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-4">Settings</h1>
+      )}
 
       <div className="md:flex md:gap-6 md:px-5">
-        {/* Tabs: a scrolling row on phones, a list on the left on wider screens */}
-        <nav className="sticky top-0 z-20 bg-app-primary/95 backdrop-blur-md md:bg-transparent md:backdrop-blur-none md:static md:w-56 md:shrink-0">
-          <div className="flex gap-2 overflow-x-auto no-scrollbar px-5 py-3 md:px-0 md:py-0 md:flex-col md:sticky md:top-4">
-            {sections.map(s => {
-              const Icon = s.icon;
-              const active = tab === s.id;
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => setTab(s.id)}
-                  className={`flex items-center gap-2 shrink-0 rounded-full md:rounded-xl px-4 py-2 md:py-3 text-sm md:text-base font-semibold transition-colors ${
-                    active
-                      ? 'bg-app-highlight text-app-inverse'
-                      : 'bg-app-card text-app-secondary hover:text-app-primary md:bg-transparent'
-                  }`}
-                >
-                  <Icon className="w-4 h-4 md:w-5 md:h-5 shrink-0" />
-                  <span className="whitespace-nowrap">{s.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </nav>
+        {/* The menu: full page on phones, a list on the left on PC */}
+        {(wide || !current) && (
+          <nav className="px-5 md:px-0 md:w-64 md:shrink-0">
+            {!wide && (
+              <button
+                onClick={() => setTab('personalisation')}
+                className="w-full flex items-center gap-4 p-4 mb-4 rounded-2xl bg-app-surface text-left active:scale-[0.99] transition-transform"
+              >
+                <div className="w-14 h-14 rounded-full overflow-hidden bg-app-card flex items-center justify-center shrink-0">
+                  {settings.profileAvatar ? (
+                    <img src={settings.profileAvatar} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-xl font-bold text-app-primary">
+                      {(settings.profileName || 'M').charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-lg font-bold text-app-primary truncate">{settings.profileName}</p>
+                  <p className="text-sm text-app-secondary">Profile, theme and colours</p>
+                </div>
+                <ChevronRight className="w-5 h-5 text-app-secondary shrink-0" />
+              </button>
+            )}
+            <div className="rounded-2xl bg-app-surface overflow-hidden md:bg-transparent md:sticky md:top-4 md:space-y-1">
+              {sections.map((s, i) => {
+                const Icon = s.icon;
+                const active = wide && tab === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setTab(s.id)}
+                    className={`w-full flex items-center gap-4 px-4 py-3.5 text-left transition-colors md:rounded-xl ${
+                      active ? 'bg-app-card' : 'hover:bg-app-card/60 active:bg-app-card'
+                    } ${!wide && i > 0 ? 'border-t border-app-theme' : ''}`}
+                  >
+                    <span
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                        active ? 'bg-app-highlight text-app-inverse' : 'bg-app-card text-app-accent'
+                      }`}
+                    >
+                      <Icon className="w-5 h-5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-base font-semibold text-app-primary truncate">{s.label}</span>
+                      <span className="block text-xs text-app-secondary truncate">{s.hint}</span>
+                    </span>
+                    {!wide && <ChevronRight className="w-5 h-5 text-app-secondary shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+        )}
 
+        {current && (
         <div className="flex-1 min-w-0 px-5 md:px-0 pt-1">
         {sections.filter(s => s.id === tab).map(s => {
           return (
-            <div key={s.id} className="rounded-2xl bg-app-surface overflow-hidden anim-fade">
-              <h2 className="px-5 pt-5 text-xl font-bold text-app-primary">{s.label}</h2>
+            <div key={s.id} className={`rounded-2xl bg-app-surface overflow-hidden ${wide ? 'anim-fade' : 'settings-page-in'}`}>
+              {wide && <h2 className="px-5 pt-5 text-xl font-bold text-app-primary">{s.label}</h2>}
               {(
                 <div className="px-5 pb-5">
                   {/* PERSONALISATION */}
@@ -884,6 +950,7 @@ export const SettingsView: React.FC = () => {
           );
         })}
         </div>
+        )}
       </div>
     </div>
   );
