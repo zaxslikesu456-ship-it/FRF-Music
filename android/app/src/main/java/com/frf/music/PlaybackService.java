@@ -1046,6 +1046,7 @@ public class PlaybackService extends Service {
             exoPlayer = null;
         }
         releaseLocks();
+        PlayerWidgetProvider.setIdle(this);
         stopForeground(STOP_FOREGROUND_REMOVE);
         if (startId < 0) stopSelf();
         else stopSelf(startId);
@@ -1123,7 +1124,14 @@ public class PlaybackService extends Service {
         } catch (Exception ignored) {}
     }
 
+    // Every point that refreshes the notification also refreshes the home-screen
+    // widget (the widget skips the update when nothing it shows has changed).
     private void refreshNotification() {
+        refreshNotificationOnly();
+        PlayerWidgetProvider.update(this, title, artist, playing, coverBitmap);
+    }
+
+    private void refreshNotificationOnly() {
         try {
             startForegroundCompat(buildNotification());
         } catch (Exception ignored) {}
@@ -1306,6 +1314,7 @@ public class PlaybackService extends Service {
     @Override
     public void onDestroy() {
         instance = null;
+        PlayerWidgetProvider.setIdle(this);
         stopProgressTicker();
         mainHandler.removeCallbacks(handoverWatchdog);
         unregisterNoisyReceiver();
