@@ -179,7 +179,7 @@ const DesktopNowPlaying: React.FC = () => {
             </button>
           )}
           <button onClick={() => toggleFavorite(currentTrack.id, currentTrack)} className="p-2" title="Like">
-            <Heart className={`w-5 h-5 ${isFav ? 'text-app-primary fill-white' : 'text-app-secondary'}`} />
+            <Heart className={`w-5 h-5 ${isFav ? 'text-app-accent fill-current' : 'text-app-secondary'}`} />
           </button>
           <button
             onClick={() => setShowAddToPlaylist(true)}
@@ -337,7 +337,7 @@ const DesktopNowPlaying: React.FC = () => {
                   >
                     <img src={t.coverUrl} alt={t.title} className="w-9 h-9 rounded object-cover" />
                     <div className="min-w-0 flex-1">
-                      <p className={`text-sm truncate ${isCurrent ? 'text-app-primary font-bold' : 'text-app-secondary hover:text-app-primary'}`}>
+                      <p className={`text-sm truncate ${isCurrent ? 'text-app-accent font-bold' : 'text-app-secondary hover:text-app-primary'}`}>
                         {t.title}
                       </p>
                       <p className="text-xs text-app-secondary truncate">{t.artist}</p>
@@ -420,7 +420,7 @@ export const DesktopFrame: React.FC = () => {
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
                 className={`w-full flex items-center gap-4 px-3 py-2.5 rounded-lg text-base font-semibold transition-colors ${
-                  isActive ? 'bg-app-card text-app-primary' : 'text-app-secondary hover:text-app-primary'
+                  isActive ? 'bg-app-card text-app-accent' : 'text-app-secondary hover:text-app-primary'
                 }`}
               >
                 <Icon className="w-5 h-5" />

@@ -53,7 +53,7 @@ export const MiniPlayer: React.FC = () => {
       {/* Thin progress line */}
       <div className="w-full bg-app-card h-0.5">
         <div
-          className="bg-neutral-400 h-full transition-all duration-300"
+          className="bg-app-highlight h-full transition-all duration-300"
           style={{ width: `${progressPercent}%` }}
         />
       </div>

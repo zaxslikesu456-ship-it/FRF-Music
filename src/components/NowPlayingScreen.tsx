@@ -562,7 +562,7 @@ export const NowPlayingScreen: React.FC = () => {
             >
               <Heart
                 className={`w-6 h-6 transition-colors ${
-                  isFav ? 'text-rose-500 fill-rose-500' : 'text-app-secondary hover:text-app-primary'
+                  isFav ? 'text-app-accent fill-current' : 'text-app-secondary hover:text-app-primary'
                 }`}
               />
             </button>
@@ -651,7 +651,7 @@ export const NowPlayingScreen: React.FC = () => {
 
           <button
             onClick={togglePlay}
-            className="p-4 bg-app-primary text-app-primary rounded-full hover:scale-105 active:scale-95 transition-transform shadow-xl flex items-center justify-center border border-app-theme"
+            className="p-4 bg-app-highlight text-app-inverse rounded-full hover:scale-105 active:scale-95 transition-transform shadow-xl flex items-center justify-center"
             title={isPlaying ? 'Pause' : 'Play'}
           >
             {isResolvingStream && !isPlaying ? (
@@ -778,7 +778,7 @@ export const NowPlayingScreen: React.FC = () => {
                     />
 
                     <div className="min-w-0 flex-1">
-                      <p className={`text-base font-semibold truncate ${isSelected ? 'text-app-primary font-bold' : 'text-app-primary'}`}>
+                      <p className={`text-base font-semibold truncate ${isSelected ? 'text-app-accent font-bold' : 'text-app-primary'}`}>
                         {t.title}
                       </p>
                       <p className="text-xs text-app-secondary truncate mt-0.5">{t.artist}</p>

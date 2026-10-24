@@ -29,7 +29,7 @@ export const BottomNav: React.FC = () => {
                 isActive ? 'bg-app-card' : ''
               }`}
             >
-              <Icon className={`w-6 h-6 ${isActive ? 'text-app-primary' : 'text-app-primary'}`} />
+              <Icon className={`w-6 h-6 ${isActive ? 'text-app-accent' : 'text-app-primary'}`} />
             </span>
             <span className="text-sm font-semibold text-app-primary">{item.label}</span>
           </button>

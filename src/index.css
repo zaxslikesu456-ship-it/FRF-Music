@@ -111,6 +111,8 @@ html {
 .bg-app-card { background-color: var(--bg-card); }
 .bg-app-solid { background-color: var(--bg-solid, var(--bg-surface)); }
 .bg-app-highlight { background-color: var(--bg-highlight); }
+/* The accent as a text/icon colour (liked hearts, the song that is playing). */
+.text-app-accent { color: var(--bg-highlight); }
 
 .text-app-primary { color: var(--text-primary); }
 .text-app-secondary { color: var(--text-secondary); }

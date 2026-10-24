@@ -274,7 +274,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
                   title="Download Song"
                 >
                   {isDownloaded ? (
-                    <Check className="w-5 h-5 text-green-400" />
+                    <Check className="w-5 h-5 text-app-accent" />
                   ) : (
                     <Download className="w-5 h-5" />
                   )}
@@ -374,7 +374,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
               {/* Liked / Favorite Option */}
               <MenuItem
                 icon={
-                  <Heart className={`w-6 h-6 ${isFav ? 'fill-white text-white' : ''}`} />
+                  <Heart className={`w-6 h-6 ${isFav ? 'text-app-accent fill-current' : ''}`} />
                 }
                 label={isFav ? 'Remove from Liked' : 'Like song'}
                 onClick={() => {

@@ -21,7 +21,7 @@ const Chips: React.FC<{
         onClick={() => onSelect(o.value)}
         className={`px-3.5 py-1.5 rounded-full text-sm font-semibold shrink-0 border ${
           value === o.value
-            ? 'bg-app-highlight text-app-inverse border-white'
+            ? 'bg-app-highlight text-app-inverse border-transparent'
             : 'bg-app-card text-app-secondary border-app-theme'
         }`}
       >

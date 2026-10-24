@@ -86,7 +86,7 @@ const ChipGroup: React.FC<{
         onClick={() => onSelect(o.id)}
         className={`px-4 py-2 rounded-full text-sm font-semibold border transition-all ${
           value === o.id
-            ? 'bg-app-highlight text-app-inverse border-white'
+            ? 'bg-app-highlight text-app-inverse border-transparent'
             : 'bg-app-surface text-app-secondary border-app-theme'
         }`}
       >
@@ -708,7 +708,7 @@ export const SettingsView: React.FC = () => {
                               onClick={() => updateSettings({ autoDownloadLimitMb: mb })}
                               className={`px-3.5 py-1.5 rounded-full text-sm font-semibold shrink-0 border ${
                                 settings.autoDownloadLimitMb === mb
-                                  ? 'bg-app-highlight text-app-inverse border-white'
+                                  ? 'bg-app-highlight text-app-inverse border-transparent'
                                   : 'bg-app-card text-app-secondary border-app-theme'
                               }`}
                             >

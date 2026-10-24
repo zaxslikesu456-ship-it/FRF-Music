@@ -2,6 +2,19 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Maximize2, Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 import { MINI_CHANNEL, invokeTauri } from '../utils/miniPlayer';
 import type { MiniState } from '../utils/miniPlayer';
+import { applyThemeSettings } from '../utils/theme';
+import type { SettingsState } from '../types/music';
+
+// The mini window loads none of the app contexts, so it reads the saved theme
+// (and custom accent) itself, and again whenever the main window changes it.
+function applySavedTheme() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('bw_music_settings_v11') || 'null');
+    if (saved && typeof saved === 'object') applyThemeSettings(saved as SettingsState);
+  } catch {
+    // keep the defaults
+  }
+}
 
 // Tiny always-on-top window (index.html?mini=1). No app contexts: it only
 // mirrors state sent by the main window and sends commands back.
@@ -14,6 +27,11 @@ export const PcMiniWindow: React.FC = () => {
     document.body.style.background = '#121212';
     document.body.style.margin = '0';
     document.body.style.overflow = 'hidden';
+    applySavedTheme();
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'bw_music_settings_v11') applySavedTheme();
+    };
+    window.addEventListener('storage', onStorage);
     const c = new BroadcastChannel(MINI_CHANNEL);
     chan.current = c;
     c.onmessage = ev => {
@@ -23,6 +41,7 @@ export const PcMiniWindow: React.FC = () => {
     const retry = window.setInterval(() => c.postMessage({ type: 'hello' }), 1500);
     return () => {
       window.clearInterval(retry);
+      window.removeEventListener('storage', onStorage);
       c.close();
     };
   }, []);
@@ -59,12 +78,12 @@ export const PcMiniWindow: React.FC = () => {
             send('seek', ((e.clientX - r.left) / r.width) * s.duration);
           }}
         >
-          <div className="h-full rounded-full bg-white" style={{ width: `${pct}%` }} />
+          <div className="h-full rounded-full bg-app-highlight" style={{ width: `${pct}%` }} />
         </div>
         <button className={`${btn} w-8 h-8`} title="Previous" onClick={() => send('prev')}>
           <SkipBack size={18} fill="currentColor" />
         </button>
-        <button className={`${btn} w-9 h-9 bg-white/15`} title={s?.isPlaying ? 'Pause' : 'Play'} onClick={() => send('toggle')}>
+        <button className="flex items-center justify-center rounded-full w-9 h-9 bg-app-highlight text-app-inverse hover:opacity-90" title={s?.isPlaying ? 'Pause' : 'Play'} onClick={() => send('toggle')}>
           {s?.isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
         </button>
         <button className={`${btn} w-8 h-8`} title="Next" onClick={() => send('next')}>

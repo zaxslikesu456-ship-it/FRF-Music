@@ -83,7 +83,7 @@ export const LikedMusicView: React.FC<{ onBack?: () => void }> = ({ onBack }) =>
                   className="w-12 h-12 rounded-lg object-cover shrink-0 border border-white/5"
                 />
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm sm:text-base font-semibold truncate ${isCurrent ? 'text-white font-bold' : 'text-zinc-100'}`}>
+                  <p className={`text-sm sm:text-base font-semibold truncate ${isCurrent ? 'text-app-accent font-bold' : 'text-zinc-100'}`}>
                     {track.title}
                   </p>
                   <p className="text-xs text-zinc-400 truncate mt-0.5">{track.artist}</p>

@@ -237,7 +237,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
                     className="w-14 h-14 rounded-lg object-cover shrink-0"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className={`text-base font-semibold truncate ${isCurrent ? 'text-app-primary font-bold' : 'text-app-primary'}`}>
+                    <p className={`text-base font-semibold truncate ${isCurrent ? 'text-app-accent font-bold' : 'text-app-primary'}`}>
                       {t.title}
                     </p>
                     <p className="text-sm text-app-secondary truncate mt-0.5">{t.artist}</p>
@@ -253,7 +253,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
                     className="p-2 shrink-0 cursor-pointer"
                     title="Like"
                   >
-                    <Heart className={`w-5 h-5 ${isFav ? 'text-app-primary fill-white' : 'text-app-secondary'}`} />
+                    <Heart className={`w-5 h-5 ${isFav ? 'text-app-accent fill-current' : 'text-app-secondary'}`} />
                   </button>
                   <span className="text-sm text-app-secondary shrink-0">
                     {formatDuration(t.duration)}
