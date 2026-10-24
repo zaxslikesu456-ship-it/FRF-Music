@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { formatMb } from '../utils/autoDownload';
 import { PlaybackHealthModal } from './PlaybackHealthModal';
 import { ListeningStatsModal } from './ListeningStatsModal';
+import { DeviceSyncModal } from './DeviceSyncModal';
 import { getOfflineUsageBytes } from '../utils/downloadManager';
 import {
   BarChart3,
@@ -20,6 +21,7 @@ import {
   LibraryBig,
   Sliders,
   Activity,
+  Smartphone,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import {
@@ -120,6 +122,7 @@ export const SettingsView: React.FC = () => {
   const isAndroidApp = Capacitor.getPlatform() === 'android';
   const [showHealth, setShowHealth] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [showSync, setShowSync] = useState(false);
   const [restoreStatus, setRestoreStatus] = useState('');
   const [restoring, setRestoring] = useState(false);
 
@@ -196,6 +199,7 @@ export const SettingsView: React.FC = () => {
     <div className="flex-1 overflow-y-auto pb-28 bg-transparent">
       <PlaybackHealthModal isOpen={showHealth} onClose={() => setShowHealth(false)} />
       <ListeningStatsModal isOpen={showStats} onClose={() => setShowStats(false)} />
+      <DeviceSyncModal isOpen={showSync} onClose={() => setShowSync(false)} />
       <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-6">Settings</h1>
 
       <div className="px-5 space-y-4 stagger">
@@ -508,6 +512,23 @@ export const SettingsView: React.FC = () => {
                           </div>
                         </button>
                       </div>
+                      <div className="py-2">
+                        <button
+                          onClick={() => setShowSync(true)}
+                          className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-app-card border border-app-theme text-left active:scale-98 transition-all"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-xl bg-app-surface border border-app-theme text-app-primary">
+                              <Smartphone className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-base font-semibold text-app-primary">Sync with another device</p>
+                              <p className="text-xs text-app-secondary">Move playlists, likes and history by QR or file</p>
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+
                       <div className="py-2">
                         <button
                           onClick={() => setShowHealth(true)}
