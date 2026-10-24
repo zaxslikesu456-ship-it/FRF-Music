@@ -25,7 +25,10 @@ import {
   Volume1,
   Volume2,
   VolumeX,
+  Share2,
 } from 'lucide-react';
+import { LyricCardModal } from './LyricCardModal';
+import type { LyricCardInput } from '../utils/lyricCard';
 import { useAudio } from '../context/AudioContext';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
@@ -108,6 +111,7 @@ export const NowPlayingScreen: React.FC = () => {
   const [centerMode, setCenterMode] = useState<PlayerCenterMode>('artwork');
   const [rawLyrics, setRawLyrics] = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [lyricCard, setLyricCard] = useState<LyricCardInput | null>(null);
 
   // Double-tap the artwork to like the track, with a heart pop animation.
   const [heartPop, setHeartPop] = useState(false);
@@ -228,6 +232,30 @@ export const NowPlayingScreen: React.FC = () => {
     }
   }, [activeLyricIndex, centerMode]);
 
+  // Build a share card around the line that is playing now (or the first line).
+  const shareLyric = () => {
+    if (!currentTrack) return;
+    let lines: string[];
+    let at: number;
+    if (syncedLyrics.length > 0) {
+      lines = syncedLyrics.map(l => l.text).filter(Boolean);
+      const cur = syncedLyrics[Math.max(0, activeLyricIndex)]?.text || lines[0];
+      at = Math.max(0, lines.indexOf(cur));
+    } else {
+      lines = (rawLyrics || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      at = 0;
+    }
+    if (lines.length === 0) return;
+    setLyricCard({
+      title: currentTrack.title,
+      artist: currentTrack.artist,
+      coverUrl: currentTrack.coverUrl,
+      before: lines.slice(Math.max(0, at - 1), at),
+      line: lines[at],
+      after: lines.slice(at + 1, at + 3),
+    });
+  };
+
   if (!isPlayerOpen || !currentTrack) return null;
 
   const isFav = favorites.includes(currentTrack.id);
@@ -250,6 +278,7 @@ export const NowPlayingScreen: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-40 bg-app-primary max-w-xl mx-auto flex flex-col select-none overflow-hidden animate-in fade-in duration-300">
+      <LyricCardModal input={lyricCard} onClose={() => setLyricCard(null)} />
       <AddToPlaylistModal
         track={showAddToPlaylist ? currentTrack : null}
         onClose={() => setShowAddToPlaylist(false)}
@@ -394,9 +423,20 @@ export const NowPlayingScreen: React.FC = () => {
             ref={lyricsContainerRef}
             className="flex-1 min-h-0 overflow-y-auto w-full py-4 no-scrollbar space-y-5 px-2 animate-in fade-in duration-200"
           >
-            <p className="text-center text-xs text-app-secondary pb-1 tracking-wide uppercase">
-              Synced Lyrics • Tap line to jump
-            </p>
+            <div className="flex items-center justify-center gap-3 pb-1">
+              <p className="text-center text-xs text-app-secondary tracking-wide uppercase">
+                {syncedLyrics.length > 0 ? 'Synced Lyrics • Tap line to jump' : 'Lyrics'}
+              </p>
+              {!lyricsLoading && (syncedLyrics.length > 0 || rawLyrics) && (
+                <button
+                  onClick={shareLyric}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
+                  title="Share a lyric card"
+                >
+                  <Share2 className="w-3.5 h-3.5" /> Share
+                </button>
+              )}
+            </div>
 
             {lyricsLoading ? (
               <div className="flex flex-col items-center justify-center py-20 gap-3">

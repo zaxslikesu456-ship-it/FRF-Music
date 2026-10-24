@@ -25,6 +25,8 @@ import {
   isAlreadyOffline,
 } from '../utils/downloadQueue';
 import { autoDownloadAllowed, startNetworkMonitor } from '../utils/autoDownload';
+import { normalizationGainDb } from '../utils/loudness';
+import { logPlayStart, logListened, flushListening } from '../utils/listening';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { createYtBridgePlayer, shouldUseYtBridge } from '../utils/ytBridge';
 import {
@@ -67,7 +69,10 @@ interface BackgroundAudioPlugin {
     coverUrl?: string;
     startTime?: number;
     duration?: number;
+    gainDb?: number;
   }): Promise<void>;
+  setNormGain(options: { gainDb: number }): Promise<void>;
+  getOutputDevice(): Promise<OutputDevice>;
   pause(): Promise<void>;
   resume(): Promise<void>;
   seek(options: { position: number }): Promise<void>;
@@ -90,6 +95,7 @@ interface BackgroundAudioPlugin {
     artist: string;
     coverUrl?: string;
     duration?: number;
+    gainDb?: number;
   }): Promise<void>;
   clearNext(): Promise<void>;
   // iPhone: the songs lined up behind the current one. The native queue player
@@ -103,6 +109,7 @@ interface BackgroundAudioPlugin {
       artist: string;
       coverUrl?: string;
       duration?: number;
+      gainDb?: number;
     }>;
   }): Promise<{ queued?: number }>;
   clearUpcoming(): Promise<void>;
@@ -118,6 +125,12 @@ interface BackgroundAudioPlugin {
     position?: number;
     duration?: number;
   }): Promise<void>;
+}
+
+export interface OutputDevice {
+  key: string;
+  name: string;
+  kind: 'bluetooth' | 'wired' | 'usb' | 'speaker';
 }
 
 const BackgroundAudio = Capacitor.isNativePlatform()
@@ -184,6 +197,7 @@ interface AudioContextType {
   recentlyPlayed: Track[];
   playCounts: Record<string, number>;
   mostPlayed: { track: Track; count: number }[];
+  outputDevice: OutputDevice | null;
   sleepSecondsRemaining: number | null;
   settings: SettingsState;
   analyserNode: SpectrumSource | null;
@@ -543,10 +557,12 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   const volumeRef = useRef(volume);
+  // Volume normalization for the web audio element (1 = untouched, lower = quieter).
+  const normLinRef = useRef(1);
   useEffect(() => {
     volumeRef.current = volume;
     if (audioRef.current) {
-      audioRef.current.volume = volume;
+      audioRef.current.volume = volume * normLinRef.current;
     }
     if (ytPlayerRef.current && ytPlayerRef.current.setVolume) {
       try {
@@ -642,6 +658,63 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  // Where the sound goes (Android): a named Bluetooth headset, wired, USB or the
+  // speaker. Each can have its own equalizer preset.
+  const [outputDevice, setOutputDevice] = useState<OutputDevice | null>(null);
+  useEffect(() => {
+    if (!BackgroundAudio || Capacitor.getPlatform() !== 'android') return;
+    let alive = true;
+    const read = () =>
+      BackgroundAudio.getOutputDevice?.()
+        .then(d => {
+          if (alive && d?.key) setOutputDevice(prev => (prev?.key === d.key ? prev : d));
+        })
+        .catch(() => {});
+    void read();
+    const handle = (BackgroundAudio as any).addListener('outputDeviceChanged', (d: OutputDevice) => {
+      if (alive && d?.key) setOutputDevice(d);
+    });
+    document.addEventListener('visibilitychange', read);
+    return () => {
+      alive = false;
+      document.removeEventListener('visibilitychange', read);
+      Promise.resolve(handle)
+        .then((h: any) => h?.remove?.())
+        .catch(() => {});
+    };
+  }, []);
+
+  // A device with a saved preset gets it back as soon as it connects.
+  useEffect(() => {
+    if (!outputDevice) return;
+    const s = settingsRef.current;
+    if (s.eqRememberPerDevice === false) return;
+    const saved = s.eqPerDevice?.[outputDevice.key];
+    if (saved) setSettings(prev => ({ ...prev, equalizer: saved }));
+  }, [outputDevice?.key]);
+
+  // Attenuation (dB, 0 or lower) that evens out this song's loudness.
+  const gainDbFor = (t: Track | null | undefined): number => {
+    if (!t) return 0;
+    const vid = youtubePlaybackOverridesRef.current[t.id] || t.youtubeId;
+    return normalizationGainDb(vid, settingsRef.current?.normalizeVolume !== false);
+  };
+
+  // Turning normalization on or off, or learning a song's loudness late, re-levels
+  // the song that is playing without restarting it.
+  useEffect(() => {
+    const apply = () => {
+      const db = gainDbFor(currentTrackRef.current);
+      normLinRef.current = Math.pow(10, db / 20);
+      if (audioRef.current) audioRef.current.volume = volumeRef.current * normLinRef.current;
+      BackgroundAudio?.setNormGain?.({ gainDb: db }).catch(() => {});
+    };
+    apply();
+    const id = window.setInterval(apply, 6000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTrack?.id, settings.normalizeVolume]);
 
   // Latest FFT frame pushed by Android's Visualizer during native playback.
   const nativeSpectrumRef = useRef<Uint8Array>(new Uint8Array(64));
@@ -1768,7 +1841,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const setEngineVolume = (v: number) => {
       const level = Math.max(0, Math.min(1, v));
       try {
-        if (audioRef.current) audioRef.current.volume = level;
+        if (audioRef.current) audioRef.current.volume = level * normLinRef.current;
       } catch {
         // ignore
       }
@@ -2092,6 +2165,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         coverUrl: track.coverUrl,
         startTime,
         duration: track.duration,
+        gainDb: gainDbFor(track),
       }).catch(() => {
         settleNativeConfirm(false, true);
       });
@@ -2257,6 +2331,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         coverUrl: track.coverUrl,
         startTime,
         duration: track.duration,
+        gainDb: gainDbFor(track),
       })
         .then(() => {
           if (playGenRef.current !== currentGen) {
@@ -2309,7 +2384,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     nativeOwnerRef.current = false;
     const audio = audioRef.current;
     audio.src = url;
-    audio.volume = volumeRef.current;
+    normLinRef.current = Math.pow(10, gainDbFor(_track) / 20);
+    audio.volume = volumeRef.current * normLinRef.current;
     if (startTime > 0) {
       const setPos = () => {
         audio.removeEventListener('loadedmetadata', setPos);
@@ -2383,6 +2459,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // History and play counts for a song that is starting.
   const recordPlay = (track: Track) => {
+    logPlayStart(track);
     setRecentlyPlayed(prev => {
       const updated = [track, ...prev.filter(t => t.id !== track.id)].slice(0, 50);
       localStorage.setItem('bw_music_recently_played_v2', JSON.stringify(updated));
@@ -2398,6 +2475,34 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return next;
     });
   };
+
+  // Count listening time while a song is actually playing (feeds stats and mixes).
+  const listenTrackRef = useRef<Track | null>(null);
+  listenTrackRef.current = currentTrack;
+  useEffect(() => {
+    if (!isPlaying) {
+      flushListening();
+      return;
+    }
+    let lastTick = Date.now();
+    let ticks = 0;
+    const id = window.setInterval(() => {
+      const now = Date.now();
+      const t = listenTrackRef.current;
+      if (t) logListened(t, (now - lastTick) / 1000);
+      lastTick = now;
+      if (++ticks % 6 === 0) flushListening();
+    }, 5000);
+    const onHide = () => flushListening();
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onHide);
+      const t = listenTrackRef.current;
+      if (t) logListened(t, (Date.now() - lastTick) / 1000);
+      flushListening();
+    };
+  }, [isPlaying]);
 
   // The native player rolled into the song queued behind the previous one without
   // us starting it. The audio is already playing, so only the app's own state
@@ -2846,6 +2951,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           artist: target.artist,
           coverUrl: target.coverUrl,
           duration: target.duration,
+          gainDb: gainDbFor(target),
         });
         queuedNextIdRef.current = target.id;
       } catch {
@@ -2928,6 +3034,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         artist: string;
         coverUrl?: string;
         duration?: number;
+        gainDb?: number;
       }> = [];
       for (const t of following) {
         if (cancelled) return;
@@ -2959,6 +3066,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           artist: t.artist,
           coverUrl: t.coverUrl,
           duration: t.duration,
+          gainDb: gainDbFor(t),
         });
         // First song ready: send right away so a short song cannot end before it.
         if (ready.length === 1) {
@@ -3024,7 +3132,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch {
       // ignore
     }
-    if (audioRef.current) audioRef.current.volume = clamped;
+    if (audioRef.current) audioRef.current.volume = clamped * normLinRef.current;
     if (ytPlayerRef.current && ytPlayerRef.current.setVolume) {
       ytPlayerRef.current.setVolume(clamped * 100);
     }
@@ -3521,6 +3629,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         recentlyPlayed,
         playCounts,
         mostPlayed,
+        outputDevice,
         sleepSecondsRemaining,
         settings,
         analyserNode: spectrumSourceRef.current,

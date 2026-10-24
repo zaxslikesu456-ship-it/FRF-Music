@@ -3,6 +3,13 @@ import { PlayCircle, Loader2 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { searchYouTubeMusic, getCachedSearch } from '../utils/ytMusicApi';
 import type { Track } from '../types/music';
+import {
+  buildDailyMixes,
+  buildRediscover,
+  leadArtistsForToday,
+  dayKey,
+  type Mix,
+} from '../utils/listening';
 
 interface Shelf {
   title: string;
@@ -42,6 +49,8 @@ export const HomeView: React.FC = () => {
     favoriteTracks,
     recentlyPlayed,
     mostPlayed,
+    playCounts,
+    favorites,
     downloads,
     playQueue,
     settings,
@@ -151,6 +160,53 @@ export const HomeView: React.FC = () => {
     tracks.forEach(t => map.set(t.id, t));
     return Array.from(map.values());
   }, [tracks, favoriteTracks, recentlyPlayed]);
+
+  // Daily mixes and Rediscover, built from likes, history and listening time.
+  const [mixExtras, setMixExtras] = useState<Record<string, Track[]>>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('frf_mix_extras_v1') || 'null');
+      return raw && raw.day === dayKey() ? raw.extras : {};
+    } catch {
+      return {};
+    }
+  });
+  const mixInput = useMemo(
+    () => ({ known: allKnown, favoriteIds: favorites, playCounts }),
+    [allKnown, favorites, playCounts]
+  );
+  const leadKey = leadArtistsForToday(mixInput).join('|');
+  useEffect(() => {
+    const leads = leadKey ? leadKey.split('|') : [];
+    const missing = leads.filter(a => !mixExtras[a]);
+    if (missing.length === 0) return;
+    let live = true;
+    void Promise.allSettled(missing.map(a => searchYouTubeMusic(a))).then(res => {
+      if (!live) return;
+      const add: Record<string, Track[]> = {};
+      res.forEach((r, i) => {
+        if (r.status === 'fulfilled' && r.value) add[missing[i]] = r.value.slice(0, 12);
+      });
+      if (Object.keys(add).length === 0) return;
+      setMixExtras(prev => {
+        const next = { ...prev, ...add };
+        try {
+          localStorage.setItem('frf_mix_extras_v1', JSON.stringify({ day: dayKey(), extras: next }));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leadKey]);
+  const madeForYou = useMemo<Mix[]>(() => {
+    const list = buildDailyMixes(mixInput, mixExtras);
+    const re = buildRediscover(mixInput);
+    return re ? [...list, re] : list;
+  }, [mixInput, mixExtras]);
 
   // Initial Shelves Load
   useEffect(() => {
@@ -322,6 +378,40 @@ export const HomeView: React.FC = () => {
               </div>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Daily mixes and Rediscover */}
+      {madeForYou.length > 0 && (
+        <div className="mt-8 anim-rise">
+          <h2 className={shelfSectionHeaderClass}>Made for you</h2>
+          <div className="flex gap-4 overflow-x-auto px-5 pb-2 no-scrollbar">
+            {madeForYou.map(mix => (
+              <button
+                key={mix.id}
+                onClick={() => playQueue(mix.tracks, 0)}
+                className={`${shelfCardClass} hover:opacity-90 active:scale-[0.98] transition-all`}
+              >
+                <div className={shelfImgContainerClass}>
+                  <div className="absolute inset-0 grid grid-cols-2 grid-rows-2">
+                    {[0, 1, 2, 3].map(i => (
+                      <img
+                        key={i}
+                        src={mix.tracks[i % mix.tracks.length]?.coverUrl}
+                        alt=""
+                        loading="lazy"
+                        className="w-full h-full object-cover"
+                      />
+                    ))}
+                  </div>
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2">
+                    <p className="text-sm font-bold text-white">{mix.title}</p>
+                  </div>
+                </div>
+                <p className={shelfArtistClass}>{mix.subtitle}</p>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

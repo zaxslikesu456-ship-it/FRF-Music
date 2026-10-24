@@ -5,6 +5,9 @@ import {
   Sparkles,
   RotateCcw,
   Zap,
+  Headphones,
+  Speaker,
+  Volume2,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import {
@@ -21,7 +24,8 @@ interface EqualizerModalProps {
 }
 
 export const EqualizerModal: React.FC<EqualizerModalProps> = ({ isOpen, onClose }) => {
-  const { settings, updateSettings } = useAudio();
+  const { settings, updateSettings, outputDevice } = useAudio();
+  const remember = settings.eqRememberPerDevice !== false;
 
   const eq = settings.equalizer || DEFAULT_EQUALIZER_SETTINGS;
 
@@ -30,7 +34,13 @@ export const EqualizerModal: React.FC<EqualizerModalProps> = ({ isOpen, onClose 
       ...eq,
       ...partial,
     };
-    updateSettings({ equalizer: updated });
+    // With "remember per headphone" on, the change is also kept for this output.
+    updateSettings({
+      equalizer: updated,
+      ...(remember && outputDevice
+        ? { eqPerDevice: { ...(settings.eqPerDevice || {}), [outputDevice.key]: updated } }
+        : {}),
+    });
   };
 
   const handlePresetSelect = (presetKey: EqualizerPreset) => {
@@ -129,6 +139,56 @@ export const EqualizerModal: React.FC<EqualizerModalProps> = ({ isOpen, onClose 
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+          {/* Output device and per-headphone presets */}
+          {outputDevice && (
+            <div className="p-3 rounded-2xl bg-app-card border border-app-theme flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-app-surface border border-app-theme text-app-primary">
+                {outputDevice.kind === 'speaker' ? <Speaker className="w-4 h-4" /> : <Headphones className="w-4 h-4" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-app-primary truncate">{outputDevice.name}</p>
+                <p className="text-xs text-app-secondary">
+                  {remember
+                    ? settings.eqPerDevice?.[outputDevice.key]
+                      ? 'Using the preset saved for this output'
+                      : 'Your changes will be saved for this output'
+                    : 'One preset for every output'}
+                </p>
+              </div>
+              <button
+                onClick={() => updateSettings({ eqRememberPerDevice: !remember })}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                  remember
+                    ? 'bg-app-highlight text-app-inverse'
+                    : 'bg-app-surface text-app-secondary border border-app-theme'
+                }`}
+              >
+                {remember ? 'REMEMBER' : 'OFF'}
+              </button>
+            </div>
+          )}
+
+          {/* Volume normalization */}
+          <div className="p-3 rounded-2xl bg-app-card border border-app-theme flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-app-surface border border-app-theme text-app-primary">
+              <Volume2 className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-app-primary">Volume normalization</p>
+              <p className="text-xs text-app-secondary">Turns loud songs down so they play at a similar level</p>
+            </div>
+            <button
+              onClick={() => updateSettings({ normalizeVolume: settings.normalizeVolume === false })}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                settings.normalizeVolume !== false
+                  ? 'bg-app-highlight text-app-inverse'
+                  : 'bg-app-surface text-app-secondary border border-app-theme'
+              }`}
+            >
+              {settings.normalizeVolume !== false ? 'ON' : 'OFF'}
+            </button>
+          </div>
+
           {/* Curve Visualization */}
           <div className="relative p-4 rounded-2xl bg-app-card border border-app-theme overflow-hidden">
             <div className="flex items-center justify-between mb-2">

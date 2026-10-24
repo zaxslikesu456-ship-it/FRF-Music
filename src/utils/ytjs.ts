@@ -1,6 +1,7 @@
 import { Innertube, Platform } from 'youtubei.js/web';
 import type { Types } from 'youtubei.js/web';
 import { timed } from './streamHealth';
+import { recordLoudness } from './loudness';
 
 // googlevideo serves only the first ~1 MiB of IOS / ANDROID / ANDROID_VR /
 // WEB_REMIX streams unless the URL carries a GVS poToken that it accepts, so
@@ -83,6 +84,13 @@ async function resolveWithClient(
     audio.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
   const url = await format.decipher(yt.session.player);
   if (!url) throw new Error(`${client}: decipher failed`);
+  // How loud this song is, for volume normalization.
+  recordLoudness(
+    youtubeId,
+    (format as { loudness_db?: number }).loudness_db ??
+      (info as unknown as { player_config?: { audio_config?: { loudness_db?: number } } }).player_config
+        ?.audio_config?.loudness_db
+  );
   return url;
 }
 
