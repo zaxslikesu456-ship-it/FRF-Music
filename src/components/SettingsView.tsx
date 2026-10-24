@@ -555,9 +555,10 @@ export const SettingsView: React.FC = () => {
                           { id: '15', label: '15 min' },
                           { id: '30', label: '30 min' },
                           { id: '60', label: '60 min' },
+                          { id: '-1', label: 'End of song' },
                         ]}
                         value={String(settings.sleepTimerMinutes)}
-                        onSelect={m => updateSettings({ sleepTimerMinutes: parseInt(m, 10) as any })}
+                        onSelect={m => updateSettings({ sleepTimerMinutes: parseInt(m, 10) })}
                       />
                       <p className="text-sm text-app-secondary pt-3 pb-1">PLAYBACK SPEED</p>
                       <ChipGroup
