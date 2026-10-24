@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio_proxy;
+mod pc_extras;
 mod po_token;
 
 use tauri::{
@@ -13,8 +14,12 @@ use tauri::{
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
+        .plugin(pc_extras::media_keys_plugin())
         .manage(po_token::PotState::default())
-        .invoke_handler(tauri::generate_handler![po_token::mint_po_token])
+        .invoke_handler(tauri::generate_handler![po_token::mint_po_token,
+            pc_extras::toggle_mini_player,
+            pc_extras::show_main_window
+        ])
         // YouTube audio served through the app so the equalizer can process it
         // (see audio_proxy.rs). The page reaches it at http://frfaudio.localhost/.
         .register_asynchronous_uri_scheme_protocol("frfaudio", |_ctx, request, responder| {
@@ -25,13 +30,17 @@ fn main() {
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "Show Aura Music", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Aura Music", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let mini_item = MenuItem::with_id(app, "mini", "Mini player", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &mini_item, &quit_item])?;
+            pc_extras::register_media_keys(app.handle());
 
             let mut builder = TrayIconBuilder::new()
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "mini" => pc_extras::toggle_mini(app),
                     "show" => {
+                        pc_extras::close_mini(app, false);
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.unminimize();
