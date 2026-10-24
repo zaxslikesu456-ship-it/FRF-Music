@@ -94,6 +94,7 @@ export const NowPlayingScreen: React.FC = () => {
     volume,
     setVolume,
     sleepSecondsRemaining,
+    sleepEndOfSong,
     setSleepTimer,
   } = useAudio();
 
@@ -339,15 +340,27 @@ export const NowPlayingScreen: React.FC = () => {
             <p className="text-xs text-app-secondary truncate font-medium tracking-wider uppercase">
               {queue.length > 0 ? 'Playing from Queue' : 'Now Playing'}
             </p>
-            {sleepSecondsRemaining != null && sleepSecondsRemaining > 0 && (
+            {sleepEndOfSong ? (
               <button
                 onClick={() => setSleepTimer(null)}
                 className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-app-secondary bg-app-card/70 rounded-full px-2 py-0.5 active:scale-95 transition-transform"
-                title="Sleep timer ends soon — tap to cancel"
+                title="Playback stops after this song — tap to cancel"
               >
                 <Timer className="w-3 h-3" />
-                {formatTime(sleepSecondsRemaining)}
+                Ends after this song
               </button>
+            ) : (
+              sleepSecondsRemaining != null &&
+              sleepSecondsRemaining > 0 && (
+                <button
+                  onClick={() => setSleepTimer(null)}
+                  className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-app-secondary bg-app-card/70 rounded-full px-2 py-0.5 active:scale-95 transition-transform"
+                  title="Sleep timer ends soon — tap to cancel"
+                >
+                  <Timer className="w-3 h-3" />
+                  {formatTime(sleepSecondsRemaining)}
+                </button>
+              )
             )}
           </div>
 
