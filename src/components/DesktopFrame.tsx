@@ -22,7 +22,10 @@ import {
   Video,
   User,
   Tv,
+  PictureInPicture2,
 } from 'lucide-react';
+import { PcExtrasBridge } from './PcExtrasBridge';
+import { invokeTauri } from '../utils/miniPlayer';
 import { fetchLyrics } from '../utils/lyrics';
 import { useAudio } from '../context/AudioContext';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
@@ -273,6 +276,13 @@ const DesktopNowPlaying: React.FC = () => {
           onChange={e => setVolume(parseFloat(e.target.value))}
           className="w-full h-1 accent-[var(--bg-highlight)] cursor-pointer"
         />
+        <button
+          onClick={() => invokeTauri('toggle_mini_player')}
+          className="text-app-secondary hover:text-app-primary shrink-0"
+          title="Mini player (always on top)"
+        >
+          <PictureInPicture2 className="w-4 h-4" />
+        </button>
       </div>
 
       {showLyrics && (
@@ -389,6 +399,7 @@ export const DesktopFrame: React.FC = () => {
 
   return (
     <div className="w-full h-screen flex bg-app-primary text-app-primary overflow-hidden select-none relative isolate">
+      <PcExtrasBridge />
       <AnimatedBackground type={settings.backgroundAnimation || 'off'} />
       {settings.backgroundImage && (
         <img
