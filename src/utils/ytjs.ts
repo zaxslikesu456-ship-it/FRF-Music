@@ -2,6 +2,7 @@ import { Innertube, Platform } from 'youtubei.js/web';
 import type { Types } from 'youtubei.js/web';
 import { timed } from './streamHealth';
 import { recordLoudness } from './loudness';
+import { getPlatformFetch } from './http';
 
 // googlevideo serves only the first ~1 MiB of IOS / ANDROID / ANDROID_VR /
 // WEB_REMIX streams unless the URL carries a GVS poToken that it accepts, so
@@ -57,11 +58,16 @@ function getInnertube(po?: WebPoTokens): Promise<Innertube> {
   if (po) {
     for (const k of sessions.keys()) if (k !== 'anon') sessions.delete(k);
   }
-  const yt = Innertube.create({
-    ...(po ? { visitor_data: po.visitorData, po_token: po.sessionPot } : {}),
-    retrieve_player: true,
-    generate_session_locally: true,
-  });
+  // On the desktop app the page's own fetch is blocked by CORS, so YouTube's
+  // requests go through the app's native HTTP client instead.
+  const yt = getPlatformFetch().then(platformFetch =>
+    Innertube.create({
+      ...(po ? { visitor_data: po.visitorData, po_token: po.sessionPot } : {}),
+      ...(platformFetch ? { fetch: platformFetch } : {}),
+      retrieve_player: true,
+      generate_session_locally: true,
+    })
+  );
   sessions.set(key, yt);
   yt.catch(() => sessions.delete(key));
   return yt;
