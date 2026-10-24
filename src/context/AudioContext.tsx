@@ -313,7 +313,7 @@ interface AudioContextType {
 const DEFAULT_SETTINGS: SettingsState = {
   theme: 'black-white',
   fontStyle: 'sans',
-  visualizerMode: 'ring',
+  visualizerMode: 'off',
   backgroundAnimation: 'off',
   playbackSpeed: 1.0,
   compactView: false,
@@ -594,7 +594,17 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ['bw_music_settings_v11', 'bw_music_settings_v10', 'bw_music_settings_v9', 'bw_music_settings_v1', 'bw_music_settings'],
       null
     );
-    const merged = saved ? { ...DEFAULT_SETTINGS, ...saved } : DEFAULT_SETTINGS;
+    let merged = saved ? { ...DEFAULT_SETTINGS, ...saved } : DEFAULT_SETTINGS;
+    // The visualizer lines are off by default; switch them off once for everyone
+    // who got them turned on by the update that introduced them.
+    try {
+      if (!localStorage.getItem('frf_visualizer_off_v1')) {
+        localStorage.setItem('frf_visualizer_off_v1', '1');
+        merged = { ...merged, visualizerMode: 'off' };
+      }
+    } catch {
+      // ignore
+    }
     // "End of this song" belongs to the session it was set in.
     return merged.sleepTimerMinutes === -1 ? { ...merged, sleepTimerMinutes: 0 } : merged;
   });
