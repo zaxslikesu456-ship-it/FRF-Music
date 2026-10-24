@@ -347,8 +347,14 @@ input[type="range"]::-moz-range-thumb {
   to { opacity: 1; transform: none; }
 }
 .settings-page-in { animation: settingsPageIn 0.22s ease-out; }
+/* A settings section opening in a window (PC). */
+@keyframes settingsWindowIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.settings-window-in { animation: settingsWindowIn 0.2s ease-out; }
 @media (prefers-reduced-motion: reduce) {
-  .settings-page-in { animation: none; }
+  .settings-page-in, .settings-window-in { animation: none; }
 }
 
 @keyframes heartPop {

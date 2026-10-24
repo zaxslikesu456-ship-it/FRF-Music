@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Capacitor } from '@capacitor/core';
 import { onBackButton } from '../utils/backButton';
 import { formatMb } from '../utils/autoDownload';
@@ -22,6 +23,7 @@ import {
   Info,
   ChevronLeft,
   ChevronRight,
+  X,
   Check,
   Trash2,
   Timer,
@@ -171,13 +173,21 @@ export const SettingsView: React.FC = () => {
     return () => mq.removeEventListener('change', on);
   }, []);
   const [picked, setPicked] = useState<Section | null>(null);
-  const tab: Section | null = picked ?? (wide ? 'personalisation' : null);
+  const tab: Section | null = picked;
   const setTab = (s: Section | null) => setPicked(s);
-  // Phone back button: from a section page back to the menu.
+  // Back button (phones) and Esc (PC): close the open section.
   useEffect(() => {
-    if (wide || !picked) return;
-    return onBackButton(() => setPicked(null));
-  }, [wide, picked]);
+    if (!picked) return;
+    const offBack = onBackButton(() => setPicked(null));
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPicked(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      offBack();
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [picked]);
 
   const readFile = (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -203,6 +213,41 @@ export const SettingsView: React.FC = () => {
     { id: 'info', label: 'App Info', icon: Info, hint: 'Version and build' },
   ];
   const current = sections.find(x => x.id === tab);
+
+  // On PC a section opens in a window over the page; on phones it is the page.
+  const sectionFrame = (content: React.ReactNode) => {
+    if (!wide || !current) return content;
+    const Icon = current.icon;
+    return createPortal(
+      <div
+        className="fixed inset-0 z-[150] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6 anim-fade"
+        onMouseDown={e => {
+          if (e.target === e.currentTarget) setTab(null);
+        }}
+      >
+        <div className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-3xl bg-app-solid border border-app-theme shadow-2xl overflow-hidden settings-window-in">
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-app-theme shrink-0">
+            <span className="w-10 h-10 rounded-xl bg-app-card text-app-accent flex items-center justify-center">
+              <Icon className="w-5 h-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-xl font-bold text-app-primary truncate">{current.label}</h2>
+              <p className="text-xs text-app-secondary truncate">{current.hint}</p>
+            </div>
+            <button
+              onClick={() => setTab(null)}
+              className="p-2 rounded-full text-app-secondary hover:text-app-primary hover:bg-app-card"
+              title="Close"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto">{content}</div>
+        </div>
+      </div>,
+      document.body
+    );
+  };
 
   const themes: { id: AppTheme; label: string; dot: string }[] = [
     { id: 'black-white', label: 'Classic Black', dot: 'bg-app-highlight' },
@@ -242,11 +287,12 @@ export const SettingsView: React.FC = () => {
         <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-4">Settings</h1>
       )}
 
-      <div className="md:flex md:gap-6 md:px-5">
-        {/* The menu: full page on phones, a list on the left on PC */}
+      <div className="md:px-5">
+        {/* The menu: a list on phones, a grid of cards on PC. A section opens as
+            its own page on phones and in a window on PC. */}
         {(wide || !current) && (
-          <nav className="px-5 md:px-0 md:w-64 md:shrink-0">
-            {!wide && (
+          <nav className="px-5 md:px-0 md:max-w-5xl">
+            {(
               <button
                 onClick={() => setTab('personalisation')}
                 className="w-full flex items-center gap-4 p-4 mb-4 rounded-2xl bg-app-surface text-left active:scale-[0.99] transition-transform"
@@ -267,7 +313,9 @@ export const SettingsView: React.FC = () => {
                 <ChevronRight className="w-5 h-5 text-app-secondary shrink-0" />
               </button>
             )}
-            <div className="rounded-2xl bg-app-surface overflow-hidden md:bg-transparent md:sticky md:top-4 md:space-y-1">
+            {/* (The theme's background classes win over size variants, so the PC
+                layout is chosen here rather than with md: classes.) */}
+            <div className={wide ? 'grid grid-cols-2 gap-3' : 'rounded-2xl bg-app-surface overflow-hidden'}>
               {sections.map((s, i) => {
                 const Icon = s.icon;
                 const active = wide && tab === s.id;
@@ -275,9 +323,11 @@ export const SettingsView: React.FC = () => {
                   <button
                     key={s.id}
                     onClick={() => setTab(s.id)}
-                    className={`w-full flex items-center gap-4 px-4 py-3.5 text-left transition-colors md:rounded-xl ${
-                      active ? 'bg-app-card' : 'hover:bg-app-card/60 active:bg-app-card'
-                    } ${!wide && i > 0 ? 'border-t border-app-theme' : ''}`}
+                    className={`w-full flex items-center gap-4 px-4 text-left transition-colors ${
+                      wide
+                        ? 'py-5 rounded-2xl bg-app-surface hover:bg-app-card'
+                        : `py-3.5 ${active ? 'bg-app-card' : 'hover:bg-app-card/60 active:bg-app-card'} ${i > 0 ? 'border-t border-app-theme' : ''}`
+                    }`}
                   >
                     <span
                       className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
@@ -290,7 +340,7 @@ export const SettingsView: React.FC = () => {
                       <span className="block text-base font-semibold text-app-primary truncate">{s.label}</span>
                       <span className="block text-xs text-app-secondary truncate">{s.hint}</span>
                     </span>
-                    {!wide && <ChevronRight className="w-5 h-5 text-app-secondary shrink-0" />}
+                    <ChevronRight className="w-5 h-5 text-app-secondary shrink-0" />
                   </button>
                 );
               })}
@@ -298,12 +348,11 @@ export const SettingsView: React.FC = () => {
           </nav>
         )}
 
-        {current && (
-        <div className="flex-1 min-w-0 px-5 md:px-0 pt-1">
+        {current && sectionFrame(
+        <div className={wide ? '' : 'flex-1 min-w-0 px-5 pt-1'}>
         {sections.filter(s => s.id === tab).map(s => {
           return (
-            <div key={s.id} className={`rounded-2xl bg-app-surface overflow-hidden ${wide ? 'anim-fade' : 'settings-page-in'}`}>
-              {wide && <h2 className="px-5 pt-5 text-xl font-bold text-app-primary">{s.label}</h2>}
+            <div key={s.id} className={wide ? '' : 'rounded-2xl bg-app-surface overflow-hidden settings-page-in'}>
               {(
                 <div className="px-5 pb-5">
                   {/* PERSONALISATION */}
