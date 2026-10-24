@@ -1,4 +1,4 @@
-import { Innertube, Platform } from 'youtubei.js/web';
+import { Innertube, Platform, UniversalCache } from 'youtubei.js/web';
 import type { Types } from 'youtubei.js/web';
 import { timed } from './streamHealth';
 import { recordLoudness } from './loudness';
@@ -49,6 +49,14 @@ export interface WebPoTokens {
 
 const sessions = new Map<string, Promise<Innertube>>();
 
+// One cache shared by every session, kept in IndexedDB. A new token (for example
+// after the PC token window closed while idle) means a new session, and each new
+// session used to download and unpack YouTube's player script again, which made
+// the first song after a break take 4-7 s to start. With the cache the player is
+// reused until YouTube ships a new one. Session data is not cached: every session
+// must use the visitor id its token was minted for.
+const playerCache = new UniversalCache(true);
+
 function getInnertube(po?: WebPoTokens): Promise<Innertube> {
   // A session token is only valid with the visitor ID it was minted for, so
   // each token pair gets its own session; keep just the latest one around.
@@ -66,6 +74,8 @@ function getInnertube(po?: WebPoTokens): Promise<Innertube> {
       ...(platformFetch ? { fetch: platformFetch } : {}),
       retrieve_player: true,
       generate_session_locally: true,
+      cache: playerCache,
+      enable_session_cache: false,
     })
   );
   sessions.set(key, yt);
