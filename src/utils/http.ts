@@ -146,8 +146,11 @@ export async function httpPostJson(
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
-  } finally {
+  } catch (e) {
+    // Cancel only a request that failed or timed out. Cancelling one that already
+    // finished made the desktop HTTP client throw "resource id is invalid".
     ctrl.abort();
+    throw e;
   }
 }
 
@@ -191,8 +194,11 @@ export async function httpGetJson(
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
-  } finally {
+  } catch (e) {
+    // Cancel only a request that failed or timed out. Cancelling one that already
+    // finished made the desktop HTTP client throw "resource id is invalid".
     ctrl.abort();
+    throw e;
   }
 }
 
@@ -232,7 +238,10 @@ export async function httpGetText(
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.text();
-  } finally {
+  } catch (e) {
+    // Cancel only a request that failed or timed out. Cancelling one that already
+    // finished made the desktop HTTP client throw "resource id is invalid".
     ctrl.abort();
+    throw e;
   }
 }
