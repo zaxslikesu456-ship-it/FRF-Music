@@ -29,7 +29,8 @@ import {
 import { autoDownloadAllowed, startNetworkMonitor } from '../utils/autoDownload';
 import { normalizationGainDb } from '../utils/loudness';
 import { isTauriRuntime } from '../utils/http';
-import { logPlayStart, logListened, flushListening } from '../utils/listening';
+import { logPlayStart, logListened, flushListening, getListeningLog, replaceListeningLog } from '../utils/listening';
+import { mergeSync, type SyncData, type SyncLocal, type SyncSummary } from '../utils/deviceSync';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { createYtBridgePlayer, shouldUseYtBridge } from '../utils/ytBridge';
 import {
@@ -277,6 +278,9 @@ interface AudioContextType {
   playPlaylist: (playlistId: string) => void;
   addTrackToPlaylist: (playlistId: string, track: string | Track) => void;
   trackStore: Record<string, Track>;
+  // Sync with another device: what this device has, and a merging import.
+  getSyncLocal: () => SyncLocal;
+  applySyncData: (data: SyncData) => SyncSummary;
   removeTrackFromPlaylist: (playlistId: string, trackId: string) => void;
   reorderPlaylistTracks: (playlistId: string, fromIndex: number, toIndex: number) => void;
   updateSettings: (newSettings: Partial<SettingsState>) => void;
@@ -3470,6 +3474,57 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const syncMusicFolderCopies = () => syncMusicCopies(downloadedTracks);
 
+  // Everything the sync screen needs to describe this device's library.
+  const getSyncLocal = (): SyncLocal => {
+    const known: Record<string, Track> = {};
+    for (const t of [...tracks, ...downloadedTracks, ...favoriteTracks, ...recentlyPlayed]) {
+      if (t?.id) known[t.id] = t;
+    }
+    Object.assign(known, trackStore);
+    return {
+      playlists,
+      favorites,
+      favoriteTracks,
+      recent: recentlyPlayed,
+      playCounts,
+      log: getListeningLog(),
+      known,
+    };
+  };
+
+  // Merge data from another device into this one (nothing is removed).
+  const applySyncData = (data: SyncData): SyncSummary => {
+    const m = mergeSync(getSyncLocal(), data);
+    if (m.newTracks.length > 0) {
+      setTrackStore(prev => {
+        const next = { ...prev };
+        for (const t of m.newTracks) if (!next[t.id]) next[t.id] = t;
+        try {
+          localStorage.setItem('bw_music_track_store_v1', JSON.stringify(next));
+        } catch {
+          // storage full
+        }
+        return next;
+      });
+    }
+    setPlaylists(m.playlists);
+    setFavorites(m.favorites);
+    setFavoriteTracks(m.favoriteTracks);
+    setRecentlyPlayed(m.recent);
+    setPlayCounts(m.playCounts);
+    try {
+      localStorage.setItem('bw_music_playlists_v11', JSON.stringify(m.playlists));
+      localStorage.setItem('bw_music_favorites_v11', JSON.stringify(m.favorites));
+      localStorage.setItem('bw_music_favorite_objects_v1', JSON.stringify(m.favoriteTracks));
+      localStorage.setItem('bw_music_recently_played_v2', JSON.stringify(m.recent));
+      localStorage.setItem('bw_music_play_counts_v1', JSON.stringify(m.playCounts));
+    } catch {
+      // storage full
+    }
+    replaceListeningLog(m.log);
+    return m.summary;
+  };
+
   const importPlaylistToLibrary = (title: string, description: string, playlistTracks: Track[]) => {
     if (!playlistTracks || playlistTracks.length === 0) return;
 
@@ -3862,6 +3917,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         playPlaylist,
         addTrackToPlaylist,
         trackStore,
+        getSyncLocal,
+        applySyncData,
         removeTrackFromPlaylist,
         reorderPlaylistTracks,
         updateSettings,

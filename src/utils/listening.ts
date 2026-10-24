@@ -86,6 +86,26 @@ export function flushListening() {
   save();
 }
 
+/** A copy of the whole log (for syncing to another device). */
+export function getListeningLog(): Log {
+  const l = load();
+  return {
+    days: { ...l.days },
+    artists: { ...l.artists },
+    songs: { ...l.songs },
+    last: { ...l.last },
+  };
+}
+
+/** Replaces the log with a merged one (sync import). */
+export function replaceListeningLog(next: Log) {
+  cache = { ...empty(), ...next };
+  const keys = Object.keys(cache.days).sort();
+  if (keys.length > DAY_KEEP) for (const k of keys.slice(0, keys.length - DAY_KEEP)) delete cache.days[k];
+  dirty = true;
+  save();
+}
+
 export function getLastPlayed(): Record<string, number> {
   return load().last;
 }
