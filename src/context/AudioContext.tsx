@@ -15,6 +15,7 @@ import {
   restoreDownloadsFromMusic,
   syncMusicCopies,
   resolveAudioStreamUrl,
+  resolveAudioStreamUrlFull,
   getLastStreamResolveNotes,
 } from '../utils/downloadManager';
 import { recordSource } from '../utils/streamHealth';
@@ -26,6 +27,7 @@ import {
 } from '../utils/downloadQueue';
 import { autoDownloadAllowed, startNetworkMonitor } from '../utils/autoDownload';
 import { normalizationGainDb } from '../utils/loudness';
+import { isTauriRuntime } from '../utils/http';
 import { logPlayStart, logListened, flushListening } from '../utils/listening';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { createYtBridgePlayer, shouldUseYtBridge } from '../utils/ytBridge';
@@ -143,6 +145,34 @@ const BackgroundAudio = Capacitor.isNativePlatform()
 // Android path hands playback over to it as soon as a direct stream exists.
 const IS_ANDROID = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 const IS_IOS = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios';
+// The Windows desktop app (Tauri).
+const IS_DESKTOP_APP = isTauriRuntime();
+
+// On the desktop app an online stream is played through the app's own
+// "frfaudio" scheme (src-tauri/src/audio_proxy.rs). Played directly, the browser
+// engine hides the samples from Web Audio and the equalizer gets silence.
+// Points the audio element at a song. Sources the equalizer may read (the
+// desktop proxy, the app's own files) are requested with CORS; others are not,
+// because a CORS request to a site that does not allow it fails to load at all.
+function setAudioSource(audio: HTMLAudioElement, url: string) {
+  const src = desktopAudioUrl(url);
+  let corsOk = src.startsWith('blob:') || src.startsWith('data:');
+  try {
+    const u = new URL(src, window.location.href);
+    corsOk = corsOk || u.origin === window.location.origin || u.hostname === 'frfaudio.localhost';
+  } catch {
+    // relative or odd URL: leave CORS off
+  }
+  audio.crossOrigin = corsOk ? 'anonymous' : null;
+  audio.src = src;
+}
+
+function desktopAudioUrl(url: string): string {
+  // Any https stream (googlevideo, or a mirror's): played directly, a stream from
+  // another site would be silent through the equalizer.
+  if (!IS_DESKTOP_APP || !url.startsWith('https://')) return url;
+  return `http://frfaudio.localhost/?u=${encodeURIComponent(url)}`;
+}
 
 const YOUTUBE_APP_ORIGIN =
   typeof window !== 'undefined' && window.location.origin.startsWith('http')
@@ -659,6 +689,18 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     settingsRef.current = settings;
   }, [settings]);
 
+  // PC: the first stream lookup sets up YouTube's player script and the token
+  // window, which takes several seconds. Doing it once at launch means the first
+  // song plays through the app (with the equalizer) instead of timing out to the
+  // YouTube player.
+  useEffect(() => {
+    if (!IS_DESKTOP_APP) return;
+    const id = window.setTimeout(() => {
+      void resolveAudioStreamUrlFull('dQw4w9WgXcQ').catch(() => {});
+    }, 2500);
+    return () => window.clearTimeout(id);
+  }, []);
+
   // Where the sound goes (Android): a named Bluetooth headset, wired, USB or the
   // speaker. Each can have its own equalizer preset.
   const [outputDevice, setOutputDevice] = useState<OutputDevice | null>(null);
@@ -1170,31 +1212,14 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => document.removeEventListener('visibilitychange', onHidden);
   }, []);
 
-  // Initialize HTML5 Audio element and connect Web Audio API Equalizer graph
+  // The one HTML5 audio element (its playback listeners are set up further down),
+  // wired into the Web Audio equalizer. There used to be a second element created
+  // later that replaced this one in audioRef, so everything played on an element
+  // the equalizer was not connected to and the equalizer changed nothing.
   useEffect(() => {
     const audio = new Audio();
     audio.preload = 'auto';
-    audio.crossOrigin = 'anonymous';
     audioRef.current = audio;
-
-    const onTimeUpdate = () => {
-      if (audioModeTrackIdRef.current) {
-        positionRef.current = audio.currentTime;
-        setCurrentTime(audio.currentTime);
-      }
-    };
-
-    const onDurationChange = () => {
-      if (audioModeTrackIdRef.current && audio.duration && !isNaN(audio.duration)) {
-        setDuration(audio.duration);
-      }
-    };
-
-    const onEnded = () => {
-      if (audioModeTrackIdRef.current) {
-        latestActionsRef.current?.handleEnded?.();
-      }
-    };
 
     // The equalizer's audio context starts suspended until the page has had a
     // gesture, and a suspended context makes the element silent. Wake it on the
@@ -1205,13 +1230,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       document.addEventListener(evt, wakeEqualizer, { passive: true });
     }
 
-    audio.addEventListener('timeupdate', onTimeUpdate);
-    audio.addEventListener('durationchange', onDurationChange);
-    audio.addEventListener('ended', onEnded);
-
-    // Connect Web Audio API Equalizer node graph to the audio pipeline
+    // Connect the Web Audio equalizer. Only on PC and the web: the phone apps
+    // equalize in the native player, and this element is just their fallback for
+    // streams from other sites, which Web Audio would turn silent.
     try {
-      globalEqualizer.init(audio);
+      if (!Capacitor.isNativePlatform()) globalEqualizer.init(audio);
       if (settings.equalizer) {
         globalEqualizer.update(settings.equalizer);
       }
@@ -1224,9 +1247,6 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       for (const evt of ['pointerdown', 'keydown', 'touchstart']) {
         document.removeEventListener(evt, wakeEqualizer);
       }
-      audio.removeEventListener('timeupdate', onTimeUpdate);
-      audio.removeEventListener('durationchange', onDurationChange);
-      audio.removeEventListener('ended', onEnded);
       audio.pause();
       audio.removeAttribute('src');
     };
@@ -1748,9 +1768,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => clearInterval(interval);
   }, [currentTrack]);
 
-  // HTML5 Audio setup for local tracks and direct YouTube streams
+  // HTML5 Audio setup for local tracks and direct YouTube streams. Uses the
+  // element created above (the one the equalizer is connected to).
   useEffect(() => {
-    const audio = new Audio();
+    const audio = audioRef.current || new Audio();
     audio.preload = 'auto';
     audio.volume = volume;
     audioRef.current = audio;
@@ -2050,7 +2071,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const audio = audioRef.current;
       audioModeTrackIdRef.current = track.id;
-      audio.src = url;
+      setAudioSource(audio, url);
       const start = () =>
         audio
           .play()
@@ -2383,7 +2404,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!audioRef.current) return Promise.reject(new Error('no audio'));
     nativeOwnerRef.current = false;
     const audio = audioRef.current;
-    audio.src = url;
+    setAudioSource(audio, url);
     normLinRef.current = Math.pow(10, gainDbFor(_track) / 20);
     audio.volume = volumeRef.current * normLinRef.current;
     if (startTime > 0) {
@@ -2593,7 +2614,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // handing over to ExoPlayer meant every song played, cut out while the
       // native player buffered, and restarted. The iframe is only the fallback
       // for a stream that cannot be resolved in time.
-      if (IS_ANDROID && BackgroundAudio?.playUrl && targetId) {
+      // The desktop app does the same with its own audio element, which is what
+      // the equalizer and volume normalization work on; the YouTube player cannot
+      // be processed at all.
+      if (((IS_ANDROID && BackgroundAudio?.playUrl) || IS_DESKTOP_APP) && targetId) {
         const nativeTrack = savedYoutubeId ? { ...track, youtubeId: savedYoutubeId } : track;
         // Only the play generation: stopAllPlayback() bumps it synchronously for
         // every new start. currentTrackRef lags a render behind, so with a

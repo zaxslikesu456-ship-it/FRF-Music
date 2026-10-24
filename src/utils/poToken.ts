@@ -1,4 +1,43 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { getPlatformFetch } from './http';
+
+// CORS-free HTTP: Capacitor's native client in the phone apps, the desktop app's
+// own client on PC. Same shape as CapacitorHttp so the flow below reads the same.
+interface HttpOpts {
+  url: string;
+  headers?: Record<string, string>;
+  data?: unknown;
+  connectTimeout?: number;
+  readTimeout?: number;
+}
+const Http = {
+  async request(method: 'GET' | 'POST', o: HttpOpts): Promise<{ status: number; data: unknown }> {
+    if (Capacitor.isNativePlatform()) {
+      return method === 'GET' ? CapacitorHttp.get(o) : CapacitorHttp.post(o);
+    }
+    const f = (await getPlatformFetch()) || fetch;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), (o.readTimeout || 6000) + (o.connectTimeout || 0));
+    try {
+      const res = await f(o.url, {
+        method,
+        headers: o.headers,
+        body:
+          method === 'POST'
+            ? typeof o.data === 'string'
+              ? o.data
+              : JSON.stringify(o.data)
+            : undefined,
+        signal: ctrl.signal,
+      });
+      return { status: res.status, data: await res.text() };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+  get: (o: HttpOpts) => Http.request('GET', o),
+  post: (o: HttpOpts) => Http.request('POST', o),
+};
 
 // Mints YouTube WebPO (proof-of-origin) tokens on-device using YouTube's own
 // BotGuard VM. Needed when YouTube bot-flags the current network: anonymous
@@ -55,7 +94,9 @@ let minterExpiresAt = 0;
 
 export function getPoTokenMinter(forceRefresh = false): Promise<PoTokenMinter | null> {
   // The BotGuard VM needs a real browser environment, and the token requests
-  // need CORS-free HTTP — both are only guaranteed in the native app.
+  // need CORS-free HTTP, so this runs in the phone apps only. (On PC it runs but
+  // YouTube does not trust tokens from a non-youtube.com page; the desktop app
+  // mints in a hidden youtube.com window instead, see src-tauri/src/po_token.rs.)
   if (!Capacitor.isNativePlatform()) return Promise.resolve(null);
   if (!forceRefresh && minterPromise && Date.now() < minterExpiresAt) {
     return minterPromise;
@@ -94,7 +135,7 @@ async function initMinter(): Promise<PoTokenMinter | null> {
   };
   try {
     // 1. Attestation challenge (BotGuard program + interpreter script location)
-    const challengeRes = await CapacitorHttp.post({
+    const challengeRes = await Http.post({
       url: `https://www.youtube.com/youtubei/v1/att/get?key=${YT_API_KEY}&prettyPrint=false`,
       headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
       data: {
@@ -125,7 +166,7 @@ async function initMinter(): Promise<PoTokenMinter | null> {
   const scriptUrl = interpreterUrlRaw.startsWith('http')
     ? interpreterUrlRaw
     : `https:${interpreterUrlRaw}`;
-  const jsRes = await CapacitorHttp.get({
+  const jsRes = await Http.get({
     url: scriptUrl,
     headers: { 'User-Agent': UA },
     connectTimeout: 6000,
@@ -217,7 +258,7 @@ async function initMinter(): Promise<PoTokenMinter | null> {
   stage('snapshot ok', `signals=${webPoSignalOutput.length}`);
 
   // 5. Exchange the snapshot for an integrity token
-  const itRes = await CapacitorHttp.post({
+  const itRes = await Http.post({
     url: 'https://www.youtube.com/api/jnn/v1/GenerateIT',
     headers: {
       'Content-Type': 'application/json+protobuf',

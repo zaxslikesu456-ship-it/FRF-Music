@@ -1,6 +1,9 @@
 // Prevents an extra console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio_proxy;
+mod po_token;
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -10,6 +13,15 @@ use tauri::{
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
+        .manage(po_token::PotState::default())
+        .invoke_handler(tauri::generate_handler![po_token::mint_po_token])
+        // YouTube audio served through the app so the equalizer can process it
+        // (see audio_proxy.rs). The page reaches it at http://frfaudio.localhost/.
+        .register_asynchronous_uri_scheme_protocol("frfaudio", |_ctx, request, responder| {
+            tauri::async_runtime::spawn(async move {
+                responder.respond(audio_proxy::handle(request).await);
+            });
+        })
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "Show Aura Music", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Aura Music", true, None::<&str>)?;
@@ -60,6 +72,10 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Only the main window: the hidden token window must not quit the app.
+            if window.label() != "main" {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 // Closing the window quits the app, and the music with it. It used
                 // to hide to the tray and keep playing with no window to control it.

@@ -542,8 +542,12 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
   // its own. In the race below the IOS/ANDROID clients answer fastest, but
   // googlevideo cuts their streams off after ~1 MiB, so playback would stop
   // seconds in. On iPhone that failure drops the song to the web player, which
-  // iOS silences the moment the app is backgrounded.
-  if (IS_NATIVE && (Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios')) {
+  // iOS silences the moment the app is backgrounded. The PC app plays the stream
+  // itself too (so the equalizer can process it), so it needs the same source.
+  if (
+    (IS_NATIVE && (Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios')) ||
+    isTauriRuntime()
+  ) {
     try {
       return await withTimeout(resolveAudioStreamUrlFull(youtubeId), 20000, 'youtubei timeout');
     } catch (e) {
@@ -636,7 +640,7 @@ export async function resolveAudioStreamUrlFull(youtubeId: string): Promise<stri
     // after about a minute. A failed attempt resets it, so one retry usually works.
     let native: Awaited<ReturnType<NonNullable<StreamProbePlugin['mintPoToken']>>> | null = null;
     let nativeError = '';
-    for (let attempt = 0; attempt < 2 && !native; attempt++) {
+    for (let attempt = 0; StreamProbe && attempt < 2 && !native; attempt++) {
       const tried = await StreamProbe?.mintPoToken?.({ videoId: youtubeId }).catch((e: unknown) => {
         nativeError = String((e as Error)?.message || e);
         return null;
@@ -660,6 +664,24 @@ export async function resolveAudioStreamUrlFull(youtubeId: string): Promise<stri
         contentPot: native.contentPot,
         sessionPot: native.sessionPot,
       };
+    }
+    // PC: the desktop app mints in a hidden youtube.com window (src-tauri/src/po_token.rs).
+    // Tokens minted in the app's own page are not trusted by YouTube.
+    const tauriInvoke = (window as unknown as {
+      __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> };
+    }).__TAURI_INTERNALS__?.invoke;
+    if (tauriInvoke) {
+      let pcError = '';
+      try {
+        const res = JSON.parse(String(await tauriInvoke('mint_po_token', { videoId: youtubeId })));
+        if (res?.ok && res.visitorData && res.contentPot && res.sessionPot) {
+          return { visitorData: res.visitorData, contentPot: res.contentPot, sessionPot: res.sessionPot };
+        }
+        pcError = res?.error || 'no token returned';
+      } catch (e) {
+        pcError = String((e as Error)?.message || e);
+      }
+      recordSource('PC token minter', false, 0, pcError);
     }
     const minter = await getPoTokenMinter();
     if (!minter) throw new Error('No poToken minter');
