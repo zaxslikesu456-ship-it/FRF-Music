@@ -10,6 +10,7 @@ import {
   type SharedSong,
 } from '../utils/playlistShare';
 import type { Track } from '../types/music';
+import { looksLikeSpotify, fetchSpotifyImport } from '../utils/spotifyImport';
 
 type Phase = 'input' | 'preview' | 'importing' | 'done';
 
@@ -36,6 +37,8 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
   const [phase, setPhase] = useState<Phase>('input');
   const [parsed, setParsed] = useState<SharedPlaylist | null>(null);
   const [kind, setKind] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [progress, setProgress] = useState({ done: 0, total: 0, missed: 0 });
   const [result, setResult] = useState({ added: 0, missed: 0 });
@@ -51,6 +54,7 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
     setPhase('input');
     setParsed(null);
     setKind('');
+    setNotice('');
     setError('');
     setProgress({ done: 0, total: 0, missed: 0 });
   };
@@ -62,6 +66,33 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
 
   const analyse = async (raw: string, suggestedName?: string) => {
     setError('');
+    setNotice('');
+    // A Spotify share link: read the song list from Spotify, then look each
+    // song up on YouTube Music like any other import.
+    if (looksLikeSpotify(raw)) {
+      setBusy(true);
+      try {
+        const sp = await fetchSpotifyImport(raw);
+        setParsed(sp.playlist);
+        setKind('spotify');
+        setName(sp.playlist.name);
+        if (sp.maybeTruncated) {
+          setNotice(
+            'Spotify only shares the first 100 songs of a playlist link. If yours is longer, export it as a CSV with exportify.net and choose that file here instead.'
+          );
+        }
+        setPhase('preview');
+      } catch (e) {
+        setError(
+          String((e as Error)?.message || e).includes('Spotify') || String((e as Error)?.message || e).includes('That is not')
+            ? String((e as Error).message)
+            : 'Could not reach Spotify. Check your connection, and that the playlist is public.'
+        );
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const res = await parseImportText(raw, suggestedName || 'Imported playlist');
     if (!res.playlist) {
       setError(
@@ -150,9 +181,10 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
           {phase === 'input' && (
             <>
               <p className="text-sm text-app-secondary leading-relaxed">
-                Paste a share code from a friend, a list of songs (one per line, like
-                "Blinding Lights - The Weeknd"), or choose a CSV file exported from another music
-                app.
+                Paste a Spotify playlist, album or song link (Share, then Copy link), a share code
+                from a friend, a list of songs (one per line, like "Blinding Lights - The Weeknd"),
+                or choose a CSV file exported from another music app. For Spotify Liked Songs,
+                export them as a CSV with exportify.net.
               </p>
               <textarea
                 value={text}
@@ -183,9 +215,16 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
             <>
               <p className="text-sm text-app-secondary">
                 Found <span className="font-bold text-app-primary">{parsed.songs.length} songs</span>
-                {kind === 'code' ? ' in this share code.' : kind === 'csv' ? ' in the CSV file.' : ' in your list.'}
+                {kind === 'code'
+                  ? ' in this share code.'
+                  : kind === 'csv'
+                    ? ' in the CSV file.'
+                    : kind === 'spotify'
+                      ? ' on Spotify.'
+                      : ' in your list.'}
                 {kind !== 'code' && ' Each one is looked up on YouTube Music.'}
               </p>
+              {notice && <p className="text-xs text-amber-300 leading-relaxed">{notice}</p>}
               <label className="block">
                 <span className="text-xs font-semibold text-app-secondary tracking-wider">PLAYLIST NAME</span>
                 <input
@@ -247,10 +286,10 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
           {phase === 'input' && (
             <button
               onClick={() => void analyse(text)}
-              disabled={!text.trim()}
+              disabled={!text.trim() || busy}
               className="flex-1 py-3 rounded-xl bg-app-highlight text-app-inverse font-bold text-sm disabled:opacity-40"
             >
-              Continue
+              {busy ? 'Reading the Spotify playlist...' : 'Continue'}
             </button>
           )}
           {phase === 'preview' && (
