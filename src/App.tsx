@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { AudioProvider } from './context/AudioContext';
 import { AndroidFrame } from './components/AndroidFrame';
 import { DesktopFrame } from './components/DesktopFrame';
+import { AlarmHost } from './components/AlarmHost';
 
 function useIsDesktop(): boolean {
   const [isDesktop, setIsDesktop] = useState(
@@ -20,7 +21,12 @@ function useIsDesktop(): boolean {
 
 export function App() {
   const isDesktop = useIsDesktop();
-  return <AudioProvider>{isDesktop ? <DesktopFrame /> : <AndroidFrame />}</AudioProvider>;
+  return (
+    <AudioProvider>
+      <AlarmHost />
+      {isDesktop ? <DesktopFrame /> : <AndroidFrame />}
+    </AudioProvider>
+  );
 }
 
 export default App;
