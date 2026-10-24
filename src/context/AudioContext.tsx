@@ -61,6 +61,7 @@ interface BackgroundAudioPlugin {
   playUrl(options: {
     url?: string;
     filePath?: string;
+    trackId?: string;
     title: string;
     artist: string;
     coverUrl?: string;
@@ -91,6 +92,21 @@ interface BackgroundAudioPlugin {
     duration?: number;
   }): Promise<void>;
   clearNext(): Promise<void>;
+  // iPhone: the songs lined up behind the current one. The native queue player
+  // plays through them by itself while the app is in the background.
+  setUpcoming(options: {
+    items: Array<{
+      trackId: string;
+      url?: string;
+      filePath?: string;
+      title: string;
+      artist: string;
+      coverUrl?: string;
+      duration?: number;
+    }>;
+  }): Promise<{ queued?: number }>;
+  clearUpcoming(): Promise<void>;
+  getCurrent(): Promise<{ trackId?: string }>;
   setVisualizerEnabled(options: { enabled: boolean }): Promise<void>;
   setWebAudible(options: { audible: boolean }): Promise<void>;
   handoverNow(options: {
@@ -113,6 +129,7 @@ const BackgroundAudio = Capacitor.isNativePlatform()
 // Native ExoPlayer is the only engine that survives outside the app, so the
 // Android path hands playback over to it as soon as a direct stream exists.
 const IS_ANDROID = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+const IS_IOS = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios';
 
 const YOUTUBE_APP_ORIGIN =
   typeof window !== 'undefined' && window.location.origin.startsWith('http')
@@ -2069,6 +2086,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       BackgroundAudio.playUrl({
         url: url.startsWith('http') ? url : undefined,
         filePath: !url.startsWith('http') ? url : undefined,
+        trackId: track.id,
         title: track.title,
         artist: track.artist,
         coverUrl: track.coverUrl,
@@ -2233,6 +2251,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return BackgroundAudio.playUrl({
         url: rec?.webUrl || (url.startsWith('http') ? url : undefined),
         filePath: rec?.path || (!url.startsWith('http') ? url : undefined),
+        trackId: track.id,
         title: track.title,
         artist: track.artist,
         coverUrl: track.coverUrl,
@@ -2853,6 +2872,128 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (retry !== undefined) window.clearTimeout(retry);
     };
   }, [currentTrack, isPlaying, isShuffle, queue, tracks, settings.autoPlayNext, repeatMode]);
+
+  // iPhone: line up the next several songs inside the native player. iOS suspends
+  // the web layer in the background, so it cannot start each next song itself;
+  // the native queue plays on by itself instead. Streams are looked up one after
+  // another and the queue is sent as soon as the first is ready, then again once
+  // all are.
+  const iosPlanRef = useRef<{ forId: string; tracks: Track[] } | null>(null);
+  useEffect(() => {
+    if (!IS_IOS || !isPlaying || !currentTrack) return;
+    const wantNative = settings.autoPlayNext && repeatMode !== 'one';
+    if (!wantNative) {
+      void BackgroundAudio?.clearUpcoming?.().catch(() => {});
+      return;
+    }
+    const list = queue.length > 0 ? queue : tracks;
+    const idx = list.findIndex(t => t.id === currentTrack.id);
+    if (idx === -1 || list.length < 2) return;
+
+    const LOOKAHEAD = 8;
+    let following: Track[];
+    if (isShuffle) {
+      let plan = iosPlanRef.current;
+      if (!plan || plan.forId !== currentTrack.id) {
+        const pool = list.filter(t => t.id !== currentTrack.id);
+        for (let i = pool.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [pool[i], pool[j]] = [pool[j], pool[i]];
+        }
+        plan = { forId: currentTrack.id, tracks: pool.slice(0, LOOKAHEAD) };
+        iosPlanRef.current = plan;
+      }
+      following = plan.tracks;
+    } else {
+      following = [];
+      for (let i = 1; i <= LOOKAHEAD && i < list.length; i++) {
+        following.push(list[(idx + i) % list.length]);
+      }
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      // The player ignores a queue until it owns playback.
+      for (let i = 0; i < 8 && !nativeOwnerRef.current; i++) {
+        await new Promise(r => window.setTimeout(r, 750));
+        if (cancelled) return;
+      }
+      if (cancelled || !nativeOwnerRef.current || !BackgroundAudio?.setUpcoming) return;
+
+      const ready: Array<{
+        trackId: string;
+        url?: string;
+        filePath?: string;
+        title: string;
+        artist: string;
+        coverUrl?: string;
+        duration?: number;
+      }> = [];
+      for (const t of following) {
+        if (cancelled) return;
+        const record = getOfflineRecord(t.id);
+        let url: string | undefined;
+        let filePath: string | undefined;
+        if (record) {
+          // A download stored only in the web layer (no file on disk) cannot be
+          // played by the native player, so the queue stops here.
+          if (!record.path) break;
+          filePath = record.path;
+        } else {
+          const vid = t.isYouTube
+            ? youtubePlaybackOverridesRef.current[t.id] || t.youtubeId
+            : undefined;
+          if (!vid) break;
+          try {
+            url = await resolveAudioStreamUrl(vid);
+          } catch {
+            break; // keep the order: do not skip a song that failed to resolve
+          }
+        }
+        if (cancelled) return;
+        ready.push({
+          trackId: t.id,
+          url,
+          filePath,
+          title: t.title,
+          artist: t.artist,
+          coverUrl: t.coverUrl,
+          duration: t.duration,
+        });
+        // First song ready: send right away so a short song cannot end before it.
+        if (ready.length === 1) {
+          void BackgroundAudio.setUpcoming({ items: [...ready] }).catch(() => {});
+        }
+      }
+      if (!cancelled && ready.length > 1) {
+        void BackgroundAudio.setUpcoming({ items: ready }).catch(() => {});
+      }
+    };
+    const timer = window.setTimeout(() => void run(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [currentTrack, isPlaying, isShuffle, queue, tracks, settings.autoPlayNext, repeatMode]);
+
+  // iPhone: songs may have rolled by while the web layer was suspended. When the app
+  // comes back, ask the native player which song it is on and catch up.
+  useEffect(() => {
+    if (!IS_IOS) return;
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      void BackgroundAudio?.getCurrent?.()
+        .then(res => {
+          const nativeId = res?.trackId;
+          if (nativeId && nativeId !== currentTrackRef.current?.id) {
+            latestActionsRef.current.adoptAdvancedTrack(nativeId);
+          }
+        })
+        .catch(() => {});
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
 
   const seekTo = (time: number) => {
     lastSeekAtRef.current = Date.now();

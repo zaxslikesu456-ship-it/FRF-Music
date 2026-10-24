@@ -14,13 +14,31 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "pause", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resume", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seek", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setUpcoming", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "clearUpcoming", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getCurrent", returnType: CAPPluginReturnPromise)
     ]
 
-    private var avPlayer: AVPlayer?
+    // A queue player: the songs lined up behind the current one play on by
+    // themselves, even while the app is in the background and the web layer (which
+    // iOS suspends) cannot start the next song.
+    private var avPlayer: AVQueuePlayer?
     private var timeObserverToken: Any?
     private var itemStatusObserver: NSKeyValueObservation?
+    private var currentItemObserver: NSKeyValueObservation?
     private var isConfigured = false
+    private var currentTrackId = ""
+
+    // Details of the songs lined up behind the current one, keyed by player item.
+    private struct UpcomingInfo {
+        let trackId: String
+        let title: String
+        let artist: String
+        let coverUrl: String
+        let duration: Double
+    }
+    private var upcomingInfo: [ObjectIdentifier: UpcomingInfo] = [:]
 
     public override func load() {
         setupAudioSession()
@@ -84,6 +102,13 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
         rcc.nextTrackCommand.isEnabled = true
         rcc.nextTrackCommand.addTarget { [weak self] _ in
+            // With a song already queued, switch to it right here; the web layer may
+            // be asleep and could not do it.
+            if let player = self?.avPlayer, player.items().count > 1 {
+                player.advanceToNextItem()
+                player.play()
+                return .success
+            }
             self?.notifyListeners("remoteNext", data: [:])
             return .success
         }
@@ -113,6 +138,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
         let urlString = call.getString("url", "")
         let filePath = call.getString("filePath", "")
+        let trackId = call.getString("trackId", "")
         let title = call.getString("title", "")
         let artist = call.getString("artist", "")
         let coverUrl = call.getString("coverUrl", "")
@@ -141,41 +167,23 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             timeObserverToken = nil
         }
 
-        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: nil)
-        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemFailedToPlayToEndTime, object: nil)
-        itemStatusObserver?.invalidate()
-        itemStatusObserver = nil
+        unwatchItem()
+        upcomingInfo.removeAll()
 
         let playerItem = AVPlayerItem(url: validUrl)
-        if avPlayer == nil {
-            avPlayer = AVPlayer(playerItem: playerItem)
+        if let existing = avPlayer {
+            existing.removeAllItems()
+            existing.insert(playerItem, after: nil)
         } else {
-            avPlayer?.replaceCurrentItem(with: playerItem)
+            let created = AVQueuePlayer(playerItem: playerItem)
+            avPlayer = created
+            observeCurrentItem(of: created)
         }
+        currentTrackId = trackId
 
         // Report stream failures (403, unsupported codec, network errors) to JS
-        // so the web layer can re-resolve another stream instead of playing silence.
-        itemStatusObserver = playerItem.observe(\.status, options: [.new]) { [weak self] item, _ in
-            if item.status == .failed {
-                self?.notifyListeners("playbackError", data: [
-                    "message": item.error?.localizedDescription ?? "AVPlayer item failed"
-                ])
-            }
-        }
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(playerDidFinishPlaying),
-            name: .AVPlayerItemDidPlayToEndTime,
-            object: playerItem
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(playerFailedToPlayToEnd(_:)),
-            name: .AVPlayerItemFailedToPlayToEndTime,
-            object: playerItem
-        )
+        // and tell it when the song ends.
+        watch(item: playerItem)
 
         // Periodic time observer for progress updates
         let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
@@ -270,15 +278,151 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             player.removeTimeObserver(token)
             timeObserverToken = nil
         }
-        itemStatusObserver?.invalidate()
-        itemStatusObserver = nil
+        unwatchItem()
+        upcomingInfo.removeAll()
+        currentTrackId = ""
         avPlayer?.pause()
-        avPlayer?.replaceCurrentItem(with: nil)
+        // Not replaceCurrentItem(with: nil): on a queue player that skips ahead to the
+        // next song instead of stopping.
+        avPlayer?.removeAllItems()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         call.resolve()
     }
 
-    @objc private func playerDidFinishPlaying() {
+    // Replaces everything lined up behind the current song with these songs.
+    @objc public func setUpcoming(_ call: CAPPluginCall) {
+        guard let player = avPlayer, player.currentItem != nil else {
+            call.resolve(["queued": 0])
+            return
+        }
+        clearUpcomingItems(of: player)
+
+        // Read the raw options: plain strings and numbers, no Capacitor value casts.
+        let entries = (call.options["items"] as? [[String: Any]]) ?? []
+        var added = 0
+        for entry in entries.prefix(12) {
+            let urlString = entry["url"] as? String ?? ""
+            let filePath = entry["filePath"] as? String ?? ""
+            var target: URL?
+            if !filePath.isEmpty {
+                let cleanPath = filePath.replacingOccurrences(of: "file://", with: "")
+                target = URL(fileURLWithPath: cleanPath)
+            } else if !urlString.isEmpty {
+                target = URL(string: urlString)
+            }
+            guard let url = target else { continue }
+
+            let item = AVPlayerItem(url: url)
+            guard player.canInsert(item, after: nil) else { continue }
+            upcomingInfo[ObjectIdentifier(item)] = UpcomingInfo(
+                trackId: entry["trackId"] as? String ?? "",
+                title: entry["title"] as? String ?? "",
+                artist: entry["artist"] as? String ?? "",
+                coverUrl: entry["coverUrl"] as? String ?? "",
+                duration: numberValue(entry["duration"])
+            )
+            player.insert(item, after: nil)
+            added += 1
+        }
+        call.resolve(["queued": added])
+    }
+
+    @objc public func clearUpcoming(_ call: CAPPluginCall) {
+        if let player = avPlayer {
+            clearUpcomingItems(of: player)
+        }
+        call.resolve()
+    }
+
+    // Which song the player is on. The web layer asks when the app comes back to the
+    // front, because songs may have rolled by while it was suspended.
+    @objc public func getCurrent(_ call: CAPPluginCall) {
+        call.resolve(["trackId": currentTrackId])
+    }
+
+    private func clearUpcomingItems(of player: AVQueuePlayer) {
+        for item in player.items().dropFirst() {
+            player.remove(item)
+            upcomingInfo.removeValue(forKey: ObjectIdentifier(item))
+        }
+    }
+
+    private func numberValue(_ value: Any?) -> Double {
+        if let d = value as? Double { return d }
+        if let i = value as? Int { return Double(i) }
+        if let n = value as? NSNumber { return n.doubleValue }
+        return 0
+    }
+
+    // Per-song observers: when it ends, and when it fails to load or play.
+    private func watch(item: AVPlayerItem) {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playerDidFinishPlaying(_:)),
+            name: .AVPlayerItemDidPlayToEndTime,
+            object: item
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playerFailedToPlayToEnd(_:)),
+            name: .AVPlayerItemFailedToPlayToEndTime,
+            object: item
+        )
+        itemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] observed, _ in
+            if observed.status == .failed {
+                self?.notifyListeners("playbackError", data: [
+                    "message": observed.error?.localizedDescription ?? "AVPlayer item failed"
+                ])
+            }
+        }
+    }
+
+    private func unwatchItem() {
+        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemFailedToPlayToEndTime, object: nil)
+        itemStatusObserver?.invalidate()
+        itemStatusObserver = nil
+    }
+
+    private func observeCurrentItem(of player: AVQueuePlayer) {
+        currentItemObserver?.invalidate()
+        currentItemObserver = player.observe(\.currentItem, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                self?.handleCurrentItemChanged()
+            }
+        }
+    }
+
+    // The player rolled into a song that was lined up behind the previous one.
+    private func handleCurrentItemChanged() {
+        guard let player = avPlayer, let current = player.currentItem else { return }
+        guard let info = upcomingInfo.removeValue(forKey: ObjectIdentifier(current)) else { return }
+
+        // Details of songs that were skipped over are no longer needed.
+        let alive = Set(player.items().map { ObjectIdentifier($0) })
+        upcomingInfo = upcomingInfo.filter { alive.contains($0.key) }
+
+        unwatchItem()
+        watch(item: current)
+        currentTrackId = info.trackId
+
+        updateNowPlaying(
+            title: info.title,
+            artist: info.artist,
+            isPlaying: true,
+            coverUrl: info.coverUrl.isEmpty ? nil : info.coverUrl,
+            duration: info.duration > 0 ? info.duration : nil,
+            position: 0
+        )
+        notifyListeners("trackAdvanced", data: ["trackId": info.trackId])
+    }
+
+    @objc private func playerDidFinishPlaying(_ note: Notification) {
+        guard let item = note.object as? AVPlayerItem, let player = avPlayer else { return }
+        // Already rolled into the next song, or about to (one is queued): this is
+        // not the end of playback. Only the last song in the queue ends it.
+        if item !== player.currentItem { return }
+        if player.items().count > 1 { return }
         notifyListeners("playbackEnded", data: [:])
     }
 
