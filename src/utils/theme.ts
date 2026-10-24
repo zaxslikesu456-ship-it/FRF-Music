@@ -153,14 +153,15 @@ function isLight(hex: string): boolean {
 
 // Applies the active theme (+ custom colors, transparency) as CSS variables
 // on the document root so every surface follows it.
-export function applyThemeSettings(settings: SettingsState): void {
+export function applyThemeSettings(settings: SettingsState, artAccent?: string | null): void {
   const base = THEMES[settings.theme] || THEMES['black-white'];
   const root = document.documentElement;
 
   const transparency = Math.max(0, Math.min(90, settings.overlayTransparency));
   const alpha = 1 - transparency / 100;
 
-  const accent = settings.useCustomColors ? settings.customAccent : base.highlight;
+  // "Colors from album art" can stand in for the accent while a song plays.
+  const accent = artAccent || (settings.useCustomColors ? settings.customAccent : base.highlight);
   const primary = settings.useCustomColors ? settings.customBackground : base.primary;
   const surface = settings.useCustomColors ? settings.customBackground : base.surface;
   const card = settings.useCustomColors ? settings.customBackground : base.card;
@@ -176,7 +177,7 @@ export function applyThemeSettings(settings: SettingsState): void {
   root.style.setProperty('--text-secondary', base.textSecondary);
   root.style.setProperty(
     '--text-inverse',
-    settings.useCustomColors ? (isLight(accent) ? '#000000' : '#ffffff') : base.textInverse
+    settings.useCustomColors || artAccent ? (isLight(accent) ? '#000000' : '#ffffff') : base.textInverse
   );
   root.style.setProperty('--border-color', settings.useCustomColors ? hexToRgba(accent, 0.35) : base.border);
   root.style.setProperty('--accent-color', accent);

@@ -1,7 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, Play, Shuffle, MoreVertical, Disc3, Heart, Loader2 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
-import { searchYouTubeMusic, searchYouTubeMusicVideos, loadMoreSearchResults } from '../utils/ytMusicApi';
+import {
+  searchYouTubeMusic,
+  searchYouTubeMusicVideos,
+  searchYouTubeMusicArtists,
+  loadMoreSearchResults,
+} from '../utils/ytMusicApi';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
 import type { Track } from '../types/music';
 
@@ -48,6 +53,24 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
   const [videos, setVideos] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
   const [menuTrack, setMenuTrack] = useState<Track | null>(null);
+  // Header: the artist's photo, wide, fading and drifting as the page scrolls.
+  const [photo, setPhoto] = useState('');
+  const [scrollY, setScrollY] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setPhoto('');
+    searchYouTubeMusicArtists(artistName)
+      .then(list => {
+        const norm = artistName.toLowerCase().trim();
+        const hit = list.find(a => a.name.toLowerCase().trim() === norm) || list[0];
+        // YouTube Music hands out small thumbnails; ask for a large one.
+        if (live && hit?.thumbnail) setPhoto(hit.thumbnail.replace(/=w\d+-h\d+/, '=w1200-h1200'));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [artistName]);
   // More songs load as you scroll to the bottom (further pages of the search).
   const [loadingMore, setLoadingMore] = useState(false);
   const [noMore, setNoMore] = useState(false);
@@ -155,6 +178,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
+    setScrollY(el.scrollTop);
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 600) void loadMore();
   };
 
@@ -174,35 +198,54 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
     <div className="flex-1 flex flex-col overflow-y-auto pb-28 bg-app-primary" onScroll={handleScroll}>
       <TrackOptionsMenuModal track={menuTrack} onClose={() => setMenuTrack(null)} />
 
-      {/* Header */}
-      <div className="relative pt-[calc(max(env(safe-area-inset-top,0px),48px)+12px)] pb-6 px-5 select-none">
+      {/* Compact bar: appears with the artist's name once the photo scrolls away */}
+      <div
+        className="sticky top-0 z-20 -mb-[calc(max(env(safe-area-inset-top,0px),48px)+56px)] flex items-center gap-3 px-4 pt-[calc(max(env(safe-area-inset-top,0px),48px))] h-[calc(max(env(safe-area-inset-top,0px),48px)+56px)] select-none transition-colors"
+        style={{ backgroundColor: `rgba(10, 10, 10, ${Math.min(0.92, Math.max(0, (scrollY - 140) / 120))})` }}
+      >
         <button
           onClick={onBack}
-          className="absolute top-[calc(max(env(safe-area-inset-top,0px),48px)+12px)] left-5 p-2.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 text-app-primary cursor-pointer transition-all shadow-md backdrop-blur-md z-10"
+          className="p-2.5 rounded-full bg-black/35 hover:bg-black/50 active:scale-95 text-white cursor-pointer transition-all backdrop-blur-md"
           title="Back"
         >
           <ChevronLeft className="w-6 h-6 stroke-[2.5]" />
         </button>
+        <p
+          className="text-lg font-bold text-white truncate transition-opacity"
+          style={{ opacity: Math.min(1, Math.max(0, (scrollY - 200) / 80)) }}
+        >
+          {artistName}
+        </p>
+      </div>
 
-        <div className="flex flex-col items-center pt-2">
-          <div className="w-36 h-36 rounded-full bg-app-card overflow-hidden shadow-2xl border border-white/10">
-            {allTracks[0]?.coverUrl && (
-              <img
-                src={allTracks[0].coverUrl}
-                alt={artistName}
-                className="w-full h-full object-cover"
-              />
-            )}
-          </div>
-          <h1 className="text-3xl font-bold text-app-primary mt-5 text-center">{artistName}</h1>
-          <p className="text-sm text-app-secondary mt-1.5">
+      {/* Header: wide artist photo with the name over it */}
+      <div className="relative h-[320px] md:h-[360px] overflow-hidden select-none shrink-0">
+        {(photo || allTracks[0]?.coverUrl) && (
+          <img
+            src={photo || allTracks[0]?.coverUrl}
+            alt={artistName}
+            className="absolute inset-0 w-full h-full object-cover object-[center_25%] will-change-transform"
+            style={{
+              transform: `translateY(${scrollY * 0.35}px) scale(${1 + Math.min(scrollY, 300) / 1500})`,
+              opacity: Math.max(0.15, 1 - scrollY / 380),
+            }}
+          />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-app-primary" />
+        <div className="absolute left-5 right-5 bottom-4">
+          <h1 className="text-4xl md:text-5xl font-black text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)] truncate">
+            {artistName}
+          </h1>
+          <p className="text-sm text-white/80 mt-1">
             {allTracks.length} songs{loading ? ' • loading more...' : ''}
             {likedSongsByArtist.length > 0 ? ` • ${likedSongsByArtist.length} liked` : ''}
           </p>
         </div>
+      </div>
 
+      <div className="relative pb-6 px-5 select-none">
         {/* Action Row */}
-        <div className="flex items-center justify-center gap-10 pt-6">
+        <div className="flex items-center justify-start gap-6 pt-4">
           <button onClick={handlePlayAll} className="p-3 rounded-full bg-app-highlight text-app-inverse hover:scale-110 active:scale-95 transition-transform shadow-lg" title="Play All">
             <Play className="w-6 h-6 fill-current ml-0.5" />
           </button>

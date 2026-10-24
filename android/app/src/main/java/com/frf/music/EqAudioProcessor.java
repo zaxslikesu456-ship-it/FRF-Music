@@ -15,6 +15,7 @@ final class EqAudioProcessor extends BaseAudioProcessor {
     private final ParametricEq eq = new ParametricEq();
     private boolean pcm16;
     private int channels;
+    private int sampleRate;
     private float[] scratch = new float[0];
 
     @Override
@@ -26,6 +27,7 @@ final class EqAudioProcessor extends BaseAudioProcessor {
         }
         pcm16 = inputAudioFormat.encoding == C.ENCODING_PCM_16BIT;
         channels = inputAudioFormat.channelCount;
+        sampleRate = inputAudioFormat.sampleRate;
         eq.configure(inputAudioFormat.sampleRate, channels);
         return inputAudioFormat; // same format out
     }
@@ -38,6 +40,12 @@ final class EqAudioProcessor extends BaseAudioProcessor {
 
         // Flat or disabled: pass the audio through untouched.
         if (eq.isBypass() || channels <= 0) {
+            // The visualizer still gets the samples (read without consuming them).
+            if (PcmSpectrum.enabled && channels > 0) {
+                int frames = remaining / ((pcm16 ? 2 : 4) * channels);
+                if (pcm16) PcmSpectrum.pushPcm16(input, frames, channels, sampleRate);
+                else PcmSpectrum.pushPcmFloat(input, frames, channels, sampleRate);
+            }
             out.put(input);
             out.flip();
             return;
@@ -52,6 +60,7 @@ final class EqAudioProcessor extends BaseAudioProcessor {
             scratch[i] = pcm16 ? input.getShort() / 32768f : input.getFloat();
         }
         eq.process(scratch, frames);
+        PcmSpectrum.pushFloats(scratch, frames, channels, sampleRate);
         for (int i = 0; i < samples; i++) {
             float v = scratch[i];
             if (pcm16) {

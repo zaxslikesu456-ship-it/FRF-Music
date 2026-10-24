@@ -32,7 +32,7 @@ export interface CommunityPlaylist {
   coverUrl: string;
 }
 
-export type VisualizerMode = 'bars' | 'wave' | 'off';
+export type VisualizerMode = 'bars' | 'wave' | 'ring' | 'off';
 export type BackgroundAnimation = 'off' | 'meteors' | 'particles' | 'matrix' | 'rain' | 'aurora';
 
 export type AppTheme =
@@ -97,6 +97,8 @@ export interface SettingsState {
   eqRememberPerDevice?: boolean; // remember an equalizer preset for each headphone
   eqPerDevice?: Record<string, EqualizerSettings>;
   normalizeVolume?: boolean;
+  albumArtColors?: boolean; // tint Now Playing / mini player / PC player with the cover's colour (default on)
+  albumArtAccent?: boolean; // use the cover's colour as the app accent while a song plays (default off)
   crossfadeSeconds?: number; // overlap between songs, 0 = off // turn loud songs down so songs play at a similar level
   sortBy: SortOrder;
   downloadQuality: 'high' | 'low';

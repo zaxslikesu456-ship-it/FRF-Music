@@ -306,6 +306,41 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* Double-tap-to-like heart burst on the Now Playing artwork */
+/* Now Playing: the cover drifts and zooms slowly while a song plays, and the
+   play button gives a small bounce when pressed. */
+@keyframes coverDrift {
+  0% { transform: scale(1.02) translate(0, 0); }
+  50% { transform: scale(1.08) translate(-1.5%, 1%); }
+  100% { transform: scale(1.04) translate(1.5%, -1%); }
+}
+.cover-drift { animation: coverDrift 22s ease-in-out infinite alternate; }
+@keyframes playBounce {
+  0% { transform: scale(1); }
+  35% { transform: scale(0.86); }
+  70% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+.play-bounce { animation: playBounce 0.38s ease-out; }
+/* The blurred cover behind Now Playing cross-fades when the song changes. */
+@keyframes bgFadeIn { from { opacity: 0; } to { opacity: 0.65; } }
+.now-bg { animation: bgFadeIn 0.9s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .cover-drift, .play-bounce, .now-bg { animation: none; }
+}
+
+/* Karaoke lyric line: the accent colour sweeps across the words being sung. */
+.karaoke-line {
+  background-image: linear-gradient(var(--bg-highlight), var(--bg-highlight)),
+    linear-gradient(rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0.45));
+  background-repeat: no-repeat;
+  background-position: left top;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  transition: background-size 0.5s linear;
+  filter: drop-shadow(0 0 14px rgba(0, 0, 0, 0.35));
+}
+
 @keyframes heartPop {
   0% { transform: scale(0.3); opacity: 0; }
   35% { transform: scale(1.15); opacity: 1; }

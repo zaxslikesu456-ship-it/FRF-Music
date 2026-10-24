@@ -4,6 +4,7 @@ import { formatMb } from '../utils/autoDownload';
 import { PlaybackHealthModal } from './PlaybackHealthModal';
 import { SmartDownloadsSettings } from './SmartDownloadsSettings';
 import { ListeningStatsModal } from './ListeningStatsModal';
+import { VISUALIZER_OPTIONS } from './AudioVisualizer';
 import { DeviceSyncModal } from './DeviceSyncModal';
 import { AlarmModal } from './AlarmModal';
 import { loadAlarm, describeNext } from '../utils/alarm';
@@ -18,7 +19,6 @@ import {
   History,
   Settings2,
   Info,
-  ChevronDown,
   Check,
   Trash2,
   Timer,
@@ -158,8 +158,8 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const [open, setOpen] = useState<Section | null>(null);
-  const toggle = (s: Section) => setOpen(prev => (prev === s ? null : s));
+  // Tabs, like other apps' settings: one section is shown at a time.
+  const [tab, setTab] = useState<Section>('personalisation');
 
   const readFile = (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -206,29 +206,40 @@ export const SettingsView: React.FC = () => {
       <ListeningStatsModal isOpen={showStats} onClose={() => setShowStats(false)} />
       <DeviceSyncModal isOpen={showSync} onClose={() => setShowSync(false)} />
       <AlarmModal isOpen={showAlarm} onClose={() => setShowAlarm(false)} />
-      <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-6">Settings</h1>
+      <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-4">Settings</h1>
 
-      <div className="px-5 space-y-4 stagger">
-        {sections.map(s => {
-          const Icon = s.icon;
-          const isOpen = open === s.id;
-          return (
-            <div key={s.id} className="rounded-2xl bg-app-surface overflow-hidden">
-              <button
-                onClick={() => toggle(s.id)}
-                className="w-full flex items-center gap-4 px-5 py-5 text-left"
-              >
-                <Icon className="w-6 h-6 text-app-secondary shrink-0" />
-                <span className="flex-1 text-lg font-semibold text-app-primary">{s.label}</span>
-                <ChevronDown
-                  className={`w-5 h-5 text-app-secondary transition-transform ${
-                    isOpen ? 'rotate-180' : ''
+      <div className="md:flex md:gap-6 md:px-5">
+        {/* Tabs: a scrolling row on phones, a list on the left on wider screens */}
+        <nav className="sticky top-0 z-20 bg-app-primary/95 backdrop-blur-md md:bg-transparent md:backdrop-blur-none md:static md:w-56 md:shrink-0">
+          <div className="flex gap-2 overflow-x-auto no-scrollbar px-5 py-3 md:px-0 md:py-0 md:flex-col md:sticky md:top-4">
+            {sections.map(s => {
+              const Icon = s.icon;
+              const active = tab === s.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setTab(s.id)}
+                  className={`flex items-center gap-2 shrink-0 rounded-full md:rounded-xl px-4 py-2 md:py-3 text-sm md:text-base font-semibold transition-colors ${
+                    active
+                      ? 'bg-app-highlight text-app-inverse'
+                      : 'bg-app-card text-app-secondary hover:text-app-primary md:bg-transparent'
                   }`}
-                />
-              </button>
+                >
+                  <Icon className="w-4 h-4 md:w-5 md:h-5 shrink-0" />
+                  <span className="whitespace-nowrap">{s.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
 
-              {isOpen && (
-                <div className="px-5 pb-5 border-t border-app-theme">
+        <div className="flex-1 min-w-0 px-5 md:px-0 pt-1">
+        {sections.filter(s => s.id === tab).map(s => {
+          return (
+            <div key={s.id} className="rounded-2xl bg-app-surface overflow-hidden anim-fade">
+              <h2 className="px-5 pt-5 text-xl font-bold text-app-primary">{s.label}</h2>
+              {(
+                <div className="px-5 pb-5">
                   {/* PERSONALISATION */}
                   {s.id === 'personalisation' && (
                     <div className="pt-2">
@@ -320,6 +331,39 @@ export const SettingsView: React.FC = () => {
                           className="flex-1 bg-app-card border border-app-theme rounded-xl py-2.5 px-3 text-base text-app-primary placeholder:text-app-secondary focus:outline-none"
                         />
                       </div>
+
+                      <p className="text-sm text-app-secondary pt-5 pb-1">ALBUM ART</p>
+                      <Row
+                        title="Colors from album art"
+                        subtitle="Now Playing, the mini player and the PC player take the cover's colors"
+                      >
+                        <Switch
+                          on={settings.albumArtColors !== false}
+                          onChange={() => updateSettings({ albumArtColors: settings.albumArtColors === false })}
+                        />
+                      </Row>
+                      <Row
+                        title="Album art as accent"
+                        subtitle="Buttons and highlights follow the song that is playing"
+                      >
+                        <Switch
+                          on={settings.albumArtAccent === true}
+                          onChange={() => updateSettings({ albumArtAccent: !settings.albumArtAccent })}
+                        />
+                      </Row>
+                      <Row title="Visualizer style" subtitle="Shown on Now Playing while music plays">
+                        <select
+                          value={settings.visualizerMode}
+                          onChange={e => updateSettings({ visualizerMode: e.target.value as SettingsState['visualizerMode'] })}
+                          className="bg-app-card border border-app-theme rounded-lg px-2 py-1.5 text-sm text-app-primary"
+                        >
+                          {VISUALIZER_OPTIONS.map(o => (
+                            <option key={o.id} value={o.id}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </Row>
 
                       <p className="text-sm text-app-secondary pt-5 pb-1">CUSTOM COLORS</p>
                       <Row title="Use custom colors" subtitle="Pick your own accent & background">
@@ -839,6 +883,7 @@ export const SettingsView: React.FC = () => {
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );

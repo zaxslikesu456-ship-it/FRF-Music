@@ -50,6 +50,8 @@ const formatTime = (secs: number) => {
 
 const DesktopNowPlaying: React.FC = () => {
   const {
+    settings,
+    artColors,
     currentTrack,
     isPlaying,
     currentTime,
@@ -120,7 +122,14 @@ const DesktopNowPlaying: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full p-6">
+    <div
+      className="flex flex-col h-full p-6 transition-[background] duration-700"
+      style={
+        settings.albumArtColors !== false && artColors
+          ? { background: `linear-gradient(to bottom, ${artColors.dark} 0%, transparent 70%)` }
+          : undefined
+      }
+    >
       <AddToPlaylistModal
         track={showAddToPlaylist ? currentTrack : null}
         onClose={() => setShowAddToPlaylist(false)}

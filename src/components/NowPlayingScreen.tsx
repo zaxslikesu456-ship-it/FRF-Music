@@ -1,4 +1,7 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
+import { flyCover, miniCoverRect } from '../utils/coverTransition';
+import { AudioVisualizer } from './AudioVisualizer';
+import { parseLrc, lineProgress } from '../utils/lyricsSync';
 import { fetchLyrics } from '../utils/lyrics';
 import {
   ChevronDown,
@@ -33,39 +36,14 @@ import { useAudio } from '../context/AudioContext';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
 
-interface SyncedLine {
-  time: number;
-  text: string;
-}
-
 export type PlayerCenterMode = 'artwork' | 'lyrics' | 'video';
 
-const parseLrc = (lrcString: string): SyncedLine[] => {
-  if (!lrcString) return [];
-  const lines = lrcString.split('\n');
-  const result: SyncedLine[] = [];
-  const timeRegex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\]/;
-
-  for (const line of lines) {
-    const match = timeRegex.exec(line);
-    if (match) {
-      const min = parseInt(match[1], 10);
-      const sec = parseInt(match[2], 10);
-      const msStr = match[3] || '0';
-      const ms = parseInt(msStr.padEnd(3, '0').slice(0, 3), 10);
-      const time = min * 60 + sec + ms / 1000;
-      const text = line.replace(timeRegex, '').trim();
-      if (text) {
-        result.push({ time, text });
-      }
-    }
-  }
-  return result.sort((a, b) => a.time - b.time);
-};
 
 export const NowPlayingScreen: React.FC = () => {
   const {
     currentTrack,
+    settings,
+    artColors,
     isPlaying,
     currentTime,
     duration,
@@ -113,6 +91,9 @@ export const NowPlayingScreen: React.FC = () => {
   const [rawLyrics, setRawLyrics] = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [lyricCard, setLyricCard] = useState<LyricCardInput | null>(null);
+  const [bounce, setBounce] = useState(0);
+  const artRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Double-tap the artwork to like the track, with a heart pop animation.
   const [heartPop, setHeartPop] = useState(false);
@@ -257,6 +238,28 @@ export const NowPlayingScreen: React.FC = () => {
     });
   };
 
+  // Cover grows out of the mini player when the screen opens...
+  useLayoutEffect(() => {
+    if (!isPlayerOpen || centerMode !== 'artwork' || !artRef.current) return;
+    const from = miniCoverRect();
+    if (from) void flyCover(artRef.current, from, 'open');
+    // Only on opening.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlayerOpen]);
+
+  // ...and shrinks back into it when it closes, while the screen fades out.
+  const closePlayer = () => {
+    const from = miniCoverRect();
+    const el = artRef.current;
+    const root = rootRef.current;
+    if (!from || !el || centerMode !== 'artwork') {
+      setIsPlayerOpen(false);
+      return;
+    }
+    root?.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: 'ease-in', fill: 'forwards' });
+    void flyCover(el, from, 'close').then(() => setIsPlayerOpen(false));
+  };
+
   if (!isPlayerOpen || !currentTrack) return null;
 
   const isFav = favorites.includes(currentTrack.id);
@@ -278,7 +281,7 @@ export const NowPlayingScreen: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-40 bg-app-primary max-w-xl mx-auto flex flex-col select-none overflow-hidden animate-in fade-in duration-300">
+    <div ref={rootRef} className="fixed inset-0 z-40 bg-app-primary max-w-xl mx-auto flex flex-col select-none overflow-hidden animate-in fade-in duration-300">
       <LyricCardModal input={lyricCard} onClose={() => setLyricCard(null)} />
       <AddToPlaylistModal
         track={showAddToPlaylist ? currentTrack : null}
@@ -289,14 +292,22 @@ export const NowPlayingScreen: React.FC = () => {
         onClose={() => setShowOptions(false)}
       />
 
-      {/* Dynamic blurred ambient background from album artwork */}
+      {/* Blurred album art behind everything (cover art and lyrics), tinted with
+          the cover's own colour. It cross-fades when the song changes. */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <img
+          key={currentTrack.coverUrl}
           src={currentTrack.coverUrl}
           alt=""
-          className="w-full h-full object-cover blur-3xl scale-125 opacity-30 transition-all duration-700"
+          className="now-bg absolute inset-0 w-full h-full object-cover blur-[70px] scale-150 opacity-[0.65]"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/40 to-black/95" />
+        {settings.albumArtColors !== false && artColors && (
+          <div
+            className="absolute inset-0 transition-[background] duration-700"
+            style={{ background: `linear-gradient(to bottom, ${artColors.dark} 0%, ${artColors.dark}cc 35%, transparent 75%)` }}
+          />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/35 to-black/90" />
       </div>
 
       <div
@@ -329,7 +340,7 @@ export const NowPlayingScreen: React.FC = () => {
         {/* Top Navigation Header */}
         <div className="flex items-center justify-between safe-area-player-top pb-2 px-1">
           <button
-            onClick={() => setIsPlayerOpen(false)}
+            onClick={closePlayer}
             className="p-2.5 text-app-primary hover:scale-110 active:scale-95 transition-transform"
             title="Minimize"
           >
@@ -459,6 +470,9 @@ export const NowPlayingScreen: React.FC = () => {
             ) : syncedLyrics.length > 0 ? (
               syncedLyrics.map((line, idx) => {
                 const isActive = idx === activeLyricIndex;
+                // Karaoke: the line that is being sung fills in with the accent
+                // colour from left to right (the fill eases between progress ticks).
+                const fill = isActive ? lineProgress(line, syncedLyrics[idx + 1], currentTime + 0.25) : 0;
                 return (
                   <p
                     key={`lyric-${idx}`}
@@ -466,11 +480,22 @@ export const NowPlayingScreen: React.FC = () => {
                     onClick={() => seekTo(line.time)}
                     className={`text-center transition-all duration-300 cursor-pointer select-none leading-relaxed ${
                       isActive
-                        ? 'text-app-primary font-extrabold text-xl md:text-2xl scale-105 drop-shadow-[0_0_16px_rgba(255,255,255,0.4)]'
-                        : 'text-app-secondary text-base opacity-40 hover:opacity-80 hover:scale-100'
+                        ? 'font-extrabold text-xl md:text-2xl scale-105'
+                        : idx < activeLyricIndex
+                          ? 'text-app-primary text-base opacity-50 hover:opacity-80'
+                          : 'text-app-secondary text-base opacity-40 hover:opacity-80 hover:scale-100'
                     }`}
                   >
-                    {line.text}
+                    {isActive ? (
+                      <span
+                        className="karaoke-line"
+                        style={{ backgroundSize: `${Math.round(fill * 1000) / 10}% 100%, 100% 100%` }}
+                      >
+                        {line.text}
+                      </span>
+                    ) : (
+                      line.text
+                    )}
                   </p>
                 );
               })
@@ -517,24 +542,30 @@ export const NowPlayingScreen: React.FC = () => {
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0 animate-in fade-in duration-200">
+            <div className="relative w-full max-w-[320px] flex items-center justify-center">
+            <AudioVisualizer variant="ring" />
             <div
+              ref={artRef}
               onClick={handleArtworkTap}
               className="relative w-full max-w-[320px] aspect-square rounded-2xl overflow-hidden shadow-2xl border border-white/10 group cursor-pointer active:scale-[0.99] transition-transform"
+              style={artColors ? { boxShadow: `0 24px 60px -12px ${artColors.accent}55` } : undefined}
             >
               <img
                 src={currentTrack.coverUrl}
                 alt={currentTrack.title}
                 className={`w-full h-full object-cover transition-all duration-700 ${
-                  isPlaying ? 'scale-100' : 'scale-95 opacity-90'
+                  isPlaying ? 'cover-drift' : 'scale-95 opacity-90'
                 }`}
               />
               <div className="absolute inset-0 ring-1 ring-inset ring-white/10 rounded-2xl pointer-events-none" />
               {heartPop && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <Heart className="w-24 h-24 text-red-500 fill-red-500 drop-shadow-[0_4px_16px_rgba(239,68,68,0.6)] animate-[heartPop_0.8s_ease-out_forwards]" />
+                  <Heart className="w-24 h-24 text-app-accent fill-current drop-shadow-[0_4px_16px_rgba(0,0,0,0.5)] animate-[heartPop_0.8s_ease-out_forwards]" />
                 </div>
               )}
             </div>
+            </div>
+            <AudioVisualizer className="max-w-[320px] mt-3" height={44} />
             <p className="text-[11px] text-app-secondary/50 mt-3">Double-tap artwork to like</p>
           </div>
         )}
@@ -650,8 +681,14 @@ export const NowPlayingScreen: React.FC = () => {
           </button>
 
           <button
-            onClick={togglePlay}
-            className="p-4 bg-app-highlight text-app-inverse rounded-full hover:scale-105 active:scale-95 transition-transform shadow-xl flex items-center justify-center"
+            key={bounce}
+            onClick={() => {
+              setBounce(b => b + 1);
+              togglePlay();
+            }}
+            className={`p-4 bg-app-highlight text-app-inverse rounded-full hover:scale-105 transition-transform shadow-xl flex items-center justify-center ${
+              bounce > 0 ? 'play-bounce' : ''
+            }`}
             title={isPlaying ? 'Pause' : 'Play'}
           >
             {isResolvingStream && !isPlaying ? (

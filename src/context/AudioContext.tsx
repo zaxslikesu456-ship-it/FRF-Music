@@ -41,6 +41,7 @@ import {
   undeclineSmart,
 } from '../utils/smartDownloadsStore';
 import { normalizationGainDb } from '../utils/loudness';
+import { getArtColors, type ArtColors } from '../utils/artColors';
 import { isTauriRuntime } from '../utils/http';
 import { logPlayStart, logListened, flushListening, getListeningLog, replaceListeningLog } from '../utils/listening';
 import { mergeSync, type SyncData, type SyncLocal, type SyncSummary } from '../utils/deviceSync';
@@ -243,6 +244,8 @@ interface AudioContextType {
   recentlyPlayed: Track[];
   playCounts: Record<string, number>;
   mostPlayed: { track: Track; count: number }[];
+  /** Colours picked from the current song's cover (null when unknown or turned off). */
+  artColors: ArtColors | null;
   outputDevice: OutputDevice | null;
   sleepSecondsRemaining: number | null;
   settings: SettingsState;
@@ -310,7 +313,7 @@ interface AudioContextType {
 const DEFAULT_SETTINGS: SettingsState = {
   theme: 'black-white',
   fontStyle: 'sans',
-  visualizerMode: 'bars',
+  visualizerMode: 'ring',
   backgroundAnimation: 'off',
   playbackSpeed: 1.0,
   compactView: false,
@@ -1516,10 +1519,31 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     void idbSaveItem('permanent_settings', settings);
   }, [tracks, playlists, favorites, downloads, settings]);
 
+  // Colours from the current song's cover (Now Playing, mini player, PC panel,
+  // and optionally the accent).
+  const [artColors, setArtColors] = useState<ArtColors | null>(null);
+  useEffect(() => {
+    const wanted = settings.albumArtColors !== false || settings.albumArtAccent === true;
+    if (!wanted || !currentTrack?.coverUrl) {
+      setArtColors(null);
+      return;
+    }
+    let live = true;
+    void getArtColors(currentTrack.coverUrl).then(c => {
+      if (live) setArtColors(c);
+    });
+    return () => {
+      live = false;
+    };
+  }, [currentTrack?.coverUrl, settings.albumArtColors, settings.albumArtAccent]);
+
   // Apply theme / custom colors / transparency as CSS variables
   useEffect(() => {
-    applyThemeSettings(settings);
-  }, [settings]);
+    applyThemeSettings(settings, settings.albumArtAccent ? artColors?.accent : null);
+    const root = document.documentElement;
+    root.style.setProperty('--art-dark', artColors?.dark || 'transparent');
+    root.style.setProperty('--art-accent', artColors?.accent || 'var(--bg-highlight)');
+  }, [settings, artColors]);
 
   // Native FFT capture runs a continuous callback, so it is only enabled while
   // a visualizer mode is actually selected.
@@ -4053,6 +4077,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         playCounts,
         mostPlayed,
         outputDevice,
+        artColors,
         sleepSecondsRemaining,
         settings,
         analyserNode: spectrumSourceRef.current,

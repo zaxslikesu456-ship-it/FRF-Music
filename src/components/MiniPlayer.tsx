@@ -13,7 +13,10 @@ export const MiniPlayer: React.FC = () => {
     setIsPlayerOpen,
     isResolvingStream,
     stopTrack,
+    settings,
+    artColors,
   } = useAudio();
+  const tint = settings.albumArtColors !== false && artColors ? artColors.dark : null;
 
   // Swipe the mini-player down to dismiss the current song.
   const [dragY, setDragY] = useState(0);
@@ -42,6 +45,8 @@ export const MiniPlayer: React.FC = () => {
     <div
       className="w-full bg-app-primary z-30 anim-rise border-t border-app touch-none"
       style={{
+        // Tinted with the cover's colour.
+        background: tint ? `linear-gradient(to right, ${tint}, var(--bg-primary))` : undefined,
         transform: dragY > 0 ? `translateY(${dragY}px)` : undefined,
         opacity: dragY > 0 ? Math.max(0.3, 1 - dragY / 260) : undefined,
         transition: dragY > 0 ? 'none' : 'transform 0.2s ease, opacity 0.2s ease',
@@ -64,6 +69,7 @@ export const MiniPlayer: React.FC = () => {
           className="flex items-center gap-3 flex-1 min-w-0 text-left"
         >
           <img
+            data-mini-cover
             src={currentTrack.coverUrl}
             alt={currentTrack.title}
             className="w-11 h-11 rounded-lg object-cover shrink-0"
