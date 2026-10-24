@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { formatMb } from '../utils/autoDownload';
 import { PlaybackHealthModal } from './PlaybackHealthModal';
+import { ListeningStatsModal } from './ListeningStatsModal';
 import { getOfflineUsageBytes } from '../utils/downloadManager';
 import {
+  BarChart3,
   Palette,
   Music,
   Download,
@@ -114,6 +116,7 @@ export const SettingsView: React.FC = () => {
 
   const isAndroidApp = Capacitor.getPlatform() === 'android';
   const [showHealth, setShowHealth] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [restoreStatus, setRestoreStatus] = useState('');
   const [restoring, setRestoring] = useState(false);
 
@@ -189,6 +192,7 @@ export const SettingsView: React.FC = () => {
   return (
     <div className="flex-1 overflow-y-auto pb-28 bg-transparent">
       <PlaybackHealthModal isOpen={showHealth} onClose={() => setShowHealth(false)} />
+      <ListeningStatsModal isOpen={showStats} onClose={() => setShowStats(false)} />
       <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-6">Settings</h1>
 
       <div className="px-5 space-y-4 stagger">
@@ -466,6 +470,22 @@ export const SettingsView: React.FC = () => {
                           }
                         />
                       </Row>
+                      <div className="py-2">
+                        <button
+                          onClick={() => setShowStats(true)}
+                          className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-app-card border border-app-theme text-left active:scale-98 transition-all"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-xl bg-app-surface border border-app-theme text-app-primary">
+                              <BarChart3 className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="text-base font-semibold text-app-primary">Listening stats</p>
+                              <p className="text-xs text-app-secondary">Minutes, top artists and streaks</p>
+                            </div>
+                          </div>
+                        </button>
+                      </div>
                       <div className="py-2">
                         <button
                           onClick={() => setShowHealth(true)}

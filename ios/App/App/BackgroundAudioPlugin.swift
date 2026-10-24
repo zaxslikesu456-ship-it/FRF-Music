@@ -17,7 +17,8 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setUpcoming", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearUpcoming", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "getCurrent", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "getCurrent", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setNormGain", returnType: CAPPluginReturnPromise)
     ]
 
     // A queue player: the songs lined up behind the current one play on by
@@ -37,6 +38,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let artist: String
         let coverUrl: String
         let duration: Double
+        let gainDb: Double
     }
     private var upcomingInfo: [ObjectIdentifier: UpcomingInfo] = [:]
 
@@ -144,6 +146,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let coverUrl = call.getString("coverUrl", "")
         let startTime = call.getDouble("startTime", 0.0)
         let duration = call.getDouble("duration", 0.0)
+        let gainDb = call.getDouble("gainDb", 0.0)
 
         var targetUrl: URL?
 
@@ -180,6 +183,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             observeCurrentItem(of: created)
         }
         currentTrackId = trackId
+        applyGain(gainDb)
 
         // Report stream failures (403, unsupported codec, network errors) to JS
         // and tell it when the song ends.
@@ -319,7 +323,8 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 title: entry["title"] as? String ?? "",
                 artist: entry["artist"] as? String ?? "",
                 coverUrl: entry["coverUrl"] as? String ?? "",
-                duration: numberValue(entry["duration"])
+                duration: numberValue(entry["duration"]),
+                gainDb: numberValue(entry["gainDb"])
             )
             player.insert(item, after: nil)
             added += 1
@@ -336,6 +341,18 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     // Which song the player is on. The web layer asks when the app comes back to the
     // front, because songs may have rolled by while it was suspended.
+    // Volume normalization: turn a loud song down by gainDb (0 or negative). The
+    // phone's own volume still controls the overall level.
+    private func applyGain(_ gainDb: Double) {
+        guard let player = avPlayer else { return }
+        player.volume = gainDb < 0 ? Float(pow(10.0, max(gainDb, -20.0) / 20.0)) : 1.0
+    }
+
+    @objc public func setNormGain(_ call: CAPPluginCall) {
+        applyGain(call.getDouble("gainDb", 0.0))
+        call.resolve()
+    }
+
     @objc public func getCurrent(_ call: CAPPluginCall) {
         call.resolve(["trackId": currentTrackId])
     }
@@ -405,6 +422,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         unwatchItem()
         watch(item: current)
         currentTrackId = info.trackId
+        applyGain(info.gainDb)
 
         updateNowPlaying(
             title: info.title,

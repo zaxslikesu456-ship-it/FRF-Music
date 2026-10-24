@@ -94,6 +94,9 @@ export interface SettingsState {
   compactView: boolean;
   iconSize: IconSize;
   autoPlayNext: boolean;
+  eqRememberPerDevice?: boolean; // remember an equalizer preset for each headphone
+  eqPerDevice?: Record<string, EqualizerSettings>;
+  normalizeVolume?: boolean; // turn loud songs down so songs play at a similar level
   sortBy: SortOrder;
   downloadQuality: 'high' | 'low';
   sleepTimerMinutes: 0 | 15 | 30 | 60;

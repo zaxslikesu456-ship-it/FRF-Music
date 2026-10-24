@@ -73,6 +73,7 @@ public class PlaybackService extends Service {
     public static final String EXTRA_FILE_PATH = "filePath";
     public static final String EXTRA_POSITION = "position";
     public static final String EXTRA_DURATION = "duration";
+    public static final String EXTRA_GAIN_DB = "gainDb";
 
     public static volatile Bridge bridgeRef;
     public static volatile PlaybackService instance;
@@ -91,6 +92,9 @@ public class PlaybackService extends Service {
     private float position = 0f;
     private float duration = 0f;
     private float volume = 1.0f;
+    // Volume normalization: a per-song attenuation in dB (0 or lower), applied on
+    // top of the user's volume. Loud masters are turned down to a common level.
+    private float normGain = 1.0f;
     private float speed = 1.0f;
     private String lastPlaybackError;
 
@@ -113,6 +117,7 @@ public class PlaybackService extends Service {
         String streamUrl = "";
         String filePath = "";
         float duration = 0f;
+        float gainDb = 0f;
     }
 
     private ExoPlayer exoPlayer;
@@ -215,7 +220,7 @@ public class PlaybackService extends Service {
                     .setAudioAttributes(audioAttributes, true)
                     .setWakeMode(C.WAKE_MODE_NETWORK)
                     .build();
-            exoPlayer.setVolume(volume);
+            exoPlayer.setVolume(volume * normGain);
             exoPlayer.setHandleAudioBecomingNoisy(true);
             exoPlayer.setPlaybackParameters(new PlaybackParameters(speed));
 
@@ -471,6 +476,14 @@ public class PlaybackService extends Service {
     }
 
     private void applyMetadataFromIntent(Intent intent) {
+        if (intent.hasExtra(EXTRA_GAIN_DB)) {
+            normGain = dbToGain(intent.getFloatExtra(EXTRA_GAIN_DB, 0f));
+            if (exoPlayer != null) {
+                try {
+                    exoPlayer.setVolume(volume * normGain);
+                } catch (Exception ignored) {}
+            }
+        }
         String newTitle = intent.getStringExtra(EXTRA_TITLE);
         if (newTitle != null && !newTitle.isEmpty()) title = newTitle;
 
@@ -546,9 +559,28 @@ public class PlaybackService extends Service {
         volume = Math.max(0f, Math.min(1f, level));
         if (exoPlayer != null) {
             try {
-                exoPlayer.setVolume(volume);
+                exoPlayer.setVolume(volume * normGain);
             } catch (Exception ignored) {}
         }
+    }
+
+    /** Sets the normalization attenuation (dB, 0 or negative) for the song now playing. */
+    public void setNormGainDb(float db) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(() -> setNormGainDb(db));
+            return;
+        }
+        normGain = dbToGain(db);
+        if (exoPlayer != null) {
+            try {
+                exoPlayer.setVolume(volume * normGain);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private static float dbToGain(float db) {
+        if (Float.isNaN(db) || db >= 0f) return 1.0f;
+        return (float) Math.pow(10.0, Math.max(db, -20f) / 20.0);
     }
 
     public void setSpeed(float rate) {
@@ -743,9 +775,9 @@ public class PlaybackService extends Service {
 
     /** Queue the song to play after the current one (replaces any earlier choice). */
     public void setNextItem(String trackId, String url, String file, String newTitle,
-                            String newArtist, String cover, float dur) {
+                            String newArtist, String cover, float dur, float gainDb) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post(() -> setNextItem(trackId, url, file, newTitle, newArtist, cover, dur));
+            mainHandler.post(() -> setNextItem(trackId, url, file, newTitle, newArtist, cover, dur, gainDb));
             return;
         }
         if (exoPlayer == null || exoPlayer.getMediaItemCount() == 0) return;
@@ -761,6 +793,7 @@ public class PlaybackService extends Service {
             meta.streamUrl = url == null ? "" : url;
             meta.filePath = file == null ? "" : file;
             meta.duration = dur;
+            meta.gainDb = gainDb;
             Uri uri = Uri.parse(src).getScheme() != null
                     ? Uri.parse(src)
                     : Uri.fromFile(new File(src.replace("file://", "")));
@@ -794,6 +827,10 @@ public class PlaybackService extends Service {
         filePath = meta.filePath;
         position = 0f;
         duration = meta.duration;
+        normGain = dbToGain(meta.gainDb);
+        try {
+            exoPlayer.setVolume(volume * normGain);
+        } catch (Exception ignored) {}
         if (!meta.cover.isEmpty() && !meta.cover.equals(coverUrl)) {
             coverUrl = meta.cover;
             coverBitmap = null; // do not show the previous song's picture

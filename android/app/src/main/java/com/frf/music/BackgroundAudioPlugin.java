@@ -48,11 +48,35 @@ public class BackgroundAudioPlugin extends Plugin {
     public static volatile BackgroundAudioPlugin instance;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
+    private OutputDevices outputDevices;
+
     @Override
     public void load() {
         super.load();
         instance = this;
         PlaybackService.bridgeRef = getBridge();
+        try {
+            outputDevices = new OutputDevices(getContext());
+            outputDevices.listen(() -> notifyListeners("outputDeviceChanged", outputDevices.current()));
+        } catch (Throwable ignored) {
+            outputDevices = null;
+        }
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (outputDevices != null) outputDevices.stop();
+        super.handleOnDestroy();
+    }
+
+    // Where the sound goes now: a Bluetooth headset (by name), wired, USB or the speaker.
+    @PluginMethod
+    public void getOutputDevice(PluginCall call) {
+        if (outputDevices == null) {
+            call.reject("unavailable");
+            return;
+        }
+        call.resolve(outputDevices.current());
     }
 
     public static void sendEvent(String eventName, JSObject data) {
@@ -89,6 +113,9 @@ public class BackgroundAudioPlugin extends Plugin {
 
         Float duration = call.getFloat("duration", 0f);
         if (duration != null) intent.putExtra(PlaybackService.EXTRA_DURATION, duration);
+
+        Float gainDb = call.getFloat("gainDb", 0f);
+        intent.putExtra(PlaybackService.EXTRA_GAIN_DB, gainDb != null ? gainDb : 0f);
 
         launchService(intent, call);
     }
@@ -519,6 +546,7 @@ public class BackgroundAudioPlugin extends Plugin {
         PlaybackService svc = PlaybackService.instance;
         if (svc != null) {
             Float dur = call.getFloat("duration", 0f);
+            Float gainDb = call.getFloat("gainDb", 0f);
             svc.setNextItem(
                     call.getString("trackId", ""),
                     call.getString("url", ""),
@@ -526,8 +554,18 @@ public class BackgroundAudioPlugin extends Plugin {
                     call.getString("title", ""),
                     call.getString("artist", ""),
                     call.getString("coverUrl", ""),
-                    dur != null ? dur : 0f);
+                    dur != null ? dur : 0f,
+                    gainDb != null ? gainDb : 0f);
         }
+        call.resolve();
+    }
+
+    // Volume normalization for the song playing now (dB, 0 or lower).
+    @PluginMethod
+    public void setNormGain(PluginCall call) {
+        Float db = call.getFloat("gainDb", 0f);
+        PlaybackService svc = PlaybackService.instance;
+        if (svc != null) svc.setNormGainDb(db != null ? db : 0f);
         call.resolve();
     }
 
