@@ -25,8 +25,11 @@ export interface QueuedDownload {
 }
 
 const KEY = 'bw_music_dl_queue_v1';
-export const MAX_ATTEMPTS = 3;
-const BACKOFF_MS = [5000, 20000, 60000];
+export const MAX_ATTEMPTS = 4;
+const BACKOFF_MS = [8000, 30000, 90000];
+// A download that has not finished by then is treated as failed (and retried),
+// so one stuck transfer cannot hold a slot and stall the whole queue.
+const DOWNLOAD_TIMEOUT_MS = 4 * 60 * 1000;
 const CONCURRENCY = 2;
 const RECHECK_MS = 30000;
 
@@ -49,6 +52,9 @@ const listeners = new Set<() => void>();
 let onDownloaded: ((track: Track) => void) | null = null;
 let gate: ((item: QueuedDownload) => boolean) | null = null;
 let paused = false;
+// Why the queue paused itself (storage full), shown in Downloads. Empty when the
+// user paused it or it is running.
+let pauseReason = '';
 let running = 0;
 let timer: number | undefined;
 const cancelled = new Set<string>();
@@ -78,6 +84,10 @@ export function getQueue(): QueuedDownload[] {
 
 export function isQueuePaused(): boolean {
   return paused;
+}
+
+export function getQueuePauseReason(): string {
+  return paused ? pauseReason : '';
 }
 
 // True when a real, usable file is already stored for this track.
@@ -198,11 +208,13 @@ export function clearFailed() {
 
 export function pauseQueue() {
   paused = true;
+  pauseReason = '';
   emit();
 }
 
 export function resumeQueue() {
   paused = false;
+  pauseReason = '';
   emit();
   schedule(0);
 }
@@ -249,7 +261,10 @@ async function run(item: QueuedDownload) {
 
   let ok = false;
   try {
-    ok = await downloadTrackToFile(item.track);
+    ok = await Promise.race([
+      downloadTrackToFile(item.track),
+      new Promise<boolean>(resolve => window.setTimeout(() => resolve(false), DOWNLOAD_TIMEOUT_MS)),
+    ]);
   } catch {
     ok = false;
   }
@@ -267,6 +282,16 @@ async function run(item: QueuedDownload) {
   if (ok) {
     queue = queue.filter(q => q.track.id !== id);
     onDownloaded?.(item.track);
+  } else if (/ENOSPC|No space left|not enough space|storage full/i.test(getLastDownloadError())) {
+    // The device is full: retrying cannot help and only burns every song's
+    // attempts. Put the song back in line and pause until the user frees space
+    // and presses Resume.
+    item.state = 'waiting';
+    item.nextAttemptAt = 0;
+    item.lastError = 'Not enough storage space';
+    paused = true;
+    pauseReason = 'Paused: your device is out of storage. Free up some space, then press Resume.';
+    cancelDownload(id);
   } else {
     item.attempts += 1;
     item.lastError = getLastDownloadError();
