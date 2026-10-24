@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import qrcode from 'qrcode-generator';
+import { Capacitor } from '@capacitor/core';
 import { X, Smartphone, Copy, Download, Share2, FileUp, ChevronLeft, ChevronRight, Check } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { copyText } from '../utils/clipboard';
@@ -133,7 +134,19 @@ export const DeviceSyncModal: React.FC<{ isOpen: boolean; onClose: () => void }>
     }
   }, []);
 
-  const saveFile = () => {
+  const saveFile = async () => {
+    // Android: the WebView ignores browser downloads, so the app saves the file.
+    if (Capacitor.getPlatform() === 'android') {
+      try {
+        const res = await (Capacitor as unknown as {
+          Plugins: { BackgroundAudio: { saveTextToDownloads(o: { fileName: string; text: string }): Promise<{ path: string }> } };
+        }).Plugins.BackgroundAudio.saveTextToDownloads({ fileName, text: fullJson });
+        setNote(`Backup file saved: ${res.path}`);
+      } catch {
+        setNote('Saving did not work here. Use Copy code instead.');
+      }
+      return;
+    }
     downloadFile(fileName, fullJson);
     setNote('Backup file saved to your downloads.');
   };
