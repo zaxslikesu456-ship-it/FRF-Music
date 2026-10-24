@@ -210,7 +210,7 @@ export const LibraryView: React.FC = () => {
           playlistId={pl.id}
           onAddTrack={t => addTrackToPlaylist(pl.id, t)}
           onRemoveTrack={trackId => removeTrackFromPlaylist(pl.id, trackId)}
-          onDownloadAll={() => downloadPlaylist(pl.name, plTracks)}
+          onDownloadAll={() => downloadPlaylist(pl.name, plTracks, pl.id)}
           onMoveTrack={(from, to) => reorderPlaylistTracks(pl.id, from, to)}
           onRename={() => {
             const name = prompt('Rename playlist', pl.name);

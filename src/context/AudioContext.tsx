@@ -255,7 +255,9 @@ interface AudioContextType {
   setIsPlayerOpen: (open: boolean) => void;
   toggleFavorite: (trackId: string, track?: Track) => void;
   downloadTrack: (track: Track) => void;
-  downloadPlaylist: (playlistTitle: string, tracks: Track[]) => void;
+  // playlistId: the songs come from a playlist you already have (or 'favorites'),
+  // so only the files are downloaded and no playlist is added.
+  downloadPlaylist: (playlistTitle: string, tracks: Track[], playlistId?: string) => void;
   // Bring back downloads from the Music/FRF Music folder (after a reinstall).
   restoreMusicFolderDownloads: (
     onProgress?: (done: number, total: number) => void
@@ -3387,7 +3389,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     enqueueDownloads([track], 'manual');
   };
 
-  const downloadPlaylist = async (playlistTitle: string, tracksToDownload: Track[]) => {
+  const downloadPlaylist = async (
+    playlistTitle: string,
+    tracksToDownload: Track[],
+    playlistId?: string
+  ) => {
     if (!tracksToDownload || tracksToDownload.length === 0) return;
 
     // Songs are only marked as downloaded once their file really exists (the
@@ -3396,17 +3402,33 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 3. Add all tracks to Library
     tracksToDownload.forEach(t => addTrackToLibrary(t));
 
-    // 4. Create new Playlist in Playlists tab and attach track IDs
-    const newPlId = `playlist-${Date.now()}`;
-    const newPlaylist: Playlist = {
-      id: newPlId,
-      name: playlistTitle,
-      description: `Downloaded Community Playlist (${tracksToDownload.length} tracks)`,
-      trackIds: tracksToDownload.map(t => t.id),
-      createdAt: Date.now(),
-    };
-
-    setPlaylists(prev => [...prev, newPlaylist]);
+    // 4. Save it as a playlist, unless it already is one. Downloading one of your
+    // own playlists used to add a second copy of it every time, and downloading
+    // the same community playlist again did too; now a playlist with the same
+    // name gets the missing songs added instead.
+    if (!playlistId) {
+      const ids = tracksToDownload.map(t => t.id);
+      const sameName = (p: Playlist) => p.name.trim().toLowerCase() === playlistTitle.trim().toLowerCase();
+      setPlaylists(prev => {
+        const existing = prev.find(sameName);
+        if (existing) {
+          const have = new Set(existing.trackIds);
+          const missing = ids.filter(id => !have.has(id));
+          if (missing.length === 0) return prev;
+          return prev.map(p => (p.id === existing.id ? { ...p, trackIds: [...p.trackIds, ...missing] } : p));
+        }
+        return [
+          ...prev,
+          {
+            id: `playlist-${Date.now()}`,
+            name: playlistTitle,
+            description: `Downloaded Community Playlist (${tracksToDownload.length} tracks)`,
+            trackIds: ids,
+            createdAt: Date.now(),
+          },
+        ];
+      });
+    }
 
     // 5. Queue the audio files: retried on failure, resumed after a restart.
     enqueueDownloads(

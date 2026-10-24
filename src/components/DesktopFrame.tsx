@@ -362,6 +362,8 @@ export const DesktopFrame: React.FC = () => {
     renamePlaylist,
     deletePlaylist,
     downloadPlaylist,
+    removeTrackFromPlaylist,
+    addTrackToPlaylist,
     isEqualizerOpen,
     setIsEqualizerOpen,
   } = useAudio();
@@ -488,7 +490,8 @@ export const DesktopFrame: React.FC = () => {
               coverUrl={favoriteSidebarTracks[0]?.coverUrl}
               tracks={favoriteSidebarTracks}
               onBack={() => setSidebarPlaylistId(null)}
-              onDownloadAll={() => downloadPlaylist('Favorites', favoriteSidebarTracks)}
+              onDownloadAll={() => downloadPlaylist('Favorites', favoriteSidebarTracks, 'favorites')}
+              onRemoveTrack={trackId => removeTrackFromPlaylist('favorites', trackId)}
             />
           ) : sidebarPlaylist ? (
             <PlaylistDetailView
@@ -497,7 +500,9 @@ export const DesktopFrame: React.FC = () => {
               coverUrl={sidebarPlaylistTracks[0]?.coverUrl}
               tracks={sidebarPlaylistTracks}
               onBack={() => setSidebarPlaylistId(null)}
-              onDownloadAll={() => downloadPlaylist(sidebarPlaylist.name, sidebarPlaylistTracks)}
+              onDownloadAll={() => downloadPlaylist(sidebarPlaylist.name, sidebarPlaylistTracks, sidebarPlaylist.id)}
+              onRemoveTrack={trackId => removeTrackFromPlaylist(sidebarPlaylist.id, trackId)}
+              onAddTrack={t => addTrackToPlaylist(sidebarPlaylist.id, t)}
               onMoveTrack={(from, to) => reorderPlaylistTracks(sidebarPlaylist.id, from, to)}
               onRename={() => {
                 const name = prompt('Rename playlist', sidebarPlaylist.name);

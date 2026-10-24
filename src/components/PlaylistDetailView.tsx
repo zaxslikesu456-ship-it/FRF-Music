@@ -278,6 +278,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
       <TrackOptionsMenuModal
         track={selectedTrackForMenu}
         onClose={() => setSelectedTrackForMenu(null)}
+        onRemoveFromPlaylist={onRemoveTrack ? handleRemoveTrackItem : undefined}
       />
 
       {/* ========================================================================= */}
