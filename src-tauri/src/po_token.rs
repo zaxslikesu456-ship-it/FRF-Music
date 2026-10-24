@@ -39,7 +39,7 @@ fn create_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         // Must match the main window's WebView2 options (tauri.conf.json), or the
         // second webview cannot share the browser process.
         .additional_browser_args(
-            "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows",
+            "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --autoplay-policy=no-user-gesture-required",
         )
         .on_navigation(move |url| {
             if url.host_str() != Some(RESULT_HOST) {

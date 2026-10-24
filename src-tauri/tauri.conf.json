@@ -18,7 +18,7 @@
         "minHeight": 640,
         "backgroundColor": "#000000",
         "center": true,
-        "additionalBrowserArgs": "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows"
+        "additionalBrowserArgs": "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --autoplay-policy=no-user-gesture-required"
       }
     ],
     "security": {

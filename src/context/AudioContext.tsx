@@ -2845,9 +2845,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setCachedStreamUrl(targetId, url);
             await playAudioUrl(nativeTrack, url, startTime);
           })
-          .catch(() => {
+          .catch((err: unknown) => {
             if (stale()) return;
-            console.warn('Direct stream unavailable, using the YouTube player');
+            console.warn('Direct stream unavailable, using the YouTube player:', String((err as Error)?.message || err));
             void startIframe(nativeTrack, startTime);
           })
           .finally(() => {

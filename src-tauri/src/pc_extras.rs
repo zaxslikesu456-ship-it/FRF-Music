@@ -62,7 +62,7 @@ pub fn open_mini(app: &AppHandle) -> Result<(), String> {
             .shadow(true)
             .background_color(tauri::window::Color(18, 18, 18, 255))
             .additional_browser_args(
-                "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows",
+                "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --autoplay-policy=no-user-gesture-required",
             )
             .build()
             .map_err(|e| e.to_string())?;
