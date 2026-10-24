@@ -227,6 +227,27 @@ export class WebAudioEqualizer {
     }
   }
 
+  /**
+   * Routes a second audio element (the crossfade's fading-out song) through the
+   * same equalizer. Returns a function that disconnects it again.
+   */
+  public attachExtra(audioEl: HTMLAudioElement): () => void {
+    if (!this.ctx || !this.preGain) return () => {};
+    try {
+      const src = this.ctx.createMediaElementSource(audioEl);
+      src.connect(this.preGain);
+      return () => {
+        try {
+          src.disconnect();
+        } catch {
+          // already gone
+        }
+      };
+    } catch {
+      return () => {};
+    }
+  }
+
   private teardown() {
     for (const node of this.nodes) {
       try {

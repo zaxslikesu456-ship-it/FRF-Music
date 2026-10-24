@@ -74,6 +74,7 @@ interface BackgroundAudioPlugin {
     gainDb?: number;
   }): Promise<void>;
   setNormGain(options: { gainDb: number }): Promise<void>;
+  setCrossfade(options: { seconds: number }): Promise<void>;
   getOutputDevice(): Promise<OutputDevice>;
   pause(): Promise<void>;
   resume(): Promise<void>;
@@ -589,10 +590,12 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const volumeRef = useRef(volume);
   // Volume normalization for the web audio element (1 = untouched, lower = quieter).
   const normLinRef = useRef(1);
+  // Crossfade fade-in level of the web audio element (1 = full).
+  const fadeRef = useRef(1);
   useEffect(() => {
     volumeRef.current = volume;
     if (audioRef.current) {
-      audioRef.current.volume = volume * normLinRef.current;
+      audioRef.current.volume = volume * normLinRef.current * fadeRef.current;
     }
     if (ytPlayerRef.current && ytPlayerRef.current.setVolume) {
       try {
@@ -603,6 +606,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [volume]);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
+  useEffect(() => {
+    repeatModeRef.current = repeatMode;
+  }, [repeatMode]);
   const [isShuffle, setIsShuffle] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<NavTab>('home');
@@ -701,6 +707,119 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => window.clearTimeout(id);
   }, []);
 
+  // Crossfade length for the native player (Android does its own fading).
+  useEffect(() => {
+    BackgroundAudio?.setCrossfade?.({ seconds: settings.crossfadeSeconds || 0 }).catch(() => {});
+  }, [settings.crossfadeSeconds]);
+
+  // PC and web crossfade. Shortly before a song ends, a second audio element picks
+  // up the end of that song (through the same equalizer) and fades it out, while
+  // the main element moves on to the next song and fades in. The main element
+  // keeps doing everything else (controls, progress, the next song's events).
+  const repeatModeRef = useRef<RepeatMode>('off');
+  const webFadeRef = useRef<{
+    tail: HTMLAudioElement;
+    detach: () => void;
+    timers: number[];
+    advancing: boolean;
+  } | null>(null);
+  const applyWebVolume = () => {
+    if (audioRef.current) audioRef.current.volume = volumeRef.current * normLinRef.current * fadeRef.current;
+  };
+  const cancelWebCrossfade = () => {
+    const f = webFadeRef.current;
+    if (!f) return;
+    webFadeRef.current = null;
+    f.timers.forEach(t => window.clearTimeout(t));
+    try {
+      f.tail.pause();
+      f.tail.removeAttribute('src');
+      f.tail.load();
+    } catch {
+      // ignore
+    }
+    f.detach();
+    fadeRef.current = 1;
+    applyWebVolume();
+  };
+  const maybeStartWebCrossfade = (audio: HTMLAudioElement) => {
+    const secs = settingsRef.current?.crossfadeSeconds || 0;
+    if (secs <= 0 || webFadeRef.current || Capacitor.isNativePlatform()) return;
+    if (!audioModeTrackIdRef.current || audio.paused || !audio.currentSrc) return;
+    if (!settingsRef.current?.autoPlayNext || repeatModeRef.current === 'one') return;
+    const dur = audio.duration;
+    if (!isFinite(dur) || dur < secs * 3) return;
+    const remaining = dur - audio.currentTime;
+    const PREP = 1.2; // seconds for the fade-out element to buffer
+    if (remaining > secs + PREP || remaining < 1) return;
+
+    const tail = new Audio();
+    tail.preload = 'auto';
+    tail.crossOrigin = audio.crossOrigin;
+    tail.src = audio.currentSrc;
+    const startAt = Math.min(dur - 0.05, audio.currentTime + PREP);
+    tail.currentTime = startAt;
+    tail.volume = 0;
+    const f = { tail, detach: globalEqualizer.attachExtra(tail), timers: [] as number[], advancing: false };
+    webFadeRef.current = f;
+    const fadeLen = Math.min(secs, remaining - 0.5) * 1000;
+    const tailVolume = audio.volume;
+
+    const ramp = () => {
+      const started = performance.now();
+      const step = () => {
+        if (webFadeRef.current !== f) return;
+        const t = Math.min(1, (performance.now() - started) / fadeLen);
+        // Equal-power curves keep the loudness steady through the overlap.
+        fadeRef.current = Math.sin((t * Math.PI) / 2);
+        applyWebVolume();
+        tail.volume = Math.max(0, Math.min(1, tailVolume * Math.cos((t * Math.PI) / 2)));
+        if (t >= 1) {
+          cancelWebCrossfade(); // fade done: drop the old song, main at full level
+          return;
+        }
+        f.timers.push(window.setTimeout(step, 40));
+      };
+      step();
+    };
+
+    // Wait for the fade-out element to be ready and the main element to reach the
+    // point it starts at, then hand over and move on to the next song.
+    const handover = () => {
+      if (webFadeRef.current !== f) return;
+      if (tail.readyState < 3 || audio.currentTime < startAt - 0.03) {
+        if (audio.currentTime > startAt + 0.8 || audio.paused) {
+          cancelWebCrossfade(); // not ready in time: the song just ends normally
+          return;
+        }
+        f.timers.push(window.setTimeout(handover, 20));
+        return;
+      }
+      tail.volume = tailVolume;
+      void tail.play().catch(() => cancelWebCrossfade());
+      fadeRef.current = 0;
+      f.advancing = true;
+      latestActionsRef.current.handleEnded();
+      f.advancing = false;
+      applyWebVolume();
+      // Fade when the next song actually starts (looking it up can take a moment);
+      // if it never starts here (YouTube player fallback), fade the old one out anyway.
+      const main = audioRef.current;
+      let begun = false;
+      const begin = () => {
+        if (begun) return;
+        begun = true;
+        main?.removeEventListener('playing', begin);
+        ramp();
+      };
+      main?.addEventListener('playing', begin);
+      f.timers.push(window.setTimeout(begin, 5000));
+    };
+    handover();
+  };
+  const webCrossfadeRef = useRef({ maybeStart: maybeStartWebCrossfade, cancel: cancelWebCrossfade });
+  webCrossfadeRef.current = { maybeStart: maybeStartWebCrossfade, cancel: cancelWebCrossfade };
+
   // Where the sound goes (Android): a named Bluetooth headset, wired, USB or the
   // speaker. Each can have its own equalizer preset.
   const [outputDevice, setOutputDevice] = useState<OutputDevice | null>(null);
@@ -749,7 +868,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const apply = () => {
       const db = gainDbFor(currentTrackRef.current);
       normLinRef.current = Math.pow(10, db / 20);
-      if (audioRef.current) audioRef.current.volume = volumeRef.current * normLinRef.current;
+      if (audioRef.current) audioRef.current.volume = volumeRef.current * normLinRef.current * fadeRef.current;
       BackgroundAudio?.setNormGain?.({ gainDb: db }).catch(() => {});
     };
     apply();
@@ -1787,6 +1906,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
       positionRef.current = curr;
       setCurrentTime(curr);
+      webCrossfadeRef.current.maybeStart(audio);
     };
     const handleLoadedMetadata = () => setDuration(audio.duration || 0);
     const handleAudioEnded = () => latestActionsRef.current.handleEnded();
@@ -1862,7 +1982,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const setEngineVolume = (v: number) => {
       const level = Math.max(0, Math.min(1, v));
       try {
-        if (audioRef.current) audioRef.current.volume = level * normLinRef.current;
+        if (audioRef.current) audioRef.current.volume = level * normLinRef.current * fadeRef.current;
       } catch {
         // ignore
       }
@@ -2406,7 +2526,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const audio = audioRef.current;
     setAudioSource(audio, url);
     normLinRef.current = Math.pow(10, gainDbFor(_track) / 20);
-    audio.volume = volumeRef.current * normLinRef.current;
+    audio.volume = volumeRef.current * normLinRef.current * fadeRef.current;
     if (startTime > 0) {
       const setPos = () => {
         audio.removeEventListener('loadedmetadata', setPos);
@@ -2429,6 +2549,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const stopAllPlayback = () => {
+    // A song the user picked (not the crossfade's own advance) ends the fade-out.
+    if (webFadeRef.current && !webFadeRef.current.advancing) cancelWebCrossfade();
     playGenRef.current += 1;
     queuedNextIdRef.current = null;
     activeYoutubeIdRef.current = null;
@@ -2735,6 +2857,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const togglePlay = () => {
     if (!currentTrack) return;
+    cancelWebCrossfade();
 
     // Restored session: load the track on first play press
     if (needsLoadRef.current) {
@@ -3128,6 +3251,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const seekTo = (time: number) => {
+    cancelWebCrossfade();
     lastSeekAtRef.current = Date.now();
     pendingSeekRef.current = time;
     positionRef.current = time;
@@ -3156,7 +3280,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch {
       // ignore
     }
-    if (audioRef.current) audioRef.current.volume = clamped * normLinRef.current;
+    if (audioRef.current) audioRef.current.volume = clamped * normLinRef.current * fadeRef.current;
     if (ytPlayerRef.current && ytPlayerRef.current.setVolume) {
       ytPlayerRef.current.setVolume(clamped * 100);
     }

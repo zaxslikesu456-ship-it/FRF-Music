@@ -36,6 +36,9 @@ import type {
   IconSize,
 } from '../types/music';
 
+// The iPhone player has no crossfade yet.
+const IS_IOS_APP = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios';
+
 const Switch: React.FC<{ on: boolean; onChange: () => void }> = ({ on, onChange }) => (
   <button
     onClick={onChange}
@@ -457,6 +460,25 @@ export const SettingsView: React.FC = () => {
                         <Switch
                           on={settings.autoPlayNext}
                           onChange={() => updateSettings({ autoPlayNext: !settings.autoPlayNext })}
+                        />
+                      </Row>
+                      <Row
+                        title={`Crossfade • ${settings.crossfadeSeconds ? `${settings.crossfadeSeconds} s` : 'Off'}`}
+                        subtitle={
+                          IS_IOS_APP
+                            ? 'Not available on iPhone yet'
+                            : 'Fade each song into the next'
+                        }
+                      >
+                        <input
+                          type="range"
+                          min={0}
+                          max={12}
+                          step={1}
+                          value={settings.crossfadeSeconds || 0}
+                          disabled={IS_IOS_APP}
+                          onChange={e => updateSettings({ crossfadeSeconds: parseInt(e.target.value, 10) })}
+                          className="w-32 accent-white cursor-pointer disabled:opacity-40"
                         />
                       </Row>
                       <Row
