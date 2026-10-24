@@ -12,11 +12,29 @@ function isTauri(): boolean {
   return Boolean(w.__TAURI_INTERNALS__ || w.__TAURI__);
 }
 
+// The desktop app's HTTP client adds the app's own origin (http://tauri.localhost)
+// to every request, which YouTube answers with 403. An empty Origin header asks it
+// to leave the header out, unless the caller set one on purpose.
+function withoutOrigin(inner: FetchLike): FetchLike {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url: string | URL = input instanceof Request ? input.url : (input as string | URL);
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    new Headers(init?.headers).forEach((v, k) => headers.set(k, v));
+    if (!headers.has('origin')) headers.set('origin', '');
+    let body: BodyInit | null | undefined = init?.body;
+    let method = init?.method || (input instanceof Request ? input.method : 'GET');
+    if (input instanceof Request && body === undefined && !['GET', 'HEAD'].includes(method)) {
+      body = await input.clone().arrayBuffer();
+    }
+    return inner(url, { ...init, method, headers, body });
+  }) as FetchLike;
+}
+
 function getTauriFetch(): Promise<FetchLike | null> {
   if (!isTauri()) return Promise.resolve(null);
   if (!tauriFetchPromise) {
     tauriFetchPromise = import('@tauri-apps/plugin-http')
-      .then(m => m.fetch as unknown as FetchLike)
+      .then(m => withoutOrigin(m.fetch as unknown as FetchLike))
       .catch(() => null);
   }
   return tauriFetchPromise;
@@ -43,6 +61,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       }
     );
   });
+}
+
+// The fetch to use for requests that need no browser CORS rules: the desktop app's
+// own HTTP client in Tauri, otherwise the normal fetch.
+export async function getPlatformFetch(): Promise<FetchLike | undefined> {
+  return (await getTauriFetch()) || undefined;
 }
 
 export function isTauriRuntime(): boolean {
