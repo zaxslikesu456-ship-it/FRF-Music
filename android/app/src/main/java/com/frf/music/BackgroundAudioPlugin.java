@@ -585,6 +585,49 @@ public class BackgroundAudioPlugin extends Plugin {
         call.resolve();
     }
 
+    // Saves a small text file (a sync backup) to the phone's Downloads folder. The
+    // WebView ignores <a download>, so the web layer cannot save files itself.
+    // Android 10+ uses the shared Downloads collection (no permission needed);
+    // older versions get the app's own Downloads folder.
+    @PluginMethod
+    public void saveTextToDownloads(PluginCall call) {
+        String fileName = call.getString("fileName", "frf-music.json");
+        String text = call.getString("text", "");
+        String mime = call.getString("mimeType", "application/json");
+        try {
+            byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            String where;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                android.content.ContentValues values = new android.content.ContentValues();
+                values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName);
+                values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime);
+                values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_DOWNLOADS);
+                Uri uri = getContext().getContentResolver().insert(
+                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                if (uri == null) throw new IOException("could not create the file");
+                try (java.io.OutputStream out = getContext().getContentResolver().openOutputStream(uri)) {
+                    if (out == null) throw new IOException("could not open the file");
+                    out.write(bytes);
+                }
+                where = "Downloads/" + fileName;
+            } else {
+                File dir = getContext().getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS);
+                if (dir == null) dir = getContext().getFilesDir();
+                File f = new File(dir, fileName);
+                try (FileOutputStream out = new FileOutputStream(f)) {
+                    out.write(bytes);
+                }
+                where = f.getAbsolutePath();
+            }
+            JSObject ret = new JSObject();
+            ret.put("path", where);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Could not save the file: " + e.getMessage());
+        }
+    }
+
     // Is the phone online, on Wi-Fi/ethernet, and is the connection metered (mobile data)?
     @PluginMethod
     public void networkStatus(PluginCall call) {
