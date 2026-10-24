@@ -100,7 +100,8 @@ export interface SettingsState {
   crossfadeSeconds?: number; // overlap between songs, 0 = off // turn loud songs down so songs play at a similar level
   sortBy: SortOrder;
   downloadQuality: 'high' | 'low';
-  sleepTimerMinutes: 0 | 15 | 30 | 60;
+  // Minutes until playback fades out and stops; 0 = off, -1 = stop after the current song.
+  sleepTimerMinutes: number;
   youtubeMiniPlayer: boolean;
   // Keep a second copy of downloads in the phone's Music folder so they survive
   // an uninstall (Android 10+).

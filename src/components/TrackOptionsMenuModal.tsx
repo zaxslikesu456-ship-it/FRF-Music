@@ -71,6 +71,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
     startRadio,
     addToQueue,
     sleepTimerMinutes,
+    sleepEndOfSong,
     setSleepTimer,
   } = useAudio();
 
@@ -198,24 +199,33 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
               { label: '30 Minutes', val: 30 },
               { label: '45 Minutes', val: 45 },
               { label: '60 Minutes', val: 60 },
-            ].map(item => (
-              <button
-                key={`sleep-${item.label}`}
-                onClick={() => {
-                  setSleepTimer(item.val);
-                  setShowSleepTimerModal(false);
-                  onClose();
-                }}
-                className={`w-full py-3 px-4 rounded-xl text-left text-base font-semibold flex items-center justify-between transition-colors ${
-                  sleepTimerMinutes === item.val
-                    ? 'bg-app-highlight text-app-inverse font-bold'
-                    : 'hover:bg-white/10 text-white'
-                }`}
-              >
-                <span>{item.label}</span>
-                {sleepTimerMinutes === item.val && <Check className="w-5 h-5" />}
-              </button>
-            ))}
+              { label: 'End of this song', val: -1 },
+            ].map(item => {
+              const selected =
+                item.val === -1
+                  ? sleepEndOfSong
+                  : item.val === null
+                    ? !sleepEndOfSong && !sleepTimerMinutes
+                    : sleepTimerMinutes === item.val;
+              return (
+                <button
+                  key={`sleep-${item.label}`}
+                  onClick={() => {
+                    setSleepTimer(item.val);
+                    setShowSleepTimerModal(false);
+                    onClose();
+                  }}
+                  className={`w-full py-3 px-4 rounded-xl text-left text-base font-semibold flex items-center justify-between transition-colors ${
+                    selected
+                      ? 'bg-app-highlight text-app-inverse font-bold'
+                      : 'hover:bg-white/10 text-white'
+                  }`}
+                >
+                  <span>{item.label}</span>
+                  {selected && <Check className="w-5 h-5" />}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -347,7 +357,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
               {/* 5. Sleep Timer */}
               <MenuItem
                 icon={<Timer className="w-6 h-6" />}
-                label={`Sleep Timer${sleepTimerMinutes ? ` (${sleepTimerMinutes}m)` : ''}`}
+                label={`Sleep Timer${sleepEndOfSong ? ' (end of song)' : sleepTimerMinutes ? ` (${sleepTimerMinutes}m)` : ''}`}
                 onClick={() => setShowSleepTimerModal(true)}
               />
 

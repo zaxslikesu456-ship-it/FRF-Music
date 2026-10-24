@@ -284,6 +284,7 @@ interface AudioContextType {
   clearAllData: () => void;
   startRadio: (track: Track) => Promise<void>;
   sleepTimerMinutes: number | null;
+  sleepEndOfSong: boolean;
   setSleepTimer: (minutes: number | null) => void;
   exportLibrary: () => void;
   importLibrary: (file: File) => Promise<boolean>;
@@ -569,7 +570,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ['bw_music_settings_v11', 'bw_music_settings_v10', 'bw_music_settings_v9', 'bw_music_settings_v1', 'bw_music_settings'],
       null
     );
-    return saved ? { ...DEFAULT_SETTINGS, ...saved } : DEFAULT_SETTINGS;
+    const merged = saved ? { ...DEFAULT_SETTINGS, ...saved } : DEFAULT_SETTINGS;
+    // "End of this song" belongs to the session it was set in.
+    return merged.sleepTimerMinutes === -1 ? { ...merged, sleepTimerMinutes: 0 } : merged;
   });
 
   const [currentTrack, setCurrentTrack] = useState<Track | null>(LAST_SESSION.track);
@@ -748,6 +751,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const maybeStartWebCrossfade = (audio: HTMLAudioElement) => {
     const secs = settingsRef.current?.crossfadeSeconds || 0;
     if (secs <= 0 || webFadeRef.current || Capacitor.isNativePlatform()) return;
+    if (settingsRef.current?.sleepTimerMinutes === -1) return; // sleep timer: stop after this song, no fade into the next
     if (!audioModeTrackIdRef.current || audio.paused || !audio.currentSrc) return;
     if (!settingsRef.current?.autoPlayNext || repeatModeRef.current === 'one') return;
     const dur = audio.duration;
@@ -1966,28 +1970,46 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, []);
 
+  // Pauses every engine for the sleep timer (fade already done). Native: pause and
+  // rewind so Play starts the song again rather than sitting at its very end.
+  const pauseForSleep = (rewindNative: boolean) => {
+    try {
+      ytPlayerRef.current?.pauseVideo?.();
+    } catch {
+      // ignore
+    }
+    audioRef.current?.pause();
+    if (nativeOwnerRef.current && BackgroundAudio) {
+      void BackgroundAudio.pause().catch(() => {});
+      if (rewindNative) {
+        void BackgroundAudio.seek({ position: 0 }).catch(() => {});
+        positionRef.current = 0;
+        setCurrentTime(0);
+      }
+    }
+    setIsPlaying(false);
+  };
+  const pauseForSleepRef = useRef(pauseForSleep);
+  pauseForSleepRef.current = pauseForSleep;
+  // Latest song clock for the "end of this song" fade.
+  const sleepClockRef = useRef({ dur: 0, playing: false });
+  sleepClockRef.current = { dur: duration, playing: isPlaying };
+
   // Sleep timer: fades the volume out over the last 30s, then pauses playback.
+  // -1 minutes = "end of this song": fades over the last 8s of the song; the song
+  // ending itself stops playback (see handleEnded) and nothing is queued behind it.
   useEffect(() => {
     if (!settings.sleepTimerMinutes) {
       setSleepSecondsRemaining(null);
       return;
     }
-    const totalMs = settings.sleepTimerMinutes * 60000;
-    const fadeMs = 30000;
-    const baseVolume = volumeRef.current;
-
-    // Countdown for the Now Playing chip.
-    const startAt = Date.now();
-    setSleepSecondsRemaining(Math.round(totalMs / 1000));
-    const tick = window.setInterval(() => {
-      const left = Math.max(0, Math.ceil((totalMs - (Date.now() - startAt)) / 1000));
-      setSleepSecondsRemaining(left);
-    }, 1000);
+    const endOfSong = settings.sleepTimerMinutes < 0;
 
     // Adjust the live engines directly. Going through setVolume() would persist
-    // every faded step to localStorage and fight the volume slider.
-    const setEngineVolume = (v: number) => {
-      const level = Math.max(0, Math.min(1, v));
+    // every faded step to localStorage and fight the volume slider. `mult` scales
+    // the user's current volume (1 = untouched).
+    const setEngineVolume = (mult: number) => {
+      const level = Math.max(0, Math.min(1, volumeRef.current * Math.max(0, Math.min(1, mult))));
       try {
         if (audioRef.current) audioRef.current.volume = level * normLinRef.current * fadeRef.current;
       } catch {
@@ -2001,6 +2023,39 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       BackgroundAudio?.setVolume?.({ volume: level }).catch(() => {});
     };
 
+    if (endOfSong) {
+      setSleepSecondsRemaining(null);
+      const songFadeSecs = 8;
+      let fading = false;
+      const tick = window.setInterval(() => {
+        const { dur, playing } = sleepClockRef.current;
+        if (!playing || !(dur > 0)) return;
+        const left = dur - positionRef.current;
+        if (left > 0 && left <= songFadeSecs) {
+          fading = true;
+          setEngineVolume(left / songFadeSecs);
+        } else if (fading) {
+          fading = false; // skipped / seeked away from the end
+          setEngineVolume(1);
+        }
+      }, 250);
+      return () => {
+        window.clearInterval(tick);
+        setEngineVolume(1);
+      };
+    }
+
+    const totalMs = settings.sleepTimerMinutes * 60000;
+    const fadeMs = 30000;
+
+    // Countdown for the Now Playing chip.
+    const startAt = Date.now();
+    setSleepSecondsRemaining(Math.round(totalMs / 1000));
+    const tick = window.setInterval(() => {
+      const left = Math.max(0, Math.ceil((totalMs - (Date.now() - startAt)) / 1000));
+      setSleepSecondsRemaining(left);
+    }, 1000);
+
     let fadeInterval: number | null = null;
     const fadeTimer = window.setTimeout(() => {
       const steps = 20;
@@ -2008,7 +2063,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       let i = 0;
       fadeInterval = window.setInterval(() => {
         i += 1;
-        setEngineVolume(baseVolume * Math.max(0, 1 - i / steps));
+        setEngineVolume(Math.max(0, 1 - i / steps));
         if (i >= steps && fadeInterval != null) {
           window.clearInterval(fadeInterval);
           fadeInterval = null;
@@ -2017,15 +2072,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }, Math.max(0, totalMs - fadeMs));
 
     const endTimer = window.setTimeout(() => {
-      try {
-        ytPlayerRef.current?.pauseVideo?.();
-      } catch {
-        // ignore
-      }
-      audioRef.current?.pause();
-      setIsPlaying(false);
-      setEngineVolume(baseVolume);
+      pauseForSleepRef.current(false);
+      setEngineVolume(1);
       showStatus('Sleep timer ended — playback paused', 4000);
+      // Timer done: clears itself (the cleanup below restores the volume too).
+      setSettings(prev => (prev.sleepTimerMinutes ? { ...prev, sleepTimerMinutes: 0 } : prev));
     }, totalMs);
 
     return () => {
@@ -2033,7 +2084,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       window.clearTimeout(endTimer);
       window.clearInterval(tick);
       if (fadeInterval != null) window.clearInterval(fadeInterval);
-      setEngineVolume(baseVolume);
+      setEngineVolume(1);
       setSleepSecondsRemaining(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2679,6 +2730,15 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     positionRef.current = 0;
     setCurrentTime(0);
     setIsPlaying(true);
+    // Sleep timer "end of this song" armed but the player rolled on anyway (the next
+    // song was queued natively before it was chosen): stop right away.
+    if (settingsRef.current.sleepTimerMinutes === -1) {
+      updateSettings({ sleepTimerMinutes: 0 });
+      void BackgroundAudio?.clearNext?.().catch(() => {});
+      void BackgroundAudio?.clearUpcoming?.().catch(() => {});
+      pauseForSleepRef.current(true);
+      showStatus('Sleep timer ended — playback stopped', 4000);
+    }
   };
 
   const startTrack = (track: Track, startTime = 0) => {
@@ -3017,6 +3077,13 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Called when a track finishes: honors Repeat 1, otherwise advances through the queue
   const handleEnded = () => {
+    // Sleep timer "end of this song": stop here instead of advancing / repeating.
+    if (settingsRef.current.sleepTimerMinutes === -1) {
+      updateSettings({ sleepTimerMinutes: 0 });
+      pauseForSleepRef.current(true);
+      showStatus('Sleep timer ended — playback stopped', 4000);
+      return;
+    }
     if (repeatMode === 'one' && currentTrack) {
       if (nativeOwnerRef.current && BackgroundAudio) {
         void BackgroundAudio.seek({ position: 0 }).catch(() => {});
@@ -3081,7 +3148,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     // Auto-play off or repeat-one: the app decides what happens at the end.
-    const wantNative = settings.autoPlayNext && repeatMode !== 'one';
+    // Sleep timer "end of this song": nothing may roll in behind this song.
+    const wantNative = settings.autoPlayNext && repeatMode !== 'one' && settings.sleepTimerMinutes !== -1;
     const target = next && next.id !== currentTrack.id ? next : undefined;
 
     // A song queued earlier may no longer be the right one (queue edited, shuffle
@@ -3145,7 +3213,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       window.clearTimeout(timer);
       if (retry !== undefined) window.clearTimeout(retry);
     };
-  }, [currentTrack, isPlaying, isShuffle, queue, tracks, settings.autoPlayNext, repeatMode]);
+  }, [currentTrack, isPlaying, isShuffle, queue, tracks, settings.autoPlayNext, repeatMode, settings.sleepTimerMinutes === -1]);
 
   // iPhone: line up the next several songs inside the native player. iOS suspends
   // the web layer in the background, so it cannot start each next song itself;
@@ -3155,7 +3223,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const iosPlanRef = useRef<{ forId: string; tracks: Track[] } | null>(null);
   useEffect(() => {
     if (!IS_IOS || !isPlaying || !currentTrack) return;
-    const wantNative = settings.autoPlayNext && repeatMode !== 'one';
+    const wantNative = settings.autoPlayNext && repeatMode !== 'one' && settings.sleepTimerMinutes !== -1;
     if (!wantNative) {
       void BackgroundAudio?.clearUpcoming?.().catch(() => {});
       return;
@@ -3250,7 +3318,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [currentTrack, isPlaying, isShuffle, queue, tracks, settings.autoPlayNext, repeatMode]);
+  }, [currentTrack, isPlaying, isShuffle, queue, tracks, settings.autoPlayNext, repeatMode, settings.sleepTimerMinutes === -1]);
 
   // iPhone: songs may have rolled by while the web layer was suspended. When the app
   // comes back, ask the native player which song it is on and catch up.
@@ -3711,21 +3779,14 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setSettings(prev => ({ ...prev, ...newSettings }));
   };
 
-  const [sleepTimerMinutes, setSleepTimerMinutesState] = useState<number | null>(null);
-  const sleepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // One sleep timer for every picker: minutes (fades out over the last 30s, then
+  // pauses), -1 = stop after the current song, null/0 = off. Driven by the effect
+  // on settings.sleepTimerMinutes.
+  const sleepTimerMinutes = settings.sleepTimerMinutes > 0 ? settings.sleepTimerMinutes : null;
+  const sleepEndOfSong = settings.sleepTimerMinutes === -1;
 
   const setSleepTimer = (minutes: number | null) => {
-    if (sleepTimerRef.current) {
-      clearTimeout(sleepTimerRef.current);
-      sleepTimerRef.current = null;
-    }
-    setSleepTimerMinutesState(minutes);
-    if (minutes && minutes > 0) {
-      sleepTimerRef.current = setTimeout(() => {
-        stopTrack();
-        setSleepTimerMinutesState(null);
-      }, minutes * 60 * 1000);
-    }
+    updateSettings({ sleepTimerMinutes: minutes === null ? 0 : minutes });
   };
 
   const startRadio = async (track: Track) => {
@@ -3759,7 +3820,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const clearAllData = () => {
-    if (sleepTimerRef.current) clearTimeout(sleepTimerRef.current);
+    updateSettings({ sleepTimerMinutes: 0 });
     BackgroundAudio?.stop().catch(() => {});
     localStorage.clear();
     setTracks([]);
@@ -3826,6 +3887,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isLoadingApiTracks: false,
         downloadStatus,
         sleepTimerMinutes,
+        sleepEndOfSong,
         isEqualizerOpen,
         setIsEqualizerOpen,
 
