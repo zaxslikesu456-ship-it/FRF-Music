@@ -208,7 +208,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
                 }}
                 className={`w-full py-3 px-4 rounded-xl text-left text-base font-semibold flex items-center justify-between transition-colors ${
                   sleepTimerMinutes === item.val
-                    ? 'bg-white text-black font-bold'
+                    ? 'bg-app-highlight text-app-inverse font-bold'
                     : 'hover:bg-white/10 text-white'
                 }`}
               >

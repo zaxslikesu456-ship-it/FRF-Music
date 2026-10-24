@@ -180,4 +180,8 @@ export function applyThemeSettings(settings: SettingsState): void {
   );
   root.style.setProperty('--border-color', settings.useCustomColors ? hexToRgba(accent, 0.35) : base.border);
   root.style.setProperty('--accent-color', accent);
+  root.style.setProperty('--accent-glow', hexToRgba(accent, 0.35));
+  // Menus and pop-ups stay opaque whatever the overlay transparency, so what is
+  // behind them never shows through their text.
+  root.style.setProperty('--bg-solid', hexToRgba(surface, 1));
 }

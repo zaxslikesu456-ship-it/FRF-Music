@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, Play, Shuffle, MoreVertical, Disc3, Heart } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, Play, Shuffle, MoreVertical, Disc3, Heart, Loader2 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
-import { searchYouTubeMusic, searchYouTubeMusicVideos } from '../utils/ytMusicApi';
+import { searchYouTubeMusic, searchYouTubeMusicVideos, loadMoreSearchResults } from '../utils/ytMusicApi';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
 import type { Track } from '../types/music';
 
@@ -48,10 +48,15 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
   const [videos, setVideos] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
   const [menuTrack, setMenuTrack] = useState<Track | null>(null);
+  // More songs load as you scroll to the bottom (further pages of the search).
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [noMore, setNoMore] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   useEffect(() => {
     let mounted = true;
     setLoading(true);
+    setNoMore(false);
     searchYouTubeMusic(artistName)
       .then(results => {
         if (mounted) setExtraTracks(results || []);
@@ -76,6 +81,9 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
     extraTracks.forEach(t => map.set(t.id, t));
     return Array.from(map.values());
   }, [localTracks, extraTracks]);
+
+  const allTracksRef = useRef<Track[]>([]);
+  allTracksRef.current = allTracks;
 
   const likedSongsByArtist = useMemo(() => {
     const norm = artistName.toLowerCase().trim();
@@ -114,6 +122,42 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
     return Array.from(map.entries()).slice(0, 8);
   }, [allTracks]);
 
+  // Further pages mix in other artists' songs, so only this artist's are kept.
+  // A few pages in a row with nothing new means that is everything.
+  const emptyPagesRef = useRef(0);
+  const loadMore = async () => {
+    if (loadingMoreRef.current || noMore || loading) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const norm = artistName.toLowerCase().trim();
+      const page = await loadMoreSearchResults(artistName);
+      if (page.length === 0) {
+        setNoMore(true);
+        return;
+      }
+      const mine = page.filter(t => {
+        const a = (t.artist || '').toLowerCase();
+        return a.includes(norm) || (a.length > 0 && norm.includes(a));
+      });
+      const shown = new Set(allTracksRef.current.map(t => t.id));
+      const fresh = mine.filter(t => !shown.has(t.id));
+      if (fresh.length) setExtraTracks(prev => [...prev, ...fresh.filter(t => !prev.some(p => p.id === t.id))]);
+      emptyPagesRef.current = fresh.length > 0 ? 0 : emptyPagesRef.current + 1;
+      if (emptyPagesRef.current >= 3) setNoMore(true);
+    } catch {
+      setNoMore(true);
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 600) void loadMore();
+  };
+
   const handlePlayAll = () => {
     if (allTracks.length === 0) return;
     if (isShuffle) toggleShuffle();
@@ -127,7 +171,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-y-auto pb-28 bg-app-primary">
+    <div className="flex-1 flex flex-col overflow-y-auto pb-28 bg-app-primary" onScroll={handleScroll}>
       <TrackOptionsMenuModal track={menuTrack} onClose={() => setMenuTrack(null)} />
 
       {/* Header */}
@@ -159,7 +203,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
 
         {/* Action Row */}
         <div className="flex items-center justify-center gap-10 pt-6">
-          <button onClick={handlePlayAll} className="p-3 rounded-full bg-white text-black hover:scale-110 active:scale-95 transition-transform shadow-lg" title="Play All">
+          <button onClick={handlePlayAll} className="p-3 rounded-full bg-app-highlight text-app-inverse hover:scale-110 active:scale-95 transition-transform shadow-lg" title="Play All">
             <Play className="w-6 h-6 fill-current ml-0.5" />
           </button>
           <button onClick={handleShuffle} className="p-3 text-app-primary cursor-pointer hover:scale-110 active:scale-95 transition-transform" title="Shuffle">
@@ -387,6 +431,22 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
                 </button>
               );
             })}
+          </div>
+        )}
+        {allTracks.length > 0 && (
+          <div className="py-6 flex justify-center">
+            {loadingMore ? (
+              <Loader2 className="w-6 h-6 animate-spin text-app-secondary" />
+            ) : noMore ? (
+              <p className="text-sm text-app-secondary">That's all the songs found</p>
+            ) : (
+              <button
+                onClick={() => void loadMore()}
+                className="px-4 py-2 rounded-full bg-app-card border border-app-theme text-sm font-semibold text-app-primary"
+              >
+                Load more songs
+              </button>
+            )}
           </div>
         )}
       </div>

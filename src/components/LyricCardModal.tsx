@@ -76,7 +76,7 @@ export const LyricCardModal: React.FC<{
 
   return createPortal(
     <div className="fixed inset-0 z-[200] bg-black/85 backdrop-blur-md flex items-end sm:items-center justify-center">
-      <div className="w-full max-w-md bg-app-surface border border-app-theme rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
+      <div className="w-full max-w-md bg-app-solid border border-app-theme rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
         <div className="flex items-center justify-between px-6 pt-5 pb-3">
           <h2 className="text-lg font-bold text-app-primary">Share this lyric</h2>
           <button onClick={onClose} className="p-2 text-app-secondary rounded-full" title="Close">

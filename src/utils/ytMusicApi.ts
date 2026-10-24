@@ -167,7 +167,12 @@ const playlistSearchSessions = new Map<string, PlaylistSearchSession>();
 function findContinuationToken(raw: any): string | null {
   try {
     const str = JSON.stringify(raw);
-    const match = str.match(/"continuationCommand":\{"token":"([^"]+)"/);
+    // YouTube Music's song lists use nextContinuationData; other lists use a
+    // continuationCommand. Only the second form was read, so "load more" never
+    // found a next page of songs.
+    const match =
+      str.match(/"nextContinuationData":\{"continuation":"([^"]+)"/) ||
+      str.match(/"continuationCommand":\{"token":"([^"]+)"/);
     return match ? match[1] : null;
   } catch {
     return null;
@@ -459,8 +464,10 @@ export async function searchYouTubeMusic(query: string): Promise<Track[]> {
         errors: 0,
         seen: new Set<string>(),
       };
-      if (token) session.token = token;
-      else session.done = true;
+      // This search runs alongside the songs search, and its results rarely have a
+      // next page. Marking the session finished here stopped "load more" for the
+      // songs search, which does have one; only take its token if there is none.
+      if (token && !session.token) session.token = token;
       tracks.forEach(t => session.seen.add(t.id));
       searchSessions.set(cleanQuery, session);
     }
@@ -487,6 +494,24 @@ export async function searchYouTubeMusic(query: string): Promise<Track[]> {
 export async function loadMoreSearchResults(query: string): Promise<Track[]> {
   if (!query || !query.trim()) return [];
   const cleanQuery = query.trim().toLowerCase();
+
+  // Results that came from the saved search cache have no page token yet (the
+  // cache only keeps songs), so ask for the first page again to get one. The
+  // songs already shown are marked as seen so they are not repeated.
+  if (!searchSessions.has(cleanQuery)) {
+    try {
+      const url = `${getYtmBase()}/search?alt=json&key=${YTM_API_KEY}`;
+      const data = await httpPostJson(url, { ...buildClientContext(), query: cleanQuery, params: SONGS_PARAMS }, 5000);
+      const { tracks, token } = parseInnerTubeSearchResults(data);
+      const seen = new Set<string>((searchCache.get(cleanQuery) || []).map(t => t.id));
+      const fresh = tracks.filter(t => !seen.has(t.id));
+      tracks.forEach(t => seen.add(t.id));
+      searchSessions.set(cleanQuery, { token, page: 1, done: !token && fresh.length === 0, errors: 0, seen });
+      if (fresh.length > 0) return fresh;
+    } catch {
+      // fall through to the other sources below
+    }
+  }
 
   const session = searchSessions.get(cleanQuery) || {
     token: null,

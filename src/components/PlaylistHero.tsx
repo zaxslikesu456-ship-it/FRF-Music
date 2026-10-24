@@ -65,7 +65,7 @@ export const PlaylistHero: React.FC<PlaylistHeroProps> = ({
       <div className="bg-black px-4 pt-4 pb-3">
         <div className="flex items-center gap-6 text-white">
           <button onClick={onPlay} disabled={playDisabled} className="disabled:opacity-40" title="Play all">
-            <span className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center">
+            <span className="w-10 h-10 rounded-full bg-app-highlight text-app-inverse flex items-center justify-center">
               <Play className="w-5 h-5 fill-current ml-0.5" />
             </span>
           </button>

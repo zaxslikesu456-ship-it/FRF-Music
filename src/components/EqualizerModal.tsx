@@ -205,9 +205,9 @@ export const EqualizerModal: React.FC<EqualizerModalProps> = ({ isOpen, onClose 
               <svg viewBox="0 0 300 70" className="w-full h-full overflow-visible">
                 <defs>
                   <linearGradient id="eqGlow" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%" stopColor="var(--accent, #a855f7)" />
-                    <stop offset="50%" stopColor="var(--accent, #ec4899)" />
-                    <stop offset="100%" stopColor="var(--accent, #3b82f6)" />
+                    <stop offset="0%" stopColor="var(--accent-color, #a855f7)" />
+                    <stop offset="50%" stopColor="var(--accent-color, #ec4899)" />
+                    <stop offset="100%" stopColor="var(--accent-color, #3b82f6)" />
                   </linearGradient>
                 </defs>
                 <path

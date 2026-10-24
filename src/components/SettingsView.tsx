@@ -374,7 +374,7 @@ export const SettingsView: React.FC = () => {
                           step={5}
                           value={settings.overlayTransparency}
                           onChange={e => updateSettings({ overlayTransparency: parseInt(e.target.value, 10) })}
-                          className="w-32 accent-white cursor-pointer"
+                          className="w-32 accent-[var(--bg-highlight)] cursor-pointer"
                         />
                       </Row>
                     </div>
@@ -478,7 +478,7 @@ export const SettingsView: React.FC = () => {
                           value={settings.crossfadeSeconds || 0}
                           disabled={IS_IOS_APP}
                           onChange={e => updateSettings({ crossfadeSeconds: parseInt(e.target.value, 10) })}
-                          className="w-32 accent-white cursor-pointer disabled:opacity-40"
+                          className="w-32 accent-[var(--bg-highlight)] cursor-pointer disabled:opacity-40"
                         />
                       </Row>
                       <Row

@@ -669,7 +669,7 @@ export const SearchView: React.FC = () => {
               )}
 
               {showDropdown && (
-                <div className="absolute left-0 right-0 top-full mt-2 z-30 rounded-2xl bg-app-card border border-app-theme overflow-hidden shadow-lg">
+                <div className="absolute left-0 right-0 top-full mt-2 z-30 rounded-2xl bg-app-solid border border-app-theme overflow-hidden shadow-lg">
                   {historyMatches.map(q => (
                     <button
                       key={`h-${q}`}
@@ -924,7 +924,7 @@ export const SearchView: React.FC = () => {
                     disabled={playlistAddState[pl.id] === 'adding' || playlistAddState[pl.id] === 'added'}
                     className={`px-3 py-2 rounded-xl flex items-center gap-1.5 text-xs font-semibold active:scale-95 transition-all shrink-0 cursor-pointer ${
                       playlistAddState[pl.id] === 'added'
-                        ? 'bg-white text-black'
+                        ? 'bg-app-highlight text-app-inverse'
                         : playlistAddState[pl.id] === 'failed'
                           ? 'bg-red-500/20 text-red-300'
                           : 'bg-white/10 hover:bg-white/20 text-app-primary hover:scale-105'
