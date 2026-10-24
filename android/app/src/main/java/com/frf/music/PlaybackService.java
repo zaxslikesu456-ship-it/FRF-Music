@@ -95,6 +95,143 @@ public class PlaybackService extends Service {
     // Volume normalization: a per-song attenuation in dB (0 or lower), applied on
     // top of the user's volume. Loud masters are turned down to a common level.
     private float normGain = 1.0f;
+
+    // ---------------------------------------------------------------- crossfade
+    // When a song is about to end and the next one is queued, a second player
+    // keeps the end of the old song playing and fades it out while the main
+    // player moves on to the next song and fades in. The main player (media
+    // session, notification, listeners) stays the same, so everything else works
+    // as for a normal advance. 0 = off.
+    static volatile int crossfadeMs = 0;
+    private static final long CROSSFADE_PREP_MS = 1500; // time to buffer the fade-out player
+    private float fadeMul = 1.0f; // main player's fade-in level
+    private ExoPlayer tailPlayer;
+    private float tailStartVolume = 1.0f;
+    private long fadeStartedAt = 0;
+    private long fadeLengthMs = 0;
+    private long tailStartPosMs = -1; // where the prepared fade-out player begins
+    private boolean crossfading = false;
+
+    private void applyVolume() {
+        if (exoPlayer == null) return;
+        try {
+            exoPlayer.setVolume(volume * normGain * fadeMul);
+        } catch (Exception ignored) {}
+    }
+
+    // Called every progress tick while playing.
+    private void maybeStartCrossfade(long posMs, long durMs) {
+        int fade = crossfadeMs;
+        if (fade <= 0 || crossfading || exoPlayer == null || durMs <= 0) return;
+        if (exoPlayer.getMediaItemCount() < 2 || exoPlayer.getCurrentMediaItemIndex() != 0) return;
+        if (durMs < fade * 3L) return; // very short songs just play out
+        long remaining = durMs - posMs;
+        if (remaining > fade + CROSSFADE_PREP_MS || remaining < 1000) return;
+        MediaItem current = exoPlayer.getCurrentMediaItem();
+        if (current == null) return;
+        try {
+            crossfading = true;
+            fadeLengthMs = Math.min(fade, remaining - 500);
+            tailStartPosMs = Math.min(durMs - 1, posMs + CROSSFADE_PREP_MS);
+            tailPlayer = newPlayer(false);
+            tailPlayer.setPlaybackParameters(new PlaybackParameters(speed));
+            tailPlayer.setVolume(0f);
+            tailPlayer.setMediaItem(current, tailStartPosMs);
+            tailPlayer.setPlayWhenReady(false);
+            tailPlayer.prepare();
+            Log.d(TAG, "crossfade: preparing fade-out at " + tailStartPosMs + "ms");
+            mainHandler.post(crossfadeSwitch);
+        } catch (Throwable t) {
+            Log.w(TAG, "crossfade could not start: " + t);
+            cancelCrossfade();
+        }
+    }
+
+    // Waits until the fade-out player is buffered and the main player has reached
+    // the point it was prepared at, then hands the old song over to it and moves
+    // the main player on to the next song.
+    private final Runnable crossfadeSwitch = new Runnable() {
+        @Override
+        public void run() {
+            if (!crossfading || tailPlayer == null || exoPlayer == null) return;
+            if (exoPlayer.getCurrentMediaItemIndex() != 0 || exoPlayer.getMediaItemCount() < 2) {
+                cancelCrossfade(); // skipped, or the queued song went away
+                return;
+            }
+            long pos = exoPlayer.getCurrentPosition();
+            boolean ready = tailPlayer.getPlaybackState() == Player.STATE_READY;
+            if (!ready || pos < tailStartPosMs - 30) {
+                if (pos > tailStartPosMs + 800) {
+                    cancelCrossfade(); // took too long to buffer: let the song end normally
+                    return;
+                }
+                mainHandler.postDelayed(this, 20);
+                return;
+            }
+            tailStartVolume = volume * normGain;
+            tailPlayer.setVolume(tailStartVolume);
+            tailPlayer.play();
+            fadeMul = 0f;
+            fadeStartedAt = android.os.SystemClock.uptimeMillis();
+            try {
+                exoPlayer.seekToNextMediaItem(); // fires onAdvancedToQueuedItem
+            } catch (Exception e) {
+                cancelCrossfade();
+                return;
+            }
+            applyVolume();
+            Log.d(TAG, "crossfade: handed over, fading " + fadeLengthMs + "ms");
+            mainHandler.post(crossfadeRamp);
+        }
+    };
+
+    private final Runnable crossfadeRamp = new Runnable() {
+        @Override
+        public void run() {
+            if (!crossfading) return;
+            float t = fadeLengthMs <= 0 ? 1f
+                    : Math.min(1f, (android.os.SystemClock.uptimeMillis() - fadeStartedAt) / (float) fadeLengthMs);
+            // Equal-power curves keep the loudness steady through the overlap.
+            fadeMul = (float) Math.sin(t * Math.PI / 2);
+            applyVolume();
+            if (tailPlayer != null) {
+                try {
+                    tailPlayer.setVolume(tailStartVolume * (float) Math.cos(t * Math.PI / 2));
+                } catch (Exception ignored) {}
+            }
+            if (t >= 1f) {
+                finishCrossfade();
+            } else {
+                mainHandler.postDelayed(this, 40);
+            }
+        }
+    };
+
+    private void releaseTail() {
+        if (tailPlayer != null) {
+            try {
+                tailPlayer.stop();
+                tailPlayer.release();
+            } catch (Exception ignored) {}
+            tailPlayer = null;
+        }
+    }
+
+    private void finishCrossfade() {
+        if (crossfading) Log.d(TAG, "crossfade: done");
+        mainHandler.removeCallbacks(crossfadeSwitch);
+        mainHandler.removeCallbacks(crossfadeRamp);
+        releaseTail();
+        crossfading = false;
+        fadeMul = 1f;
+        applyVolume();
+    }
+
+    /** Ends any crossfade at once (pause, seek, skip, new song, stop). */
+    private void cancelCrossfade() {
+        if (!crossfading && tailPlayer == null) return;
+        finishCrossfade();
+    }
     private float speed = 1.0f;
     private String lastPlaybackError;
 
@@ -144,6 +281,7 @@ public class PlaybackService extends Service {
                         data.put("currentTime", curSec);
                         data.put("duration", durSec);
                         BackgroundAudioPlugin.sendEvent("playbackProgress", data);
+                        maybeStartCrossfade(posMs, durMs);
                         refreshPlaybackState();
                         mainHandler.postDelayed(this, 500);
                     }
@@ -174,8 +312,10 @@ public class PlaybackService extends Service {
         startForegroundCompat(buildNotification());
     }
 
-    private void setupExoPlayer() {
-        try {
+    // Builds a player with the app's data sources and the in-pipeline equalizer.
+    // The crossfade's fade-out player does not take audio focus, or it would
+    // pause the main player.
+    private ExoPlayer newPlayer(boolean handleAudioFocus) {
             AudioAttributes audioAttributes = new AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -212,15 +352,20 @@ public class PlaybackService extends Service {
                 }
             };
 
-            exoPlayer = new ExoPlayer.Builder(this, renderersFactory)
+            return new ExoPlayer.Builder(this, renderersFactory)
                     .setMediaSourceFactory(mediaSourceFactory)
                     // The second argument enables ExoPlayer's own audio focus
                     // handling. Without it the WebView's embedded player keeps
                     // focus and the stream is routed but produces no sound.
-                    .setAudioAttributes(audioAttributes, true)
+                    .setAudioAttributes(audioAttributes, handleAudioFocus)
                     .setWakeMode(C.WAKE_MODE_NETWORK)
                     .build();
-            exoPlayer.setVolume(volume * normGain);
+    }
+
+    private void setupExoPlayer() {
+        try {
+            exoPlayer = newPlayer(true);
+            applyVolume();
             exoPlayer.setHandleAudioBecomingNoisy(true);
             exoPlayer.setPlaybackParameters(new PlaybackParameters(speed));
 
@@ -396,6 +541,7 @@ public class PlaybackService extends Service {
     }
 
     private void handlePlayUrlCommand(Intent intent) {
+        cancelCrossfade();
         applyMetadataFromIntent(intent);
         String src = currentSource();
         if (src != null && !src.isEmpty()) {
@@ -480,7 +626,7 @@ public class PlaybackService extends Service {
             normGain = dbToGain(intent.getFloatExtra(EXTRA_GAIN_DB, 0f));
             if (exoPlayer != null) {
                 try {
-                    exoPlayer.setVolume(volume * normGain);
+                    applyVolume();
                 } catch (Exception ignored) {}
             }
         }
@@ -559,7 +705,7 @@ public class PlaybackService extends Service {
         volume = Math.max(0f, Math.min(1f, level));
         if (exoPlayer != null) {
             try {
-                exoPlayer.setVolume(volume * normGain);
+                applyVolume();
             } catch (Exception ignored) {}
         }
     }
@@ -573,7 +719,7 @@ public class PlaybackService extends Service {
         normGain = dbToGain(db);
         if (exoPlayer != null) {
             try {
-                exoPlayer.setVolume(volume * normGain);
+                applyVolume();
             } catch (Exception ignored) {}
         }
     }
@@ -691,6 +837,7 @@ public class PlaybackService extends Service {
     };
 
     public void pausePlayback() {
+        cancelCrossfade();
         mainHandler.removeCallbacks(handoverWatchdog);
         if (exoPlayer != null) {
             try {
@@ -747,6 +894,7 @@ public class PlaybackService extends Service {
     }
 
     public void seekPlayback(float targetPos) {
+        cancelCrossfade();
         position = Math.max(0f, targetPos);
         if (exoPlayer != null) {
             try {
@@ -829,7 +977,7 @@ public class PlaybackService extends Service {
         duration = meta.duration;
         normGain = dbToGain(meta.gainDb);
         try {
-            exoPlayer.setVolume(volume * normGain);
+            applyVolume();
         } catch (Exception ignored) {}
         if (!meta.cover.isEmpty() && !meta.cover.equals(coverUrl)) {
             coverUrl = meta.cover;
@@ -864,6 +1012,7 @@ public class PlaybackService extends Service {
     private final Runnable delayedShutdown = () -> stopPlaybackAndService(-1);
 
     private void stopPlaybackKeepForeground() {
+        cancelCrossfade();
         stopProgressTicker();
         mainHandler.removeCallbacks(handoverWatchdog);
         if (exoPlayer != null) {
@@ -885,6 +1034,7 @@ public class PlaybackService extends Service {
     // new track (it only recovered after the web layer's 15 s confirm timeout).
     // With the id, Android ignores the stop when a newer command has arrived.
     private void stopPlaybackAndService(int startId) {
+        cancelCrossfade();
         mainHandler.removeCallbacks(delayedShutdown);
         stopProgressTicker();
         mainHandler.removeCallbacks(handoverWatchdog);

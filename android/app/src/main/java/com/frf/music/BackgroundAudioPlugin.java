@@ -560,6 +560,15 @@ public class BackgroundAudioPlugin extends Plugin {
         call.resolve();
     }
 
+    // Crossfade length in seconds between songs (0 = off).
+    @PluginMethod
+    public void setCrossfade(PluginCall call) {
+        Double secs = call.getDouble("seconds", 0d);
+        double v = secs != null ? secs : 0d;
+        PlaybackService.crossfadeMs = (int) Math.round(Math.max(0d, Math.min(12d, v)) * 1000d);
+        call.resolve();
+    }
+
     // Volume normalization for the song playing now (dB, 0 or lower).
     @PluginMethod
     public void setNormGain(PluginCall call) {

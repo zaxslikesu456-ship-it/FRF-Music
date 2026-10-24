@@ -96,7 +96,8 @@ export interface SettingsState {
   autoPlayNext: boolean;
   eqRememberPerDevice?: boolean; // remember an equalizer preset for each headphone
   eqPerDevice?: Record<string, EqualizerSettings>;
-  normalizeVolume?: boolean; // turn loud songs down so songs play at a similar level
+  normalizeVolume?: boolean;
+  crossfadeSeconds?: number; // overlap between songs, 0 = off // turn loud songs down so songs play at a similar level
   sortBy: SortOrder;
   downloadQuality: 'high' | 'low';
   sleepTimerMinutes: 0 | 15 | 30 | 60;
