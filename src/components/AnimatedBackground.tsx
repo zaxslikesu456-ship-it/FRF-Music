@@ -59,10 +59,11 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
     const getThemeColor = (): string => {
       try {
         const cs = getComputedStyle(document.documentElement);
-        const textCol = cs.getPropertyValue('--text-primary').trim();
-        if (textCol && textCol !== '') return textCol;
+        // The accent first, so a custom accent colors the animation too.
         const accent = cs.getPropertyValue('--accent-color').trim();
         if (accent && accent !== '') return accent;
+        const textCol = cs.getPropertyValue('--text-primary').trim();
+        if (textCol && textCol !== '') return textCol;
       } catch {
         // fallback
       }
@@ -357,7 +358,7 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
   return (
     <canvas
       ref={canvasRef}
-      className="fixed inset-0 w-full h-full pointer-events-none z-0 opacity-100"
+      className="fixed inset-0 w-full h-full pointer-events-none -z-10 opacity-100"
     />
   );
 };

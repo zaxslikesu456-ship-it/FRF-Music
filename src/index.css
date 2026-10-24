@@ -109,6 +109,7 @@ html {
 .bg-app-primary { background-color: var(--bg-primary); }
 .bg-app-surface { background-color: var(--bg-surface); }
 .bg-app-card { background-color: var(--bg-card); }
+.bg-app-solid { background-color: var(--bg-solid, var(--bg-surface)); }
 .bg-app-highlight { background-color: var(--bg-highlight); }
 
 .text-app-primary { color: var(--text-primary); }
@@ -120,7 +121,7 @@ html {
 
 /* Global Range Slider Customization (Fixes Android native default blue progress bar) */
 input[type="range"] {
-  accent-color: var(--text-primary, #ffffff) !important;
+  accent-color: var(--bg-highlight, #ffffff) !important;
 }
 
 input[type="range"]::-webkit-slider-runnable-track {
@@ -135,7 +136,7 @@ input[type="range"]::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   border-radius: 9999px;
-  background-color: var(--text-primary, #ffffff) !important;
+  background-color: var(--bg-highlight, #ffffff) !important;
   box-shadow: 0 0 8px var(--accent-glow, rgba(255, 255, 255, 0.4));
   margin-top: -4px;
 }
@@ -150,7 +151,7 @@ input[type="range"]::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border-radius: 9999px;
-  background-color: var(--text-primary, #ffffff) !important;
+  background-color: var(--bg-highlight, #ffffff) !important;
   border: none;
 }
 

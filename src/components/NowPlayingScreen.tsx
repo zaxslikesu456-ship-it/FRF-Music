@@ -397,21 +397,21 @@ export const NowPlayingScreen: React.FC = () => {
           <button
             onClick={() => setCenterMode('artwork')}
             className={`h-1.5 rounded-full transition-all duration-300 ${
-              centerMode === 'artwork' ? 'w-6 bg-white' : 'w-1.5 bg-white/20 hover:bg-white/50'
+              centerMode === 'artwork' ? 'w-6 bg-app-highlight' : 'w-1.5 bg-white/20 hover:bg-white/50'
             }`}
             title="Artwork"
           />
           <button
             onClick={() => setCenterMode('lyrics')}
             className={`h-1.5 rounded-full transition-all duration-300 ${
-              centerMode === 'lyrics' ? 'w-6 bg-white' : 'w-1.5 bg-white/20 hover:bg-white/50'
+              centerMode === 'lyrics' ? 'w-6 bg-app-highlight' : 'w-1.5 bg-white/20 hover:bg-white/50'
             }`}
             title="Lyrics"
           />
           <button
             onClick={() => setCenterMode('video')}
             className={`h-1.5 rounded-full transition-all duration-300 ${
-              centerMode === 'video' ? 'w-6 bg-white' : 'w-1.5 bg-white/20 hover:bg-white/50'
+              centerMode === 'video' ? 'w-6 bg-app-highlight' : 'w-1.5 bg-white/20 hover:bg-white/50'
             }`}
             title="Video"
           />
@@ -604,7 +604,7 @@ export const NowPlayingScreen: React.FC = () => {
             onChange={e => setDragTime(parseFloat(e.target.value))}
             onMouseUp={commitSeek}
             onTouchEnd={commitSeek}
-            className="w-full accent-[var(--text-primary)] accent-white h-1.5 rounded-lg cursor-pointer bg-app-card"
+            className="w-full accent-[var(--bg-highlight)] h-1.5 rounded-lg cursor-pointer bg-app-card"
           />
           <div className="flex justify-between text-xs text-app-secondary mt-2 font-mono">
             <span>{formatTime(shownTime)}</span>
@@ -701,7 +701,7 @@ export const NowPlayingScreen: React.FC = () => {
             step={0.01}
             value={volume}
             onChange={e => setVolume(parseFloat(e.target.value))}
-            className="flex-1 accent-[var(--text-primary)] accent-white h-1.5 rounded-lg cursor-pointer bg-app-card"
+            className="flex-1 accent-[var(--bg-highlight)] h-1.5 rounded-lg cursor-pointer bg-app-card"
             title={`Volume: ${Math.round(volume * 100)}%`}
           />
 

@@ -30,13 +30,13 @@ export const AndroidFrame: React.FC = () => {
   };
 
   return (
-    <div className={`w-full h-screen flex flex-col relative overflow-hidden select-none bg-app-primary text-app-primary transition-colors duration-500 ${getFontClass()}`}>
+    <div className={`w-full h-screen flex flex-col relative isolate overflow-hidden select-none bg-app-primary text-app-primary transition-colors duration-500 ${getFontClass()}`}>
       <AnimatedBackground type={settings.backgroundAnimation || 'off'} />
       {settings.backgroundImage && (
         <img
           src={settings.backgroundImage}
           alt=""
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none -z-10"
         />
       )}
 

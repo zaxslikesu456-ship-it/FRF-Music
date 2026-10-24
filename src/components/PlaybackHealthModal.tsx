@@ -123,7 +123,7 @@ export const PlaybackHealthModal: React.FC<{ isOpen: boolean; onClose: () => voi
 
   return createPortal(
     <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center">
-      <div className="w-full max-w-lg bg-app-surface border border-app-theme rounded-t-3xl sm:rounded-3xl max-h-[88vh] flex flex-col overflow-hidden shadow-2xl">
+      <div className="w-full max-w-lg bg-app-solid border border-app-theme rounded-t-3xl sm:rounded-3xl max-h-[88vh] flex flex-col overflow-hidden shadow-2xl">
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-app-theme">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-app-card border border-app-theme text-app-primary">

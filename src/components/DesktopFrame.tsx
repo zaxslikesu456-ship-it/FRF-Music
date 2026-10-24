@@ -212,7 +212,7 @@ const DesktopNowPlaying: React.FC = () => {
           onChange={e => setDragTime(parseFloat(e.target.value))}
           onPointerUp={commitSeek}
           onMouseUp={commitSeek}
-          className="w-full h-1 accent-white cursor-pointer"
+          className="w-full h-1 accent-[var(--bg-highlight)] cursor-pointer"
         />
         <div className="flex justify-between text-xs text-app-secondary mt-1">
           <span>{formatTime(shownTime)}</span>
@@ -271,7 +271,7 @@ const DesktopNowPlaying: React.FC = () => {
           step={0.01}
           value={volume}
           onChange={e => setVolume(parseFloat(e.target.value))}
-          className="w-full h-1 accent-white cursor-pointer"
+          className="w-full h-1 accent-[var(--bg-highlight)] cursor-pointer"
         />
       </div>
 
@@ -386,13 +386,13 @@ export const DesktopFrame: React.FC = () => {
   ];
 
   return (
-    <div className="w-full h-screen flex bg-app-primary text-app-primary overflow-hidden select-none relative">
+    <div className="w-full h-screen flex bg-app-primary text-app-primary overflow-hidden select-none relative isolate">
       <AnimatedBackground type={settings.backgroundAnimation || 'off'} />
       {settings.backgroundImage && (
         <img
           src={settings.backgroundImage}
           alt=""
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none -z-10"
         />
       )}
       {/* Left Navigation */}

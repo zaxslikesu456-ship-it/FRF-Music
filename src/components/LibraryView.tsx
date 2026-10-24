@@ -312,7 +312,7 @@ export const LibraryView: React.FC = () => {
             onClick={() => setTab(t)}
             className={`pb-3 text-base capitalize transition-all ${
               tab === t
-                ? 'text-app-primary font-semibold border-b-2 border-white'
+                ? 'text-app-primary font-semibold border-b-2 border-[var(--bg-highlight)]'
                 : 'text-app-secondary'
             }`}
           >

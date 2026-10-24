@@ -73,7 +73,6 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
     recentlyPlayed,
     favorites,
     searchYTMusic,
-    playTrack,
     addTrackToPlaylist,
     addTrackToLibrary,
   } = useAudio();
@@ -390,7 +389,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
         <button
           onClick={handlePlayAll}
           disabled={allActiveTracks.length === 0}
-          className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-lg disabled:opacity-40"
+          className="w-12 h-12 rounded-full bg-app-highlight text-app-inverse flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-lg disabled:opacity-40"
           title="Play All"
         >
           <Play className="w-5 h-5 fill-current ml-0.5" />
@@ -489,7 +488,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
           <button
             onClick={() => setShowSearch(v => !v)}
             className={`p-1.5 rounded-lg transition-colors ${
-              showSearch ? 'bg-white text-black' : 'hover:text-white'
+              showSearch ? 'bg-app-highlight text-app-inverse' : 'hover:text-white'
             }`}
             title="Search Playlist"
           >
@@ -548,7 +547,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
             return (
               <div
                 key={`${t.id}-${idx}`}
-                onClick={() => playTrack(t)}
+                onClick={() => playQueue(processedTracks, idx)}
                 className="w-full flex items-center gap-3.5 p-2 rounded-xl text-left hover:bg-white/5 cursor-pointer transition-colors group"
               >
                 <img
@@ -677,7 +676,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                   className="p-2.5 rounded-xl bg-zinc-900/60 hover:bg-zinc-800/80 border border-white/5 flex items-center justify-between transition-colors group"
                 >
                   <div
-                    onClick={() => playTrack(t)}
+                    onClick={() => playQueue(suggestedTracks.map(x => x.track), suggestedTracks.findIndex(x => x.track.id === t.id))}
                     className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
                   >
                     <div className="relative w-11 h-11 rounded-lg overflow-hidden shrink-0 border border-white/5">
@@ -720,7 +719,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                           e.stopPropagation();
                           handleAddSuggested(t);
                         }}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-white text-black hover:scale-105 text-xs font-semibold active:scale-95 transition-all shadow-md"
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-app-highlight text-app-inverse hover:scale-105 text-xs font-semibold active:scale-95 transition-all shadow-md"
                         title="Add to playlist"
                       >
                         <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
