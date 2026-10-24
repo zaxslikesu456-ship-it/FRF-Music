@@ -57,11 +57,12 @@ export function startNetworkMonitor(onChange: () => void) {
 
 const MB = 1024 * 1024;
 
-export function autoDownloadAllowed(settings: SettingsState | undefined): boolean {
+// skipSizeLimit: smart downloads keep to their own storage limit instead.
+export function autoDownloadAllowed(settings: SettingsState | undefined, skipSizeLimit = false): boolean {
   if (!settings) return true;
   if (settings.autoDownloadWifiOnly && !unmetered) return false;
   const limitMb = settings.autoDownloadLimitMb || 0;
-  if (limitMb > 0 && getOfflineUsageBytes() >= limitMb * MB) return false;
+  if (!skipSizeLimit && limitMb > 0 && getOfflineUsageBytes() >= limitMb * MB) return false;
   return true;
 }
 

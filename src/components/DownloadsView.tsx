@@ -23,6 +23,7 @@ import {
   type QueuedDownload,
 } from '../utils/downloadQueue';
 import type { Track } from '../types/music';
+import { isSmartOwned } from '../utils/smartDownloadsStore';
 
 export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const { tracks, downloads, downloadedTracks: contextDownloadedTracks, removeDownload, playQueue, currentTrack, isPlaying, toggleShuffle, isShuffle } = useAudio();
@@ -283,6 +284,11 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
                 <div className="flex-1 min-w-0">
                   <p className={`text-sm sm:text-base font-semibold truncate ${isCurrent ? 'text-white font-bold' : 'text-zinc-100'}`}>
                     {track.title}
+                    {isSmartOwned(track.id) && (
+                      <span className="ml-2 align-middle px-1.5 py-0.5 rounded bg-white/10 text-[10px] font-semibold text-zinc-300 uppercase tracking-wide">
+                        Auto
+                      </span>
+                    )}
                   </p>
                   <p className="text-xs text-zinc-400 truncate mt-0.5">{track.artist}</p>
                 </div>
