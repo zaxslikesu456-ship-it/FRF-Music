@@ -8,7 +8,7 @@
 // http://frfpot.localhost/?r=<json>, a navigation that is cancelled and only
 // carries the answer back. It mirrors NativePoTokenMinter.java on Android.
 use std::sync::Mutex as StdMutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -16,12 +16,16 @@ use tokio::sync::{oneshot, Mutex};
 
 const LABEL: &str = "potminter";
 const RESULT_HOST: &str = "frfpot.localhost";
+// The hidden window is a whole web page (about 30 MB). It is closed after this
+// long without a request and opened again by the next one.
+const IDLE_CLOSE: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Default)]
 pub struct PotState {
     busy: Mutex<()>,
     pending: StdMutex<Option<oneshot::Sender<String>>>,
     ready: StdMutex<bool>,
+    last_used: StdMutex<Option<Instant>>,
 }
 
 fn create_window(app: &AppHandle) -> Result<WebviewWindow, String> {
@@ -62,6 +66,24 @@ fn create_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         .map_err(|e| e.to_string())
 }
 
+fn schedule_idle_close(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(IDLE_CLOSE + Duration::from_secs(1)).await;
+        let state = app.state::<PotState>();
+        // Not while a request is running, and not if another one came in since.
+        let Ok(_guard) = state.busy.try_lock() else { return };
+        let idle = state
+            .last_used
+            .lock()
+            .unwrap()
+            .map_or(true, |t| t.elapsed() >= IDLE_CLOSE);
+        if idle && app.get_webview_window(LABEL).is_some() {
+            reset(&app);
+        }
+    });
+}
+
 fn reset(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.destroy();
@@ -93,6 +115,8 @@ pub async fn mint_po_token(app: AppHandle, video_id: String) -> Result<String, S
 
     let (tx, rx) = oneshot::channel();
     *state.pending.lock().unwrap() = Some(tx);
+    *state.last_used.lock().unwrap() = Some(Instant::now());
+    schedule_idle_close(&app);
     let binding = serde_json::to_string(&video_id).map_err(|e| e.to_string())?;
     window
         .eval(&MINT_SCRIPT.replace("__VIDEO_ID__", &binding))

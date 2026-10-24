@@ -8,6 +8,7 @@ import {
   deleteOfflineFile,
   getOfflinePlaybackUrl,
   getOfflinePlaybackUrlAsync,
+  isStoredInBrowser,
   getOfflineRecord,
   setCachedStreamUrl,
   dropCachedStreamUrl,
@@ -1796,8 +1797,12 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Android still uses the iframe as a backup; desktop skips it on startup
   // because the hidden player element is not in DesktopFrame and the iframe
-  // Load YouTube IFrame API on startup
+  // Load YouTube IFrame API on startup. Not on PC: there the songs play through
+  // the app itself and the YouTube player is only a fallback, and loading it up
+  // front kept a whole YouTube page (about 70 MB) in memory for nothing. It is
+  // loaded the first time a song needs it (startIframe waits for it).
   useEffect(() => {
+    if (IS_DESKTOP_APP) return;
     void loadYtApi();
   }, []);
 
@@ -2705,15 +2710,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    void getOfflinePlaybackUrlAsync(track.id).then(asyncUrl => {
-      if (playGenRef.current !== currentGen) return;
-      if (asyncUrl && audioRef.current) {
-        if (ytPlayerRef.current && ytPlayerRef.current.pauseVideo) {
-          try { ytPlayerRef.current.pauseVideo(); } catch {}
-        }
-        playAudioUrl(track, asyncUrl, startTime).catch(() => setIsPlaying(false));
-      }
-    });
+    // Everything else: stream it (YouTube) or play its URL. Kept in a function so
+    // a song downloaded on PC can be read from storage first and only streamed
+    // if that fails.
+    const startOnline = () => {
 
     // 2. YouTube tracks: Immediate player start via YouTube player with automatic alternate recovery
     if (track.isYouTube && track.youtubeId) {
@@ -2826,6 +2826,25 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     void playAudioUrl(track, track.url, startTime).catch(() => {
       if (playGenRef.current === currentGen) setIsPlaying(false);
     });
+    };
+
+    // A song downloaded on PC is read from storage (it is not kept in memory).
+    // It used to be looked up while the stream also started, and the two raced.
+    if (isStoredInBrowser(track.id)) {
+      void getOfflinePlaybackUrlAsync(track.id).then(asyncUrl => {
+        if (playGenRef.current !== currentGen) return;
+        if (asyncUrl && audioRef.current) {
+          if (ytPlayerRef.current && ytPlayerRef.current.pauseVideo) {
+            try { ytPlayerRef.current.pauseVideo(); } catch {}
+          }
+          playAudioUrl(track, asyncUrl, startTime).catch(() => setIsPlaying(false));
+        } else {
+          startOnline();
+        }
+      });
+      return;
+    }
+    startOnline();
   };
 
   const playTrack = (track: Track) => {

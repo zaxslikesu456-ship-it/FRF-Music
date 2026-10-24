@@ -938,7 +938,31 @@ export async function storeBlobOffline(trackId: string, blob: Blob): Promise<voi
   });
 }
 
+// In-memory links to downloaded songs (PC and web keep the files in IndexedDB).
+// Each link holds the whole song in memory, and they used to be kept for every
+// song downloaded or played until the app closed, hundreds of MB after a big
+// download. Only the last few played are kept now; a song is read back from
+// IndexedDB when it is played again.
 const activeObjectUrls = new Map<string, string>();
+const KEEP_OBJECT_URLS = 3;
+
+function rememberObjectUrl(trackId: string, url: string) {
+  activeObjectUrls.delete(trackId);
+  activeObjectUrls.set(trackId, url); // newest last
+  while (activeObjectUrls.size > KEEP_OBJECT_URLS) {
+    const [oldId, oldUrl] = activeObjectUrls.entries().next().value as [string, string];
+    activeObjectUrls.delete(oldId);
+    // The song that is playing has already been read by the player; its link is
+    // the newest, so it is never the one released here.
+    URL.revokeObjectURL(oldUrl);
+  }
+}
+
+/** True when the song was downloaded to IndexedDB (PC and web), not to a file. */
+export function isStoredInBrowser(trackId: string): boolean {
+  const rec = getOfflineRecord(trackId);
+  return Boolean(rec && !(IS_NATIVE && rec.path));
+}
 
 export async function getOfflinePlaybackUrlAsync(trackId: string): Promise<string | null> {
   const rec = getOfflineRecord(trackId);
@@ -947,7 +971,9 @@ export async function getOfflinePlaybackUrlAsync(trackId: string): Promise<strin
     return Capacitor.convertFileSrc(rec.path);
   }
   if (activeObjectUrls.has(trackId)) {
-    return activeObjectUrls.get(trackId)!;
+    const url = activeObjectUrls.get(trackId)!;
+    rememberObjectUrl(trackId, url); // mark as recently used
+    return url;
   }
   try {
     const db = await openDownloadsDB();
@@ -960,13 +986,14 @@ export async function getOfflinePlaybackUrlAsync(trackId: string): Promise<strin
     });
     if (blob) {
       const url = URL.createObjectURL(blob);
-      activeObjectUrls.set(trackId, url);
+      rememberObjectUrl(trackId, url);
       return url;
     }
   } catch {
-    // fallback to stored webUrl if any
+    // fall through
   }
-  return rec.webUrl || null;
+  // A saved blob: link only lived as long as the app session that made it.
+  return rec.webUrl && !rec.webUrl.startsWith('blob:') ? rec.webUrl : null;
 }
 
 export function getOfflinePlaybackUrl(trackId: string): string | null {
@@ -978,7 +1005,7 @@ export function getOfflinePlaybackUrl(trackId: string): string | null {
   if (activeObjectUrls.has(trackId)) {
     return activeObjectUrls.get(trackId)!;
   }
-  return rec.webUrl || null;
+  return rec.webUrl && !rec.webUrl.startsWith('blob:') ? rec.webUrl : null;
 }
 
 export function getOfflineRecord(trackId: string): OfflineFileRecord | null {
@@ -1208,8 +1235,8 @@ export async function downloadTrackToFile(
           })();
       if (blob.size < 20000) throw new Error(`File too small (${blob.size} bytes)`);
       await storeBlobOffline(track.id, blob);
-      webUrl = URL.createObjectURL(blob);
-      activeObjectUrls.set(track.id, webUrl);
+      // No in-memory link here: the song is read back from IndexedDB when played.
+      webUrl = '';
       size = blob.size;
     }
 
