@@ -23,7 +23,9 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BackgroundAudioPlugin.class);
+        registerPlugin(AlarmPlugin.class);
         super.onCreate(savedInstanceState);
+        if (savedInstanceState == null) handleAlarmIntent(getIntent());
 
         // Pictures are served from a permanent disk cache (works offline).
         if (getBridge() != null) {
@@ -69,6 +71,28 @@ public class MainActivity extends BridgeActivity {
             s.setDomStorageEnabled(true);
             s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
+    }
+
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        handleAlarmIntent(intent);
+    }
+
+    // Opened by the music alarm: show over the lock screen and let the web layer
+    // start the chosen music (it asks via AlarmPlugin.getAlarmLaunch).
+    private void handleAlarmIntent(android.content.Intent intent) {
+        if (intent == null || !intent.getBooleanExtra(AlarmScheduler.EXTRA_ALARM, false)) return;
+        intent.removeExtra(AlarmScheduler.EXTRA_ALARM);
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+        } else {
+            getWindow().addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                    | android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+        }
+        AlarmPlugin.onAlarmLaunch();
     }
 
     @Override
