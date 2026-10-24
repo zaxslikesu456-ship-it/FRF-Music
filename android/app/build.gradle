@@ -7,8 +7,8 @@ android {
         applicationId "com.frf.music"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10
-        versionName "1.3-q10"
+        versionCode 11
+        versionName "1.4-q11"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -17,9 +17,21 @@ android {
         }
     }
     buildTypes {
+        // The phone APK: unused code and resources removed, and only the CPU types
+        // phones use (64-bit and older 32-bit ARM), which leaves out two of the four
+        // copies of Cronet's native library. Signed with the same debug key as the
+        // test builds, so it installs over them and keeps the app's data.
+        // Build it with:  gradlew assembleRelease
+        // For the emulator (x86_64), add:  -Pabis=x86_64
+        // The debug build (gradlew assembleDebug) still has every CPU type.
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
+            ndk {
+                abiFilters.addAll((project.findProperty('abis') ?: 'arm64-v8a,armeabi-v7a').toString().split(',').collect { it.trim() })
+            }
         }
     }
     compileOptions {
