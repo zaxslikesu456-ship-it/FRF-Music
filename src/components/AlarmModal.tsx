@@ -24,7 +24,7 @@ const Chip: React.FC<{ active: boolean; onClick: () => void; children: React.Rea
     onClick={onClick}
     className={`px-4 py-2 rounded-full text-sm font-semibold border transition-all ${
       active
-        ? 'bg-app-highlight text-app-inverse border-white'
+        ? 'bg-app-highlight text-app-inverse border-transparent'
         : 'bg-app-surface text-app-secondary border-app-theme'
     }`}
   >

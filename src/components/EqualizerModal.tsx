@@ -242,7 +242,7 @@ export const EqualizerModal: React.FC<EqualizerModalProps> = ({ isOpen, onClose 
                     onClick={() => handlePresetSelect(pKey)}
                     className={`px-3.5 py-1.5 rounded-full text-xs font-semibold shrink-0 transition-all ${
                       isSelected
-                        ? 'bg-app-highlight text-app-inverse border border-white'
+                        ? 'bg-app-highlight text-app-inverse border border-transparent'
                         : 'bg-app-card text-app-secondary border border-app-theme hover:text-app-primary'
                     }`}
                   >

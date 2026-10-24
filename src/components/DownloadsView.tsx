@@ -282,7 +282,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
                   className="w-12 h-12 rounded-lg object-cover shrink-0 border border-white/5"
                 />
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm sm:text-base font-semibold truncate ${isCurrent ? 'text-white font-bold' : 'text-zinc-100'}`}>
+                  <p className={`text-sm sm:text-base font-semibold truncate ${isCurrent ? 'text-app-accent font-bold' : 'text-zinc-100'}`}>
                     {track.title}
                     {isSmartOwned(track.id) && (
                       <span className="ml-2 align-middle px-1.5 py-0.5 rounded bg-white/10 text-[10px] font-semibold text-zinc-300 uppercase tracking-wide">

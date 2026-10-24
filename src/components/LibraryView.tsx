@@ -411,7 +411,7 @@ export const LibraryView: React.FC = () => {
 
             <button onClick={() => setSubView({ kind: 'favorites' })} className="text-left">
               <div className="aspect-square rounded-2xl bg-app-card flex items-center justify-center">
-                <Heart className="w-16 h-16 text-app-primary fill-white" />
+                <Heart className="w-16 h-16 text-app-accent fill-current" />
               </div>
               <p className="text-base font-semibold text-app-primary mt-3">Favorites</p>
             </button>

@@ -507,7 +507,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
       </div>
 
       {shareNote && (
-        <div className="mx-6 mb-2 px-4 py-2 rounded-xl bg-white text-black text-xs font-semibold text-center">
+        <div className="mx-6 mb-2 px-4 py-2 rounded-xl bg-app-highlight text-app-inverse text-xs font-semibold text-center">
           {shareNote}
         </div>
       )}
@@ -558,7 +558,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                   className="w-12 h-12 rounded-lg object-cover shrink-0 border border-white/5"
                 />
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm sm:text-base font-semibold truncate ${isCurrent ? 'text-white font-bold' : 'text-zinc-100'}`}>
+                  <p className={`text-sm sm:text-base font-semibold truncate ${isCurrent ? 'text-app-accent font-bold' : 'text-zinc-100'}`}>
                     {t.title}
                   </p>
                   <p className="text-xs text-zinc-400 truncate mt-0.5">{t.artist}</p>
