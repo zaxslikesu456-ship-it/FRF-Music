@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { formatMb } from '../utils/autoDownload';
 import { PlaybackHealthModal } from './PlaybackHealthModal';
+import { SmartDownloadsSettings } from './SmartDownloadsSettings';
 import { ListeningStatsModal } from './ListeningStatsModal';
 import { getOfflineUsageBytes } from '../utils/downloadManager';
 import {
@@ -667,6 +668,7 @@ export const SettingsView: React.FC = () => {
                           ))}
                         </div>
                       </div>
+                      <SmartDownloadsSettings />
                       {playlists.length > 0 && (
                         <>
                           <p className="text-sm text-app-secondary pt-2 pb-1">PLAYLISTS TO KEEP DOWNLOADED</p>

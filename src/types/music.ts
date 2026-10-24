@@ -110,6 +110,11 @@ export interface SettingsState {
   autoDownloadPlaylists: string[]; // playlist ids
   autoDownloadWifiOnly: boolean;
   autoDownloadLimitMb: number; // 0 = no limit
+  // Smart downloads: keep liked and most played songs offline within a size limit.
+  smartDownloads: boolean;
+  smartKeepLiked: boolean;
+  smartTopPlayed: number; // keep this many most played songs, 0 = off
+  smartLimitMb: number;
   showPlayCounts: boolean;
   profileName: string;
   profileAvatar: string | null;
