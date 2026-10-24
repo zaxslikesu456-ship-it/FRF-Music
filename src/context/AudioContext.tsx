@@ -25,8 +25,21 @@ import {
   enqueueDownloads,
   kickQueue,
   isAlreadyOffline,
+  getQueue,
+  removeFromQueue as removeFromDownloadQueue,
 } from '../utils/downloadQueue';
+import { getLastPlayed } from '../utils/listening';
 import { autoDownloadAllowed, startNetworkMonitor } from '../utils/autoDownload';
+import { planSmartDownloads, mbToBytes, type SmartCandidate } from '../utils/smartDownloads';
+import {
+  isSmartOwned,
+  getSmartOwnedIds,
+  claimSmart,
+  releaseSmart,
+  isSmartDeclined,
+  declineSmart,
+  undeclineSmart,
+} from '../utils/smartDownloadsStore';
 import { normalizationGainDb } from '../utils/loudness';
 import { isTauriRuntime } from '../utils/http';
 import { logPlayStart, logListened, flushListening, getListeningLog, replaceListeningLog } from '../utils/listening';
@@ -312,6 +325,10 @@ const DEFAULT_SETTINGS: SettingsState = {
   autoDownloadPlaylists: [],
   autoDownloadWifiOnly: true,
   autoDownloadLimitMb: 2048,
+  smartDownloads: false,
+  smartKeepLiked: true,
+  smartTopPlayed: 50,
+  smartLimitMb: 1024,
   showPlayCounts: true,
   profileName: 'Music Lover',
   profileAvatar: null,
@@ -446,7 +463,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     startDownloadQueue({
       onDownloaded: t => registerDownloadedTrackRef.current(t),
       // Auto-download items wait while on mobile data (if Wi-Fi only) or over the limit.
-      gate: item => item.source !== 'auto' || autoDownloadAllowed(settingsRef.current),
+      gate: item => item.source !== 'auto' || autoDownloadAllowed(settingsRef.current, isSmartOwned(item.track.id)),
     });
     startNetworkMonitor(() => kickQueue());
   }, []);
@@ -3463,7 +3480,103 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     kickQueue();
   }, [settings.autoDownloadWifiOnly, settings.autoDownloadLimitMb]);
 
+  // Smart downloads: keep liked and most played songs offline within the chosen
+  // limit. Re-plans (debounced) when likes, play counts or the settings change,
+  // and once shortly after the app starts. Only files it added itself are ever
+  // removed, and never the song that is playing.
+  useEffect(() => {
+    if (!settings.smartDownloads) return;
+    const timer = window.setTimeout(() => {
+      const known = new Map<string, Track>();
+      [...Object.values(trackStore), ...downloadedTracks, ...tracks, ...favoriteTracks].forEach(t => known.set(t.id, t));
+      const likedIds = new Set(favoriteTracks.map(t => t.id));
+      const keepIds = new Set<string>();
+      if (settings.autoDownloadLikes) likedIds.forEach(id => keepIds.add(id));
+      for (const pid of settings.autoDownloadPlaylists || []) {
+        playlists.find(p => p.id === pid)?.trackIds.forEach(id => keepIds.add(id));
+      }
+      const lastPlayed = getLastPlayed();
+      const ids = new Set<string>([...likedIds, ...getSmartOwnedIds()]);
+      Object.entries(playCounts).forEach(([id, n]) => {
+        if (n > 0) ids.add(id);
+      });
+      const playingId = currentTrackRef.current?.id;
+      const candidates: SmartCandidate[] = [];
+      for (const id of ids) {
+        const t = known.get(id);
+        if (t && (t.isLocal || !t.youtubeId)) continue;
+        if (!t && !isSmartOwned(id)) continue;
+        if (isSmartDeclined(id) && !isSmartOwned(id)) continue;
+        const offline = isAlreadyOffline(id);
+        candidates.push({
+          id,
+          liked: likedIds.has(id),
+          plays: playCounts[id] || 0,
+          lastPlayed: lastPlayed[id] || 0,
+          offline,
+          sizeBytes: offline ? getOfflineRecord(id)?.size : undefined,
+          smartOwned: isSmartOwned(id),
+          protectedFromEviction: id === playingId || keepIds.has(id),
+        });
+      }
+      const plan = planSmartDownloads(candidates, {
+        keepLiked: settings.smartKeepLiked,
+        topPlayed: settings.smartTopPlayed,
+        limitBytes: mbToBytes(settings.smartLimitMb),
+      });
+      const wanted = new Set(plan.wanted);
+
+      // Drop smart-added files that no longer fit.
+      for (const id of plan.toEvict) {
+        if (currentTrackRef.current?.id === id) continue;
+        releaseSmart([id]);
+        deleteOfflineFile(id).catch(() => {});
+        setDownloads(prev => {
+          const updated = prev.filter(x => x !== id);
+          localStorage.setItem('bw_music_downloads_v11', JSON.stringify(updated));
+          return updated;
+        });
+        setDownloadedTracks(prev => {
+          const updated = prev.filter(t => t.id !== id);
+          localStorage.setItem('bw_music_downloaded_objects_v11', JSON.stringify(updated));
+          return updated;
+        });
+      }
+
+      // Forget waiting smart downloads that are no longer wanted.
+      const queued = new Set<string>();
+      for (const q of getQueue()) {
+        queued.add(q.track.id);
+        if (q.source === 'auto' && q.state !== 'downloading' && isSmartOwned(q.track.id) && !wanted.has(q.track.id) && !keepIds.has(q.track.id)) {
+          removeFromDownloadQueue(q.track.id);
+          releaseSmart([q.track.id]);
+        }
+      }
+
+      // Queue what is missing, best first. Songs already queued by someone else
+      // (a manual download, another auto rule) are left alone and not claimed.
+      const fresh = plan.toDownload
+        .map(id => known.get(id))
+        .filter((t): t is Track => !!t && !!t.youtubeId && !t.isLocal);
+      claimSmart(fresh.filter(t => !queued.has(t.id)).map(t => t.id));
+      if (fresh.length > 0) enqueueDownloads(fresh, 'auto');
+    }, 4000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    settings.smartDownloads,
+    settings.smartKeepLiked,
+    settings.smartTopPlayed,
+    settings.smartLimitMb,
+    settings.autoDownloadLikes,
+    favoriteTracks,
+    playCounts,
+  ]);
+
   const downloadTrack = async (track: Track) => {
+    // A song you download yourself is yours: smart downloads never removes it.
+    releaseSmart([track.id]);
+    undeclineSmart([track.id]);
     // Local files already live on the device — just register them.
     if (track.isLocal || !track.youtubeId) {
       registerDownloadedTrack(track);
@@ -3492,6 +3605,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // 3. Add all tracks to Library
     tracksToDownload.forEach(t => addTrackToLibrary(t));
+    releaseSmart(tracksToDownload.map(t => t.id)); // explicit playlist download: never auto-removed
+    undeclineSmart(tracksToDownload.map(t => t.id));
 
     // 4. Save it as a playlist, unless it already is one. Downloading one of your
     // own playlists used to add a second copy of it every time, and downloading
@@ -3623,6 +3738,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const removeTrackFromLibrary = (trackId: string) => {
     deleteOfflineFile(trackId).catch(() => {});
+    // Removed by hand: smart downloads must not fetch it again.
+    releaseSmart([trackId]);
+    declineSmart(trackId);
 
     // If the removed song is the current one, stop playback completely
     if (currentTrackRef.current?.id === trackId) {
