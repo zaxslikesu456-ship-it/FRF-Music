@@ -1,12 +1,12 @@
 # FRF Music
 
-A free, ad-free music player for **Android**, **Windows** and **iPhone** that streams from YouTube Music, with downloads for offline listening.
+A free, ad-free music player for **Android** and **Windows** that streams from YouTube Music, with downloads for offline listening.
 
 ## Features
 
 - **Streaming and search**: search YouTube Music for songs, artists, albums, videos and community playlists, with autocomplete, recent searches and results from your own library (works offline).
 - **Downloads**: save songs and whole playlists for offline listening, with optional auto-download of liked songs.
-- **Background playback**: a native player on Android (ExoPlayer) and iPhone (AVQueuePlayer) keeps playing with the screen off, with lock-screen and notification controls and a home-screen widget on Android.
+- **Background playback**: a native player on Android (ExoPlayer) keeps playing with the screen off, with lock-screen and notification controls and a home-screen widget on Android.
 - **Sound**:
   - a 5-band equalizer with bass boost and 3D surround;
   - volume normalization;
@@ -42,7 +42,6 @@ cd src-tauri
 cargo build --release
 ```
 
-**iPhone**: built on GitHub Actions (`.github/workflows/build-ios.yml`), so no Mac is needed. Run the workflow on your branch and download the unsigned IPA or the simulator build from the run's artifacts.
 
 ## Project layout
 
@@ -50,7 +49,7 @@ cargo build --release
 |---|---|
 | `src/` | The app (React + TypeScript + Vite), shared by every platform |
 | `android/` | Android app (Capacitor) with the native player, equalizer and widget |
-| `ios/` | iPhone app (Capacitor) with the native player |
+| `ios/` | iPhone app (work in progress, not released) |
 | `src-tauri/` | Windows app (Tauri) with its audio proxy and token window |
 
 ## Disclaimer
