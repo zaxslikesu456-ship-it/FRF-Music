@@ -2,6 +2,21 @@
 
 A free, ad-free music player for **Android** and **Windows** that streams from YouTube Music, with downloads for offline listening.
 
+<p align="center">
+  <img src="docs/screenshots/01-home.jpg" alt="FRF Music home screen on Windows" width="100%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/06-home-phone.jpg" alt="Home on Android" width="24%">
+  <img src="docs/screenshots/03-player.jpg" alt="Now playing" width="24%">
+  <img src="docs/screenshots/04-lyrics.jpg" alt="Synced lyrics" width="24%">
+  <img src="docs/screenshots/05-equalizer.jpg" alt="Equalizer" width="24%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/02-search.jpg" alt="Search on Windows" width="100%">
+</p>
+
+**Download:** [latest release](https://github.com/zaxslikesu456-ship-it/FRF-Music/releases/latest) (Android APK and Windows EXE)
+
 ## Features
 
 - **Streaming and search**: search YouTube Music for songs, artists, albums, videos and community playlists, with autocomplete, recent searches and results from your own library (works offline).
