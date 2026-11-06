@@ -1,32 +1,62 @@
-# React + TypeScript + Vite
+# FRF Music
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A free, ad-free music player for **Android**, **Windows** and **iPhone** that streams from YouTube Music, with downloads for offline listening.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Streaming and search**: search YouTube Music for songs, artists, albums, videos and community playlists, with autocomplete, recent searches and results from your own library (works offline).
+- **Downloads**: save songs and whole playlists for offline listening, with optional auto-download of liked songs.
+- **Background playback**: a native player on Android (ExoPlayer) and iPhone (AVQueuePlayer) keeps playing with the screen off, with lock-screen and notification controls and a home-screen widget on Android.
+- **Sound**:
+  - a 5-band equalizer with bass boost and 3D surround;
+  - volume normalization;
+  - crossfade between songs;
+  - Android only: a separate equalizer preset for each headphone.
+- **Lyrics**: synced lyrics that follow the song, tap a line to jump, and a shareable lyric card.
+- **For you**: daily mixes, a "Rediscover" mix of songs you loved but haven't played in a while, and listening stats (minutes, top artists, streaks). All of this is kept on your device.
+- **Playlists**: create, import (share codes, song lists, CSV, Spotify links) and share playlists.
+- **Many languages** and themes.
 
-## React Compiler
+## Building
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+You need Node.js 20+.
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run build
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+**Android** (needs the Android SDK and JDK 17):
+
+```bash
+npx cap sync android
+cd android
+./gradlew assembleRelease   # phone APK (shrunk, ARM only)
+./gradlew assembleDebug     # debug APK with every CPU type (for emulators)
+```
+
+**Windows** (needs Rust):
+
+```bash
+cd src-tauri
+cargo build --release
+```
+
+**iPhone**: built on GitHub Actions (`.github/workflows/build-ios.yml`), so no Mac is needed. Run the workflow on your branch and download the unsigned IPA or the simulator build from the run's artifacts.
+
+## Project layout
+
+| Path | What it is |
+|---|---|
+| `src/` | The app (React + TypeScript + Vite), shared by every platform |
+| `android/` | Android app (Capacitor) with the native player, equalizer and widget |
+| `ios/` | iPhone app (Capacitor) with the native player |
+| `src-tauri/` | Windows app (Tauri) with its audio proxy and token window |
+
+## Disclaimer
+
+FRF Music is an independent project. It is not affiliated with, endorsed by or connected to YouTube or Google. Use it in line with the terms of the services you access through it.
+
+## License
+
+FRF Music is free software, released under the [GNU General Public License v3.0 or later](LICENSE). You can use, study, share and change it. If you share a changed version, it must stay under the same license and include its source code.
