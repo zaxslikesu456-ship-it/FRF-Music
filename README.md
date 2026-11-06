@@ -58,4 +58,8 @@ FRF Music is an independent project. It is not affiliated with, endorsed by or c
 
 ## License
 
+Copyright (C) 2026 zaxs
+
 FRF Music is free software, released under the [GNU General Public License v3.0 or later](LICENSE). You can use, study, share and change it. If you share a changed version, it must stay under the same license and include its source code.
+
+FRF Music includes code and libraries from other projects under their own licenses (MIT, Apache-2.0, BSD, ISC, MPL-2.0 and others). Their copyright notices are in [THIRD_PARTY_NOTICES.txt](public/THIRD_PARTY_NOTICES.txt), which the apps also show under Settings > App info > Open-source licenses. Regenerate it with `node scripts/generate-notices.mjs` after changing libraries.

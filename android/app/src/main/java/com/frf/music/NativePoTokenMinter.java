@@ -148,6 +148,8 @@ public class NativePoTokenMinter {
     }
 
     /**
+     * The minting flow and parts of this script come from BgUtils (https://github.com/LuanRT/BgUtils), Copyright (c) 2024 LuanRT, MIT license; see THIRD_PARTY_NOTICES.txt.
+     *
      * Runs on the youtube.com robots.txt page. Everything is same-origin to
      * YouTube here: att/get, the interpreter script and GenerateIT are plain
      * page fetches. Backslashes are avoided in this script because it is

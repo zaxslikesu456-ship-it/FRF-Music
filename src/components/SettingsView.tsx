@@ -7,6 +7,7 @@ import { formatMb } from '../utils/autoDownload';
 import { PlaybackHealthModal } from './PlaybackHealthModal';
 import { SmartDownloadsSettings } from './SmartDownloadsSettings';
 import { ListeningStatsModal } from './ListeningStatsModal';
+import { LicensesModal } from './LicensesModal';
 import { VISUALIZER_OPTIONS } from './AudioVisualizer';
 import { DeviceSyncModal } from './DeviceSyncModal';
 import { AlarmModal } from './AlarmModal';
@@ -134,6 +135,7 @@ export const SettingsView: React.FC = () => {
   const isAndroidApp = Capacitor.getPlatform() === 'android';
   const [showHealth, setShowHealth] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [showLicenses, setShowLicenses] = useState(false);
   const [showSync, setShowSync] = useState(false);
   const [showAlarm, setShowAlarm] = useState(false);
   const [restoreStatus, setRestoreStatus] = useState('');
@@ -273,6 +275,7 @@ export const SettingsView: React.FC = () => {
     <div className="flex-1 overflow-y-auto pb-28 bg-transparent">
       <PlaybackHealthModal isOpen={showHealth} onClose={() => setShowHealth(false)} />
       <ListeningStatsModal isOpen={showStats} onClose={() => setShowStats(false)} />
+      <LicensesModal isOpen={showLicenses} onClose={() => setShowLicenses(false)} />
       <DeviceSyncModal isOpen={showSync} onClose={() => setShowSync(false)} />
       <AlarmModal isOpen={showAlarm} onClose={() => setShowAlarm(false)} />
       {/* Title: "Settings" on the menu (and on PC), the section's name with a back
@@ -1021,6 +1024,26 @@ export const SettingsView: React.FC = () => {
                         Downloaded songs are stored on your device for offline playback, and music
                         keeps playing in the background.
                       </p>
+                      <p className="text-sm text-app-secondary pt-3">
+                        Copyright © 2026 zaxs. FRF Music is free software under the GNU GPL v3.{' '}
+                        <a
+                          href="https://github.com/zaxslikesu456-ship-it/FRF-Music"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline text-app-primary"
+                        >
+                          Source code
+                        </a>
+                      </p>
+                      <div className="py-3">
+                        <button
+                          onClick={() => setShowLicenses(true)}
+                          className="w-full p-3.5 rounded-2xl bg-app-card border border-app-theme text-left active:scale-98 transition-all"
+                        >
+                          <p className="text-base font-semibold text-app-primary">Open-source licenses</p>
+                          <p className="text-xs text-app-secondary">Credits for the code and libraries in this app</p>
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

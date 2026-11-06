@@ -44,7 +44,9 @@ const Http = {
 // InnerTube /player calls then return LOGIN_REQUIRED and googlevideo answers
 // 403. With a poToken those same requests succeed.
 //
-// Flow (reverse-engineered by the BgUtils project, MIT license):
+// The flow and parts of this code come from BgUtils (https://github.com/LuanRT/BgUtils), Copyright (c) 2024 LuanRT, MIT license; see THIRD_PARTY_NOTICES.txt.
+//
+// Flow:
 //   1. InnerTube att/get        -> BotGuard program + interpreter script URL
 //   2. Load interpreter script  -> global BotGuard VM
 //   3. vm.a(program, ...)       -> asyncSnapshotFunction

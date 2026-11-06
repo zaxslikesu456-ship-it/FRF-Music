@@ -133,6 +133,8 @@ pub async fn mint_po_token(app: AppHandle, video_id: String) -> Result<String, S
     }
 }
 
+// The minting flow and parts of this script come from BgUtils (https://github.com/LuanRT/BgUtils), Copyright (c) 2024 LuanRT, MIT license; see THIRD_PARTY_NOTICES.txt.
+//
 // Runs on the youtube.com robots.txt page, so att/get and GenerateIT are plain
 // same-origin fetches. Same flow as the Android minter.
 const MINT_SCRIPT: &str = r#"
