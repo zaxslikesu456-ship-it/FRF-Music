@@ -794,6 +794,53 @@ public class BackgroundAudioPlugin extends Plugin {
         }, "frf-cover-cache").start();
     }
 
+    // "Clear all data": everything the app keeps natively — downloaded songs,
+    // cached covers, the cache dir, alarms — plus the WebView's own storage and
+    // cookies. Files the user chose to keep in the phone's Music folder are not
+    // app data and are left alone.
+    @PluginMethod
+    public void clearAppData(PluginCall call) {
+        Context ctx = getContext();
+        try {
+            AlarmScheduler.cancelAll(ctx);
+        } catch (Exception ignored) {}
+        try {
+            ctx.getSharedPreferences(AlarmScheduler.PREFS, Context.MODE_PRIVATE).edit().clear().apply();
+        } catch (Exception ignored) {}
+        deleteRecursive(new File(ctx.getFilesDir(), "offline"));
+        deleteRecursive(new File(ctx.getFilesDir(), "covers"));
+        File[] cached = ctx.getCacheDir().listFiles();
+        if (cached != null) {
+            for (File f : cached) deleteRecursive(f);
+        }
+        Runnable clearWebView = () -> {
+            try {
+                android.webkit.WebStorage.getInstance().deleteAllData();
+            } catch (Exception ignored) {}
+            try {
+                android.webkit.CookieManager cookies = android.webkit.CookieManager.getInstance();
+                cookies.removeAllCookies(null);
+                cookies.flush();
+            } catch (Exception ignored) {}
+            call.resolve();
+        };
+        if (getActivity() != null) getActivity().runOnUiThread(clearWebView);
+        else new Handler(Looper.getMainLooper()).post(clearWebView);
+    }
+
+    private static void deleteRecursive(File f) {
+        if (f == null || !f.exists()) return;
+        if (f.isDirectory()) {
+            File[] children = f.listFiles();
+            if (children != null) {
+                for (File c : children) deleteRecursive(c);
+            }
+        }
+        try {
+            f.delete();
+        } catch (Exception ignored) {}
+    }
+
     @PluginMethod
     public void deleteOfflineFile(PluginCall call) {
         String path = call.getString("path", "");

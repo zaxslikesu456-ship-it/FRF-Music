@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { t as tr, LANGUAGES, getLanguage, setLanguage } from '../i18n';
 import { createPortal } from 'react-dom';
 import { Capacitor } from '@capacitor/core';
 import { onBackButton } from '../utils/backButton';
@@ -31,6 +32,7 @@ import {
   Sliders,
   Activity,
   Smartphone,
+  Languages,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import {
@@ -102,6 +104,7 @@ const ChipGroup: React.FC<{
 );
 
 type Section =
+  | 'language'
   | 'personalisation'
   | 'content'
   | 'playback'
@@ -203,14 +206,16 @@ export const SettingsView: React.FC = () => {
     e.target.value = '';
   };
 
+  const currentLanguage = LANGUAGES.find(l => l.code === getLanguage()) || LANGUAGES[0];
   const sections: { id: Section; label: string; icon: React.ElementType; hint: string }[] = [
-    { id: 'personalisation', label: 'Personalisation', icon: Palette, hint: 'Theme, colours, album art, background' },
-    { id: 'content', label: 'Content', icon: LibraryBig, hint: 'Sorting and what you see' },
-    { id: 'playback', label: 'Music & Playback', icon: Music, hint: 'Crossfade, equalizer, alarm, sync, stats' },
-    { id: 'download', label: 'Download', icon: Download, hint: 'Quality, auto and smart downloads' },
-    { id: 'backup', label: 'Backup & Restore', icon: History, hint: 'Keep your library safe' },
-    { id: 'misc', label: 'Misc', icon: Settings2, hint: 'Keyboard shortcuts' },
-    { id: 'info', label: 'App Info', icon: Info, hint: 'Version and build' },
+    { id: 'language', label: tr('Language'), icon: Languages, hint: currentLanguage.name },
+    { id: 'personalisation', label: tr("Personalisation"), icon: Palette, hint: tr("Theme, colours, album art, background") },
+    { id: 'content', label: tr("Content"), icon: LibraryBig, hint: tr("Sorting and what you see") },
+    { id: 'playback', label: tr("Music & Playback"), icon: Music, hint: tr("Crossfade, equalizer, alarm, sync, stats") },
+    { id: 'download', label: tr("Download"), icon: Download, hint: tr("Quality, auto and smart downloads") },
+    { id: 'backup', label: tr("Backup & Restore"), icon: History, hint: tr("Keep your library safe") },
+    { id: 'misc', label: tr("Misc"), icon: Settings2, hint: tr("Keyboard shortcuts") },
+    { id: 'info', label: tr("App Info"), icon: Info, hint: tr("Version and build") },
   ];
   const current = sections.find(x => x.id === tab);
 
@@ -237,7 +242,7 @@ export const SettingsView: React.FC = () => {
             <button
               onClick={() => setTab(null)}
               className="p-2 rounded-full text-app-secondary hover:text-app-primary hover:bg-app-card"
-              title="Close"
+              title={tr("Close")}
             >
               <X className="w-6 h-6" />
             </button>
@@ -250,18 +255,18 @@ export const SettingsView: React.FC = () => {
   };
 
   const themes: { id: AppTheme; label: string; dot: string }[] = [
-    { id: 'black-white', label: 'Classic Black', dot: 'bg-app-highlight' },
-    { id: 'cyberpunk-neon', label: 'Cyberpunk Neon', dot: 'bg-cyan-400' },
-    { id: 'midnight-blue', label: 'Midnight Blue', dot: 'bg-sky-400' },
-    { id: 'sunset-crimson', label: 'Sunset Crimson', dot: 'bg-rose-500' },
-    { id: 'emerald-matrix', label: 'Emerald Matrix', dot: 'bg-emerald-400' },
-    { id: 'violet-aura', label: 'Violet Aura', dot: 'bg-purple-400' },
-    { id: 'solar-amber', label: 'Solar Amber', dot: 'bg-amber-400' },
-    { id: 'nordic-frost', label: 'Nordic Frost', dot: 'bg-sky-300' },
-    { id: 'obsidian-gold', label: 'Obsidian Gold', dot: 'bg-amber-500' },
-    { id: 'forest-emerald', label: 'Forest Emerald', dot: 'bg-emerald-500' },
-    { id: 'amoled-pitch', label: 'Amoled Pitch Black', dot: 'bg-white' },
-    { id: 'cherry-blossom', label: 'Cherry Blossom', dot: 'bg-rose-400' },
+    { id: 'black-white', label: tr("Classic Black"), dot: 'bg-app-highlight' },
+    { id: 'cyberpunk-neon', label: tr("Cyberpunk Neon"), dot: 'bg-cyan-400' },
+    { id: 'midnight-blue', label: tr("Midnight Blue"), dot: 'bg-sky-400' },
+    { id: 'sunset-crimson', label: tr("Sunset Crimson"), dot: 'bg-rose-500' },
+    { id: 'emerald-matrix', label: tr("Emerald Matrix"), dot: 'bg-emerald-400' },
+    { id: 'violet-aura', label: tr("Violet Aura"), dot: 'bg-purple-400' },
+    { id: 'solar-amber', label: tr("Solar Amber"), dot: 'bg-amber-400' },
+    { id: 'nordic-frost', label: tr("Nordic Frost"), dot: 'bg-sky-300' },
+    { id: 'obsidian-gold', label: tr("Obsidian Gold"), dot: 'bg-amber-500' },
+    { id: 'forest-emerald', label: tr("Forest Emerald"), dot: 'bg-emerald-500' },
+    { id: 'amoled-pitch', label: tr("Amoled Pitch Black"), dot: 'bg-white' },
+    { id: 'cherry-blossom', label: tr("Cherry Blossom"), dot: 'bg-rose-400' },
   ];
 
   return (
@@ -277,14 +282,14 @@ export const SettingsView: React.FC = () => {
           <button
             onClick={() => setTab(null)}
             className="p-2 rounded-full text-app-primary hover:bg-app-card active:scale-95 transition-transform"
-            title="Back"
+            title={tr("Back")}
           >
             <ChevronLeft className="w-7 h-7" />
           </button>
           <h1 className="text-2xl font-bold text-app-primary truncate">{current.label}</h1>
         </div>
       ) : (
-        <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-4">Settings</h1>
+        <h1 className="text-3xl font-bold text-app-primary px-5 safe-top pb-4">{tr("Settings")}</h1>
       )}
 
       <div className="md:px-5">
@@ -308,7 +313,7 @@ export const SettingsView: React.FC = () => {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-lg font-bold text-app-primary truncate">{settings.profileName}</p>
-                  <p className="text-sm text-app-secondary">Profile, theme and colours</p>
+                  <p className="text-sm text-app-secondary">{tr("Profile, theme and colours")}</p>
                 </div>
                 <ChevronRight className="w-5 h-5 text-app-secondary shrink-0" />
               </button>
@@ -355,10 +360,35 @@ export const SettingsView: React.FC = () => {
             <div key={s.id} className={wide ? '' : 'rounded-2xl bg-app-surface overflow-hidden settings-page-in'}>
               {(
                 <div className="px-5 pb-5">
+                  {/* LANGUAGE */}
+                  {s.id === 'language' && (
+                    <div className="pt-2">
+                      <p className="text-sm text-app-secondary pt-3 pb-1">{tr('APP LANGUAGE')}</p>
+                      {LANGUAGES.map(l => (
+                        <button
+                          key={l.code}
+                          onClick={() => setLanguage(l.code)}
+                          className="w-full flex items-center justify-between py-3 border-b border-app-theme text-left"
+                        >
+                          <span className="min-w-0">
+                            <span className="block text-base text-app-primary">{l.name}</span>
+                            {l.name !== l.english && (
+                              <span className="block text-xs text-app-secondary">{l.english}</span>
+                            )}
+                          </span>
+                          {l.code === currentLanguage.code && <Check className="w-5 h-5 text-app-accent shrink-0" />}
+                        </button>
+                      ))}
+                      <p className="text-xs text-app-secondary pt-3">
+                        {tr('Song titles, artists and lyrics stay in their own language.')}
+                      </p>
+                    </div>
+                  )}
+
                   {/* PERSONALISATION */}
                   {s.id === 'personalisation' && (
                     <div className="pt-2">
-                      <p className="text-sm text-app-secondary pt-3 pb-1">THEME</p>
+                      <p className="text-sm text-app-secondary pt-3 pb-1">{tr("THEME")}</p>
                       {themes.map(t => (
                         <button
                           key={t.id}
@@ -373,44 +403,44 @@ export const SettingsView: React.FC = () => {
                         </button>
                       ))}
 
-                      <p className="text-sm text-app-secondary pt-5 pb-1">BACKGROUND ANIMATION</p>
+                      <p className="text-sm text-app-secondary pt-5 pb-1">{tr("BACKGROUND ANIMATION")}</p>
                       <ChipGroup
                         options={[
-                          { id: 'off', label: 'Off' },
-                          { id: 'meteors', label: 'Meteor Shower' },
-                          { id: 'particles', label: 'Cosmic Dust' },
-                          { id: 'matrix', label: 'Matrix Rain' },
-                          { id: 'rain', label: 'Rain Drops' },
-                          { id: 'aurora', label: 'Aurora Waves' },
+                          { id: 'off', label: tr("Off") },
+                          { id: 'meteors', label: tr("Meteor Shower") },
+                          { id: 'particles', label: tr("Cosmic Dust") },
+                          { id: 'matrix', label: tr("Matrix Rain") },
+                          { id: 'rain', label: tr("Rain Drops") },
+                          { id: 'aurora', label: tr("Aurora Waves") },
                         ]}
                         value={settings.backgroundAnimation || 'off'}
                         onSelect={a => updateSettings({ backgroundAnimation: a as BackgroundAnimation })}
                       />
 
-                      <p className="text-sm text-app-secondary pt-5 pb-1">FONT STYLE</p>
+                      <p className="text-sm text-app-secondary pt-5 pb-1">{tr("FONT STYLE")}</p>
                       <ChipGroup
                         options={[
-                          { id: 'sans', label: 'Sans' },
-                          { id: 'mono', label: 'Mono' },
-                          { id: 'serif', label: 'Serif' },
+                          { id: 'sans', label: tr("Sans") },
+                          { id: 'mono', label: tr("Mono") },
+                          { id: 'serif', label: tr("Serif") },
                         ]}
                         value={settings.fontStyle}
                         onSelect={f => updateSettings({ fontStyle: f as FontStyle })}
                       />
 
-                      <p className="text-sm text-app-secondary pt-5 pb-1">ICON & LIST SIZE</p>
+                      <p className="text-sm text-app-secondary pt-5 pb-1">{tr("ICON & LIST SIZE")}</p>
                       <ChipGroup
                         options={[
-                          { id: 'compact', label: 'Compact (Small Icons)' },
-                          { id: 'standard', label: 'Standard' },
-                          { id: 'large', label: 'Large' },
+                          { id: 'compact', label: tr("Compact (Small Icons)") },
+                          { id: 'standard', label: tr("Standard") },
+                          { id: 'large', label: tr("Large") },
                         ]}
                         value={settings.iconSize || (settings.compactView ? 'compact' : 'standard')}
                         onSelect={sz => updateSettings({ iconSize: sz as IconSize, compactView: sz === 'compact' })}
                       />
 
                       <div className="pt-3">
-                        <Row title="Compact track lists" subtitle="Higher density layout">
+                        <Row title={tr("Compact track lists")} subtitle={tr("Higher density layout")}>
                           <Switch
                             on={settings.compactView || settings.iconSize === 'compact'}
                             onChange={() => {
@@ -421,7 +451,7 @@ export const SettingsView: React.FC = () => {
                         </Row>
                       </div>
 
-                      <p className="text-sm text-app-secondary pt-5 pb-1">PROFILE</p>
+                      <p className="text-sm text-app-secondary pt-5 pb-1">{tr("PROFILE")}</p>
                       <div className="flex items-center gap-4 py-2">
                         <label className="relative w-16 h-16 rounded-full overflow-hidden bg-app-card border border-app-theme flex items-center justify-center cursor-pointer shrink-0">
                           {settings.profileAvatar ? (
@@ -442,15 +472,15 @@ export const SettingsView: React.FC = () => {
                           type="text"
                           value={settings.profileName}
                           onChange={e => updateSettings({ profileName: e.target.value })}
-                          placeholder="Your name"
+                          placeholder={tr("Your name")}
                           className="flex-1 bg-app-card border border-app-theme rounded-xl py-2.5 px-3 text-base text-app-primary placeholder:text-app-secondary focus:outline-none"
                         />
                       </div>
 
-                      <p className="text-sm text-app-secondary pt-5 pb-1">ALBUM ART</p>
+                      <p className="text-sm text-app-secondary pt-5 pb-1">{tr("ALBUM ART")}</p>
                       <Row
-                        title="Colors from album art"
-                        subtitle="Now Playing, the mini player and the PC player take the cover's colors"
+                        title={tr("Colors from album art")}
+                        subtitle={tr("Now Playing, the mini player and the PC player take the cover's colors")}
                       >
                         <Switch
                           on={settings.albumArtColors !== false}
@@ -458,15 +488,15 @@ export const SettingsView: React.FC = () => {
                         />
                       </Row>
                       <Row
-                        title="Album art as accent"
-                        subtitle="Buttons and highlights follow the song that is playing"
+                        title={tr("Album art as accent")}
+                        subtitle={tr("Buttons and highlights follow the song that is playing")}
                       >
                         <Switch
                           on={settings.albumArtAccent === true}
                           onChange={() => updateSettings({ albumArtAccent: !settings.albumArtAccent })}
                         />
                       </Row>
-                      <Row title="Visualizer style" subtitle="Shown on Now Playing while music plays">
+                      <Row title={tr("Visualizer style")} subtitle={tr("Shown on Now Playing while music plays")}>
                         <select
                           value={settings.visualizerMode}
                           onChange={e => updateSettings({ visualizerMode: e.target.value as SettingsState['visualizerMode'] })}
@@ -480,8 +510,8 @@ export const SettingsView: React.FC = () => {
                         </select>
                       </Row>
 
-                      <p className="text-sm text-app-secondary pt-5 pb-1">CUSTOM COLORS</p>
-                      <Row title="Use custom colors" subtitle="Pick your own accent & background">
+                      <p className="text-sm text-app-secondary pt-5 pb-1">{tr("CUSTOM COLORS")}</p>
+                      <Row title={tr("Use custom colors")} subtitle={tr("Pick your own accent & background")}>
                         <Switch
                           on={settings.useCustomColors}
                           onChange={() => updateSettings({ useCustomColors: !settings.useCustomColors })}
@@ -496,7 +526,7 @@ export const SettingsView: React.FC = () => {
                               onChange={e => updateSettings({ customAccent: e.target.value })}
                               className="w-10 h-10 rounded-lg bg-transparent border border-app-theme cursor-pointer"
                             />
-                            <span className="text-base text-app-primary">Accent</span>
+                            <span className="text-base text-app-primary">{tr("Accent")}</span>
                           </label>
                           <label className="flex items-center gap-3">
                             <input
@@ -505,19 +535,19 @@ export const SettingsView: React.FC = () => {
                               onChange={e => updateSettings({ customBackground: e.target.value })}
                               className="w-10 h-10 rounded-lg bg-transparent border border-app-theme cursor-pointer"
                             />
-                            <span className="text-base text-app-primary">Background</span>
+                            <span className="text-base text-app-primary">{tr("Background")}</span>
                           </label>
                         </div>
                       )}
 
-                      <p className="text-sm text-app-secondary pt-5 pb-1">BACKGROUND & TRANSPARENCY</p>
+                      <p className="text-sm text-app-secondary pt-5 pb-1">{tr("BACKGROUND & TRANSPARENCY")}</p>
                       <Row
-                        title="Background image / GIF"
+                        title={tr("Background image / GIF")}
                         subtitle={settings.backgroundImage ? 'Custom background active' : 'None set'}
                       >
                         <div className="flex items-center gap-2">
                           <label className="px-3 py-2 rounded-full bg-app-card border border-app-theme text-sm font-semibold text-app-primary cursor-pointer">
-                            Upload
+                            {tr("Upload")}
                             <input
                               type="file"
                               accept="image/*,image/gif"
@@ -530,12 +560,12 @@ export const SettingsView: React.FC = () => {
                               onClick={() => updateSettings({ backgroundImage: null })}
                               className="px-3 py-2 rounded-full bg-app-card border border-app-theme text-sm font-semibold text-red-400"
                             >
-                              Remove
+                              {tr("Remove")}
                             </button>
                           )}
                         </div>
                       </Row>
-                      <Row title={`Overlay transparency • ${settings.overlayTransparency}%`} subtitle="Let your background show through">
+                      <Row title={`Overlay transparency • ${settings.overlayTransparency}%`} subtitle={tr("Let your background show through")}>
                         <input
                           type="range"
                           min={0}
@@ -552,38 +582,38 @@ export const SettingsView: React.FC = () => {
                   {/* CONTENT */}
                   {s.id === 'content' && (
                     <div className="pt-2">
-                      <p className="text-sm text-app-secondary pt-3 pb-1">DEFAULT LIBRARY SORTING</p>
+                      <p className="text-sm text-app-secondary pt-3 pb-1">{tr("DEFAULT LIBRARY SORTING")}</p>
                       <ChipGroup
                         options={[
-                          { id: 'title', label: 'Title' },
-                          { id: 'artist', label: 'Artist' },
-                          { id: 'addedAt', label: 'Date Added' },
+                          { id: 'title', label: tr("Title") },
+                          { id: 'artist', label: tr("Artist") },
+                          { id: 'addedAt', label: tr("Date Added") },
                         ]}
                         value={settings.sortBy}
                         onSelect={v => updateSettings({ sortBy: v as SortOrder })}
                       />
-                      <p className="text-sm text-app-secondary pt-4 pb-1">LIBRARY ICON & LIST SIZE</p>
+                      <p className="text-sm text-app-secondary pt-4 pb-1">{tr("LIBRARY ICON & LIST SIZE")}</p>
                       <ChipGroup
                         options={[
-                          { id: 'compact', label: 'Small Icons (40px)' },
-                          { id: 'standard', label: 'Standard Icons (56px)' },
-                          { id: 'large', label: 'Large Icons (64px)' },
+                          { id: 'compact', label: tr("Small Icons (40px)") },
+                          { id: 'standard', label: tr("Standard Icons (56px)") },
+                          { id: 'large', label: tr("Large Icons (64px)") },
                         ]}
                         value={settings.iconSize || (settings.compactView ? 'compact' : 'standard')}
                         onSelect={sz => updateSettings({ iconSize: sz as IconSize, compactView: sz === 'compact' })}
                       />
 
-                      <Row title="YouTube Music engine" subtitle="Search, streams & downloads">
+                      <Row title={tr("YouTube Music engine")} subtitle={tr("Search, streams & downloads")}>
                         <span className="text-xs font-semibold px-2.5 py-1 rounded bg-app-highlight text-app-inverse">
-                          CONNECTED
+                          {tr("CONNECTED")}
                         </span>
                       </Row>
                       <div className="py-3.5 border-t border-app-theme">
                         <label htmlFor="youtube-data-api-key" className="block text-base text-app-primary">
-                          YouTube Data API key
+                          {tr("YouTube Data API key")}
                         </label>
                         <p className="text-sm text-app-secondary mt-0.5 mb-2">
-                          Optional: verifies alternate uploads are embeddable. Stored only on this device.
+                          {tr("Optional: verifies alternate uploads are embeddable. Stored only on this device.")}
                         </p>
                         <input
                           id="youtube-data-api-key"
@@ -601,21 +631,21 @@ export const SettingsView: React.FC = () => {
                           className="w-full bg-app-card border border-app-theme rounded-xl py-2.5 px-3 text-base text-app-primary placeholder:text-app-secondary focus:outline-none"
                         />
                         <p className="text-xs text-app-secondary mt-2">
-                          Restrict the key to YouTube Data API v3. This never bypasses age restrictions.
+                          {tr("Restrict the key to YouTube Data API v3. This never bypasses age restrictions.")}
                         </p>
                       </div>
-                      <Row title="Invidious mirrors" subtitle="Backup stream sources">
+                      <Row title={tr("Invidious mirrors")} subtitle={tr("Backup stream sources")}>
                         <span className="text-xs font-semibold px-2.5 py-1 rounded bg-app-highlight text-app-inverse">
-                          CONNECTED
+                          {tr("CONNECTED")}
                         </span>
                       </Row>
                       {hiddenArtists.length > 0 && (
-                        <Row title="Hidden artists" subtitle={`${hiddenArtists.length} removed from your Artists tab`}>
+                        <Row title={tr("Hidden artists")} subtitle={`${hiddenArtists.length} removed from your Artists tab`}>
                           <button
                             onClick={restoreHiddenArtists}
                             className="px-3 py-2 rounded-full bg-app-card border border-app-theme text-sm font-semibold text-app-primary"
                           >
-                            Restore
+                            {tr("Restore")}
                           </button>
                         </Row>
                       )}
@@ -625,7 +655,7 @@ export const SettingsView: React.FC = () => {
                   {/* MUSIC & PLAYBACK */}
                   {s.id === 'playback' && (
                     <div className="pt-2">
-                      <Row title="Auto-play next" subtitle="Continue to the next song">
+                      <Row title={tr("Auto-play next")} subtitle={tr("Continue to the next song")}>
                         <Switch
                           on={settings.autoPlayNext}
                           onChange={() => updateSettings({ autoPlayNext: !settings.autoPlayNext })}
@@ -651,8 +681,8 @@ export const SettingsView: React.FC = () => {
                         />
                       </Row>
                       <Row
-                        title="YouTube mini video"
-                        subtitle="Optional: keep YouTube playing while browsing inside FRF"
+                        title={tr("YouTube mini video")}
+                        subtitle={tr("Optional: keep YouTube playing while browsing inside FRF")}
                       >
                         <Switch
                           on={settings.youtubeMiniPlayer}
@@ -671,7 +701,7 @@ export const SettingsView: React.FC = () => {
                               <AlarmClock className="w-5 h-5" />
                             </div>
                             <div>
-                              <p className="text-base font-semibold text-app-primary">Alarm</p>
+                              <p className="text-base font-semibold text-app-primary">{tr("Alarm")}</p>
                               <p className="text-xs text-app-secondary">
                                 {(() => {
                                   const cfg = loadAlarm();
@@ -693,8 +723,8 @@ export const SettingsView: React.FC = () => {
                               <BarChart3 className="w-5 h-5" />
                             </div>
                             <div>
-                              <p className="text-base font-semibold text-app-primary">Listening stats</p>
-                              <p className="text-xs text-app-secondary">Minutes, top artists and streaks</p>
+                              <p className="text-base font-semibold text-app-primary">{tr("Listening stats")}</p>
+                              <p className="text-xs text-app-secondary">{tr("Minutes, top artists and streaks")}</p>
                             </div>
                           </div>
                         </button>
@@ -709,8 +739,8 @@ export const SettingsView: React.FC = () => {
                               <Smartphone className="w-5 h-5" />
                             </div>
                             <div>
-                              <p className="text-base font-semibold text-app-primary">Sync with another device</p>
-                              <p className="text-xs text-app-secondary">Move playlists, likes and history by QR or file</p>
+                              <p className="text-base font-semibold text-app-primary">{tr("Sync with another device")}</p>
+                              <p className="text-xs text-app-secondary">{tr("Move playlists, likes and history by QR or file")}</p>
                             </div>
                           </div>
                         </button>
@@ -726,8 +756,8 @@ export const SettingsView: React.FC = () => {
                               <Activity className="w-5 h-5" />
                             </div>
                             <div>
-                              <p className="text-base font-semibold text-app-primary">Playback health</p>
-                              <p className="text-xs text-app-secondary">See which sources are working</p>
+                              <p className="text-base font-semibold text-app-primary">{tr("Playback health")}</p>
+                              <p className="text-xs text-app-secondary">{tr("See which sources are working")}</p>
                             </div>
                           </div>
                         </button>
@@ -742,33 +772,33 @@ export const SettingsView: React.FC = () => {
                               <Sliders className="w-5 h-5" />
                             </div>
                             <div>
-                              <p className="text-base font-semibold text-app-primary">Equalizer & Sound FX</p>
+                              <p className="text-base font-semibold text-app-primary">{tr("Equalizer & Sound FX")}</p>
                               <p className="text-xs text-app-secondary">
                                 {settings.equalizer?.enabled ? `Enabled • ${settings.equalizer?.preset.toUpperCase()}` : 'Bypassed'}
                               </p>
                             </div>
                           </div>
                           <span className="text-xs font-semibold px-3 py-1.5 rounded-full bg-app-highlight text-app-inverse">
-                            Tune
+                            {tr("Tune")}
                           </span>
                         </button>
                       </div>
                       <p className="text-sm text-app-secondary pt-4 pb-1 flex items-center gap-2">
                         <Timer className="w-4 h-4" />
-                        SLEEP TIMER
+                        {tr("SLEEP TIMER")}
                       </p>
                       <ChipGroup
                         options={[
-                          { id: '0', label: 'Off' },
-                          { id: '15', label: '15 min' },
-                          { id: '30', label: '30 min' },
-                          { id: '60', label: '60 min' },
-                          { id: '-1', label: 'End of song' },
+                          { id: '0', label: tr("Off") },
+                          { id: '15', label: tr("15 min") },
+                          { id: '30', label: tr("30 min") },
+                          { id: '60', label: tr("60 min") },
+                          { id: '-1', label: tr("End of song") },
                         ]}
                         value={String(settings.sleepTimerMinutes)}
                         onSelect={m => updateSettings({ sleepTimerMinutes: parseInt(m, 10) })}
                       />
-                      <p className="text-sm text-app-secondary pt-3 pb-1">PLAYBACK SPEED</p>
+                      <p className="text-sm text-app-secondary pt-3 pb-1">{tr("PLAYBACK SPEED")}</p>
                       <ChipGroup
                         options={[
                           { id: '0.75', label: '0.75×' },
@@ -786,14 +816,14 @@ export const SettingsView: React.FC = () => {
                   {/* DOWNLOAD */}
                   {s.id === 'download' && (
                     <div className="pt-2">
-                      <p className="text-sm text-app-secondary pt-3 pb-1">AUDIO QUALITY</p>
+                      <p className="text-sm text-app-secondary pt-3 pb-1">{tr("AUDIO QUALITY")}</p>
                       <button
                         onClick={() => updateSettings({ downloadQuality: 'high' })}
                         className="w-full flex items-center justify-between py-3 border-b border-app-theme text-left"
                       >
                         <span>
-                          <span className="block text-base text-app-primary">Original</span>
-                          <span className="block text-sm text-app-secondary">Best available source</span>
+                          <span className="block text-base text-app-primary">{tr("Original")}</span>
+                          <span className="block text-sm text-app-secondary">{tr("Best available source")}</span>
                         </span>
                         {settings.downloadQuality === 'high' && <Check className="w-5 h-5 text-app-primary" />}
                       </button>
@@ -802,17 +832,17 @@ export const SettingsView: React.FC = () => {
                         className="w-full flex items-center justify-between py-3 border-b border-app-theme text-left"
                       >
                         <span>
-                          <span className="block text-base text-app-primary">Data saver</span>
+                          <span className="block text-base text-app-primary">{tr("Data saver")}</span>
                           <span className="block text-sm text-app-secondary">~50 kbps • ~1 MB/song</span>
                         </span>
                         {settings.downloadQuality === 'low' && <Check className="w-5 h-5 text-app-primary" />}
                       </button>
-                      <Row title="Saved songs" subtitle={`${downloads.length} songs on this device`} />
+                      <Row title={tr("Saved songs")} subtitle={`${downloads.length} songs on this device`} />
                       {isAndroidApp && (
                         <>
                           <Row
-                            title="Keep a copy in the Music folder"
-                            subtitle="Downloads survive an uninstall (Android 10 or newer)"
+                            title={tr("Keep a copy in the Music folder")}
+                            subtitle={tr("Downloads survive an uninstall (Android 10 or newer)")}
                           >
                             <Switch
                               on={settings.keepMusicCopy}
@@ -830,7 +860,7 @@ export const SettingsView: React.FC = () => {
                               disabled={restoring}
                               className="w-full text-left px-4 py-3 rounded-2xl bg-app-card border border-app-theme text-sm font-semibold text-app-primary disabled:opacity-60"
                             >
-                              Restore downloads from Music folder
+                              {tr("Restore downloads from Music folder")}
                             </button>
                             <p className="mt-2 px-1 text-xs text-app-secondary leading-relaxed">
                               {restoreStatus ||
@@ -840,14 +870,14 @@ export const SettingsView: React.FC = () => {
                         </>
                       )}
 
-                      <p className="text-sm text-app-secondary pt-4 pb-1">AUTO-DOWNLOAD</p>
-                      <Row title="Liked songs" subtitle="Download songs when you like them">
+                      <p className="text-sm text-app-secondary pt-4 pb-1">{tr("AUTO-DOWNLOAD")}</p>
+                      <Row title={tr("Liked songs")} subtitle={tr("Download songs when you like them")}>
                         <Switch
                           on={settings.autoDownloadLikes}
                           onChange={() => updateSettings({ autoDownloadLikes: !settings.autoDownloadLikes })}
                         />
                       </Row>
-                      <Row title="Wi-Fi only" subtitle="Don't use mobile data for auto-downloads">
+                      <Row title={tr("Wi-Fi only")} subtitle={tr("Don't use mobile data for auto-downloads")}>
                         <Switch
                           on={settings.autoDownloadWifiOnly}
                           onChange={() =>
@@ -856,7 +886,7 @@ export const SettingsView: React.FC = () => {
                         />
                       </Row>
                       <div className="py-3">
-                        <p className="text-base text-app-primary">Storage limit</p>
+                        <p className="text-base text-app-primary">{tr("Storage limit")}</p>
                         <p className="text-sm text-app-secondary">
                           Using {formatMb(getOfflineUsageBytes())}; auto-downloads pause at the limit
                         </p>
@@ -879,7 +909,7 @@ export const SettingsView: React.FC = () => {
                       <SmartDownloadsSettings />
                       {playlists.length > 0 && (
                         <>
-                          <p className="text-sm text-app-secondary pt-2 pb-1">PLAYLISTS TO KEEP DOWNLOADED</p>
+                          <p className="text-sm text-app-secondary pt-2 pb-1">{tr("PLAYLISTS TO KEEP DOWNLOADED")}</p>
                           {playlists.map(pl => {
                             const chosen = (settings.autoDownloadPlaylists || []).includes(pl.id);
                             return (
@@ -907,7 +937,7 @@ export const SettingsView: React.FC = () => {
                   {s.id === 'backup' && (
                     <div className="pt-3 space-y-3">
                       <Row
-                        title="Permanent Library Protection"
+                        title={tr("Permanent Library Protection")}
                         subtitle={`${tracks.length} songs • ${downloads.length} downloads (Auto-saved to IndexedDB)`}
                       />
                       
@@ -916,16 +946,16 @@ export const SettingsView: React.FC = () => {
                         className="w-full flex items-center justify-between p-4 rounded-2xl bg-app-card border border-app-theme text-left hover:scale-[1.01] active:scale-98 transition-all"
                       >
                         <div>
-                          <p className="text-base font-semibold text-app-primary">Export Library Backup</p>
-                          <p className="text-xs text-app-secondary mt-0.5">Save all playlists, songs & settings to a JSON file</p>
+                          <p className="text-base font-semibold text-app-primary">{tr("Export Library Backup")}</p>
+                          <p className="text-xs text-app-secondary mt-0.5">{tr("Save all playlists, songs & settings to a JSON file")}</p>
                         </div>
                         <Download className="w-5 h-5 text-app-primary shrink-0 ml-2" />
                       </button>
 
                       <label className="w-full flex items-center justify-between p-4 rounded-2xl bg-app-card border border-app-theme text-left cursor-pointer hover:scale-[1.01] active:scale-98 transition-all">
                         <div>
-                          <p className="text-base font-semibold text-app-primary">Import / Restore Backup</p>
-                          <p className="text-xs text-app-secondary mt-0.5">Restore all your songs & playlists from a backup file</p>
+                          <p className="text-base font-semibold text-app-primary">{tr("Import / Restore Backup")}</p>
+                          <p className="text-xs text-app-secondary mt-0.5">{tr("Restore all your songs & playlists from a backup file")}</p>
                         </div>
                         <Upload className="w-5 h-5 text-app-primary shrink-0 ml-2" />
                         <input
@@ -952,10 +982,10 @@ export const SettingsView: React.FC = () => {
                         className="w-full py-3.5 rounded-2xl bg-app-card text-red-400 text-sm font-semibold flex items-center justify-center gap-2"
                       >
                         <Trash2 className="w-4 h-4" />
-                        Clear all data
+                        {tr("Clear all data")}
                       </button>
                       <p className="text-xs text-app-secondary pt-2">
-                        Your library is automatically preserved across app updates in permanent storage.
+                        {tr("Your library is automatically preserved across app updates in permanent storage.")}
                       </p>
                     </div>
                   )}
@@ -964,10 +994,10 @@ export const SettingsView: React.FC = () => {
                   {s.id === 'misc' && (
                     <div className="pt-3">
                       {[
-                        { key: 'SPACE', label: 'Play / Pause' },
-                        { key: 'L', label: 'Like current track' },
-                        { key: 'M', label: 'Mute / Unmute' },
-                        { key: '← / →', label: 'Seek 5 seconds' },
+                        { key: 'SPACE', label: tr("Play / Pause") },
+                        { key: 'L', label: tr("Like current track") },
+                        { key: 'M', label: tr("Mute / Unmute") },
+                        { key: '← / →', label: tr("Seek 5 seconds") },
                       ].map(sc => (
                         <div
                           key={sc.key}
@@ -985,7 +1015,7 @@ export const SettingsView: React.FC = () => {
                   {/* APP INFO */}
                   {s.id === 'info' && (
                     <div className="pt-3">
-                      <Row title="FRF Music" subtitle={`Version 7.0 • Build ${__APP_BUILD__}`} />
+                      <Row title={tr("FRF Music")} subtitle={`Version 7.0 • Build ${__APP_BUILD__}`} />
                       <p className="text-sm text-app-secondary pt-2">
                         Streams are resolved through YouTube Music and public Invidious instances.
                         Downloaded songs are stored on your device for offline playback, and music

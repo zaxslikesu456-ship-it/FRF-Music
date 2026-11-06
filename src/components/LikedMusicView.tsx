@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { t as tr } from '../i18n';
 import { Heart, BarChart3 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { PlaylistHero } from './PlaylistHero';
@@ -36,7 +37,7 @@ export const LikedMusicView: React.FC<{ onBack?: () => void }> = ({ onBack }) =>
 
       <div className="-mx-4 -mt-4">
         <PlaylistHero
-          title="Liked Music"
+          title={tr("Liked Music")}
           subtitle="playlist"
           count={allLiked.length}
           onBack={onBack}
@@ -57,16 +58,16 @@ export const LikedMusicView: React.FC<{ onBack?: () => void }> = ({ onBack }) =>
             <Heart className="w-8 h-8 text-app-secondary" />
           </div>
           <div className="space-y-1 max-w-xs">
-            <h3 className="text-base font-bold text-app-primary uppercase tracking-wide">NO LIKED SONGS YET</h3>
+            <h3 className="text-base font-bold text-app-primary uppercase tracking-wide">{tr("NO LIKED SONGS YET")}</h3>
             <p className="text-xs text-app-secondary font-mono">
-              Click the heart icon on any song to save it to your Liked Music collection.
+              {tr("Click the heart icon on any song to save it to your Liked Music collection.")}
             </p>
           </div>
         </div>
       ) : (
         <div className="px-2 pt-2 space-y-1">
           {likedTracks.length === 0 && (
-            <p className="text-center text-sm text-app-secondary py-8">No matching songs</p>
+            <p className="text-center text-sm text-app-secondary py-8">{tr("No matching songs")}</p>
           )}
           {likedTracks.map((track, index) => {
             const isCurrent = currentTrack?.id === track.id;
@@ -102,7 +103,7 @@ export const LikedMusicView: React.FC<{ onBack?: () => void }> = ({ onBack }) =>
                       toggleFavorite(track.id);
                     }}
                     className="p-1.5"
-                    title="Remove from Liked"
+                    title={tr("Remove from Liked")}
                   >
                     <Heart className="w-4 h-4 fill-app-highlight stroke-app-highlight" />
                   </span>
@@ -114,7 +115,7 @@ export const LikedMusicView: React.FC<{ onBack?: () => void }> = ({ onBack }) =>
                       setSelectedTrack(track);
                     }}
                     className="p-1.5 text-zinc-400 hover:text-white"
-                    title="More Options"
+                    title={tr("More Options")}
                   >
                     <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current">
                       <circle cx="12" cy="5" r="2" />

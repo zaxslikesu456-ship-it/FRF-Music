@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { t as tr } from '../i18n';
 import {
   Home,
   Search,
@@ -82,12 +83,15 @@ const DesktopNowPlaying: React.FC = () => {
   const [lyrics, setLyrics] = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
 
+  // Length of the recording playing; picks the lyrics version that is in time.
+  const songLength = duration > 1 ? Math.round(duration) : 0;
+
   useEffect(() => {
     if (!showLyrics || !currentTrack) return;
     let mounted = true;
     setLyricsLoading(true);
     setLyrics(null);
-    fetchLyrics(currentTrack.title, currentTrack.artist).then(text => {
+    fetchLyrics(currentTrack.title, currentTrack.artist, songLength).then(text => {
       if (mounted) {
         setLyrics(text);
         setLyricsLoading(false);
@@ -96,7 +100,7 @@ const DesktopNowPlaying: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [showLyrics, currentTrack]);
+  }, [showLyrics, currentTrack, songLength]);
 
   if (!currentTrack) {
     return (
@@ -104,8 +108,8 @@ const DesktopNowPlaying: React.FC = () => {
         <div className="w-40 h-40 rounded-2xl bg-app-surface flex items-center justify-center">
           <Play className="w-10 h-10 text-app-secondary" />
         </div>
-        <p className="text-app-secondary mt-6 text-sm">Nothing playing yet</p>
-        <p className="text-app-secondary mt-1 text-xs">Pick a song and it will show up here</p>
+        <p className="text-app-secondary mt-6 text-sm">{tr("Nothing playing yet")}</p>
+        <p className="text-app-secondary mt-1 text-xs">{tr("Pick a song and it will show up here")}</p>
       </div>
     );
   }
@@ -170,7 +174,7 @@ const DesktopNowPlaying: React.FC = () => {
             <button
               onClick={() => openArtistProfile(currentTrack.artist)}
               className="text-sm text-app-secondary truncate hover:text-app-primary hover:underline cursor-pointer flex items-center gap-1.5"
-              title="View full artist profile & liked songs"
+              title={tr("View full artist profile & liked songs")}
             >
               <User className="w-3.5 h-3.5 shrink-0 text-app-highlight" />
               <span>{currentTrack.artist}</span>
@@ -187,27 +191,27 @@ const DesktopNowPlaying: React.FC = () => {
               <Video className="w-5 h-5" />
             </button>
           )}
-          <button onClick={() => toggleFavorite(currentTrack.id, currentTrack)} className="p-2" title="Like">
+          <button onClick={() => toggleFavorite(currentTrack.id, currentTrack)} className="p-2" title={tr("Like")}>
             <Heart className={`w-5 h-5 ${isFav ? 'text-app-accent fill-current' : 'text-app-secondary'}`} />
           </button>
           <button
             onClick={() => setShowAddToPlaylist(true)}
             className="p-2 text-app-secondary hover:text-app-primary"
-            title="Add to playlist"
+            title={tr("Add to playlist")}
           >
             <ListPlus className="w-5 h-5" />
           </button>
           <button
             onClick={() => setShowLyrics(v => !v)}
             className={`p-2 ${showLyrics ? 'text-app-primary' : 'text-app-secondary hover:text-app-primary'}`}
-            title="Lyrics"
+            title={tr("Lyrics")}
           >
             <Mic className="w-5 h-5" />
           </button>
           <button
             onClick={() => setShowOptions(true)}
             className="p-2 text-app-secondary hover:text-app-primary"
-            title="More options"
+            title={tr("More options")}
           >
             <MoreVertical className="w-5 h-5" />
           </button>
@@ -236,11 +240,11 @@ const DesktopNowPlaying: React.FC = () => {
         <button
           onClick={toggleShuffle}
           className={isShuffle ? 'text-app-primary' : 'text-app-secondary'}
-          title="Shuffle"
+          title={tr("Shuffle")}
         >
           <Shuffle className="w-4 h-4" />
         </button>
-        <button onClick={previousTrack} className="text-app-primary" title="Previous">
+        <button onClick={previousTrack} className="text-app-primary" title={tr("Previous")}>
           <SkipBack className="w-6 h-6 fill-current" />
         </button>
         <button
@@ -256,7 +260,7 @@ const DesktopNowPlaying: React.FC = () => {
             <Play className="w-5 h-5 fill-current ml-0.5" />
           )}
         </button>
-        <button onClick={nextTrack} className="text-app-primary" title="Next">
+        <button onClick={nextTrack} className="text-app-primary" title={tr("Next")}>
           <SkipForward className="w-6 h-6 fill-current" />
         </button>
         <button
@@ -272,7 +276,7 @@ const DesktopNowPlaying: React.FC = () => {
         <button
           onClick={() => setVolume(volume === 0 ? 0.8 : 0)}
           className="text-app-secondary"
-          title="Mute"
+          title={tr("Mute")}
         >
           {volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
         </button>
@@ -288,7 +292,7 @@ const DesktopNowPlaying: React.FC = () => {
         <button
           onClick={() => invokeTauri('toggle_mini_player')}
           className="text-app-secondary hover:text-app-primary shrink-0"
-          title="Mini player (always on top)"
+          title={tr("Mini player (always on top)")}
         >
           <PictureInPicture2 className="w-4 h-4" />
         </button>
@@ -296,13 +300,13 @@ const DesktopNowPlaying: React.FC = () => {
 
       {showLyrics && (
         <div className="pt-5 min-h-0 flex-1 overflow-y-auto no-scrollbar">
-          <p className="text-xs text-app-secondary pb-2">LYRICS</p>
+          <p className="text-xs text-app-secondary pb-2">{tr("LYRICS")}</p>
           {lyricsLoading ? (
-            <p className="text-sm text-app-secondary py-4">Loading lyrics...</p>
+            <p className="text-sm text-app-secondary py-4">{tr("Loading lyrics...")}</p>
           ) : lyrics ? (
             <p className="text-sm text-app-primary whitespace-pre-wrap leading-relaxed">{lyrics}</p>
           ) : (
-            <p className="text-sm text-app-secondary py-4">No lyrics found for this song</p>
+            <p className="text-sm text-app-secondary py-4">{tr("No lyrics found for this song")}</p>
           )}
         </div>
       )}
@@ -317,15 +321,15 @@ const DesktopNowPlaying: React.FC = () => {
                   <Tv className="w-5 h-5 text-app-highlight" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-xs font-bold text-app-primary truncate">YouTube Music Video</p>
-                  <p className="text-[11px] text-app-secondary truncate">Play video player at the top</p>
+                  <p className="text-xs font-bold text-app-primary truncate">{tr("YouTube Music Video")}</p>
+                  <p className="text-[11px] text-app-secondary truncate">{tr("Play video player at the top")}</p>
                 </div>
               </div>
               <button
                 onClick={() => setShowVideo(true)}
                 className="px-3 py-1.5 rounded-lg bg-app-highlight text-app-inverse text-xs font-bold shrink-0 hover:scale-105 transition-transform cursor-pointer"
               >
-                Watch
+                {tr("Watch")}
               </button>
             </div>
           )}
@@ -400,10 +404,10 @@ export const DesktopFrame: React.FC = () => {
     : tracks.filter(t => favorites.includes(t.id));
 
   const navItems: { id: NavTab; label: string; icon: React.ElementType }[] = [
-    { id: 'home', label: 'Home', icon: Home },
-    { id: 'search', label: 'Search', icon: Search },
-    { id: 'library', label: 'Library', icon: LibraryBig },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'home', label: tr("Home"), icon: Home },
+    { id: 'search', label: tr("Search"), icon: Search },
+    { id: 'library', label: tr("Library"), icon: LibraryBig },
+    { id: 'settings', label: tr("Settings"), icon: Settings },
   ];
 
   return (
@@ -419,7 +423,7 @@ export const DesktopFrame: React.FC = () => {
       )}
       {/* Left Navigation */}
       <aside className="w-56 shrink-0 bg-app-surface border-r border-app-theme flex flex-col p-3">
-        <h1 className="text-2xl font-black px-3 py-5">Aura Music</h1>
+        <h1 className="text-2xl font-black px-3 py-5">{tr("Aura Music")}</h1>
         <div className="space-y-1">
           {navItems.map(item => {
             const Icon = item.icon;
@@ -441,7 +445,7 @@ export const DesktopFrame: React.FC = () => {
 
         {/* Your Playlists */}
         <div className="mt-6 min-h-0 flex-1 overflow-y-auto no-scrollbar">
-          <p className="px-3 pb-2 text-xs font-semibold text-app-secondary">YOUR PLAYLISTS</p>
+          <p className="px-3 pb-2 text-xs font-semibold text-app-secondary">{tr("YOUR PLAYLISTS")}</p>
           <div className="space-y-1">
             <button
               onClick={() => setSidebarPlaylistId('favorites')}
@@ -452,7 +456,7 @@ export const DesktopFrame: React.FC = () => {
               }`}
             >
               <Heart className="w-4 h-4 shrink-0" />
-              <span className="truncate font-semibold">Favorites</span>
+              <span className="truncate font-semibold">{tr("Favorites")}</span>
             </button>
             {playlists.map(pl => (
               <button
@@ -471,13 +475,13 @@ export const DesktopFrame: React.FC = () => {
             ))}
             {playlists.length === 0 && (
               <p className="px-3 text-xs text-app-secondary">
-                Create playlists from any song's ⋮ menu
+                {tr("Create playlists from any song's ⋮ menu")}
               </p>
             )}
           </div>
         </div>
         <p className="px-3 pt-3 text-[11px] text-app-secondary">
-          Streams via YouTube Music & Invidious
+          {tr("Streams via YouTube Music & Invidious")}
         </p>
       </aside>
 
@@ -505,7 +509,7 @@ export const DesktopFrame: React.FC = () => {
         <div className="fixed inset-0 z-40 bg-app-primary flex flex-col anim-fade">
           {sidebarPlaylistId === 'favorites' ? (
             <PlaylistDetailView
-              title="Favorites"
+              title={tr("Favorites")}
               subtitle={`${favoriteSidebarTracks.length} liked songs`}
               coverUrl={favoriteSidebarTracks[0]?.coverUrl}
               tracks={favoriteSidebarTracks}

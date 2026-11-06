@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { t as tr } from '../i18n';
 import { searchYouTubeMusic, loadMoreSearchResults } from '../utils/ytMusicApi';
 import {
   Plus,
@@ -185,8 +186,8 @@ export const LibraryView: React.FC = () => {
       const recentTracks = recentlyPlayed;
       return (
         <PlaylistDetailView
-          title="Recently Played"
-          subtitle="Your listening history"
+          title={tr("Recently Played")}
+          subtitle={tr("Your listening history")}
           coverUrl={recentTracks[0]?.coverUrl}
           tracks={recentTracks}
           onBack={back}
@@ -275,19 +276,19 @@ export const LibraryView: React.FC = () => {
 
       {/* Header */}
       <div className="flex items-center justify-between px-5 safe-top pb-4">
-        <h1 className="text-3xl font-bold text-app-primary">Library</h1>
+        <h1 className="text-3xl font-bold text-app-primary">{tr("Library")}</h1>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowImport(true)}
             className="p-3 rounded-full bg-app-card text-app-primary"
-            title="Import playlist"
+            title={tr("Import playlist")}
           >
             <ClipboardPaste className="w-5 h-5" />
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             className="p-3 rounded-full bg-app-card text-app-primary"
-            title="Add Local Files"
+            title={tr("Add Local Files")}
           >
             <FolderPlus className="w-5 h-5" />
           </button>
@@ -297,7 +298,7 @@ export const LibraryView: React.FC = () => {
               if (name && name.trim()) createPlaylist(name.trim());
             }}
             className="p-3 rounded-full bg-app-card text-app-primary"
-            title="New Playlist"
+            title={tr("New Playlist")}
           >
             <Plus className="w-5 h-5" />
           </button>
@@ -333,15 +334,15 @@ export const LibraryView: React.FC = () => {
                   ? `${albums.length} items`
                   : `${artists.length} items`}
           </span>
-          <button onClick={() => setSortAsc(v => !v)} title="Sort A-Z">
+          <button onClick={() => setSortAsc(v => !v)} title={tr("Sort A-Z")}>
             <ArrowDownAZ className="w-5 h-5" />
           </button>
         </div>
         <div className="flex items-center gap-4">
-          <button onClick={() => setSubView({ kind: 'downloads' })} title="Downloads">
+          <button onClick={() => setSubView({ kind: 'downloads' })} title={tr("Downloads")}>
             <Download className="w-5 h-5" />
           </button>
-          <button onClick={() => setActiveTab('search')} title="Search">
+          <button onClick={() => setActiveTab('search')} title={tr("Search")}>
             <Search className="w-5 h-5" />
           </button>
         </div>
@@ -381,7 +382,7 @@ export const LibraryView: React.FC = () => {
                     setSelectedTrackForMenu(t);
                   }}
                   className="p-1.5 text-app-secondary shrink-0"
-                  title="More Options"
+                  title={tr("More Options")}
                 >
                   <svg viewBox="0 0 24 24" className={`${isCompact ? 'w-4 h-4' : 'w-5 h-5'} fill-current`}>
                     <circle cx="12" cy="5" r="2" />
@@ -406,28 +407,28 @@ export const LibraryView: React.FC = () => {
               <div className="aspect-square rounded-2xl bg-app-card flex items-center justify-center">
                 <History className="w-16 h-16 text-app-primary" />
               </div>
-              <p className="text-base font-semibold text-app-primary mt-3">Recently Played</p>
+              <p className="text-base font-semibold text-app-primary mt-3">{tr("Recently Played")}</p>
             </button>
 
             <button onClick={() => setSubView({ kind: 'favorites' })} className="text-left">
               <div className="aspect-square rounded-2xl bg-app-card flex items-center justify-center">
                 <Heart className="w-16 h-16 text-app-accent fill-current" />
               </div>
-              <p className="text-base font-semibold text-app-primary mt-3">Favorites</p>
+              <p className="text-base font-semibold text-app-primary mt-3">{tr("Favorites")}</p>
             </button>
 
             <button onClick={() => setSubView({ kind: 'downloads' })} className="text-left">
               <div className="aspect-square rounded-2xl bg-app-card flex items-center justify-center">
                 <Plane className="w-16 h-16 text-app-primary" />
               </div>
-              <p className="text-base font-semibold text-app-primary mt-3">Cached/Offline</p>
+              <p className="text-base font-semibold text-app-primary mt-3">{tr("Cached/Offline")}</p>
             </button>
 
             <button onClick={() => setSubView({ kind: 'downloads' })} className="text-left">
               <div className="aspect-square rounded-2xl bg-app-card flex items-center justify-center">
                 <Download className="w-16 h-16 text-app-primary" />
               </div>
-              <p className="text-base font-semibold text-app-primary mt-3">Downloads</p>
+              <p className="text-base font-semibold text-app-primary mt-3">{tr("Downloads")}</p>
             </button>
           </div>
 
@@ -501,7 +502,7 @@ export const LibraryView: React.FC = () => {
                     hideArtist(name);
                   }}
                   className="absolute top-0 right-4 z-10 p-1.5 rounded-full bg-app-card border border-app-theme text-app-secondary hover:text-red-400"
-                  title="Remove artist"
+                  title={tr("Remove artist")}
                 >
                   <X className="w-4 h-4" />
                 </span>
@@ -520,7 +521,7 @@ export const LibraryView: React.FC = () => {
               </div>
             ))}
           {artists.filter(([name]) => !hiddenArtists.includes(name)).length === 0 && (
-            <p className="col-span-2 text-center text-app-secondary py-10">No artists yet</p>
+            <p className="col-span-2 text-center text-app-secondary py-10">{tr("No artists yet")}</p>
           )}
         </div>
       )}
@@ -529,7 +530,7 @@ export const LibraryView: React.FC = () => {
       {tab === 'discover' && (
         <div className="px-3 space-y-1 stagger">
           {discoverLoading && discoverTracks.length === 0 && (
-            <p className="text-center text-sm text-app-secondary py-10">Finding new songs...</p>
+            <p className="text-center text-sm text-app-secondary py-10">{tr("Finding new songs...")}</p>
           )}
           {discoverTracks.map((t, idx) => (
             <button
@@ -560,7 +561,7 @@ export const LibraryView: React.FC = () => {
                   setSelectedTrackForMenu(t);
                 }}
                 className="p-1.5 text-app-secondary shrink-0"
-                title="More Options"
+                title={tr("More Options")}
               >
                 <svg viewBox="0 0 24 24" className={`${isCompact ? 'w-4 h-4' : 'w-5 h-5'} fill-current`}>
                   <circle cx="12" cy="5" r="2" />

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { t as tr } from '../i18n';
 import {
   ChevronLeft,
   Play,
@@ -302,7 +303,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
           <button
             onClick={onBack}
             className="p-3 rounded-full bg-black/50 backdrop-blur-md text-white hover:bg-black/70 active:scale-95 transition-all shadow-lg"
-            title="Back"
+            title={tr("Back")}
           >
             <ChevronLeft className="w-6 h-6 stroke-[2.5]" />
           </button>
@@ -312,7 +313,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
               <button
                 onClick={onRename}
                 className="p-2.5 rounded-full bg-black/50 backdrop-blur-md text-zinc-300 hover:text-white active:scale-95 transition-all"
-                title="Rename Playlist"
+                title={tr("Rename Playlist")}
               >
                 <Edit3 className="w-4 h-4" />
               </button>
@@ -322,7 +323,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
               <button
                 onClick={onDelete}
                 className="p-2.5 rounded-full bg-black/50 backdrop-blur-md text-zinc-300 hover:text-red-400 active:scale-95 transition-all"
-                title="Delete Playlist"
+                title={tr("Delete Playlist")}
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -332,7 +333,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
               <button
                 onClick={() => setShowTopMenu(v => !v)}
                 className="p-2.5 rounded-full bg-black/50 backdrop-blur-md text-zinc-300 hover:text-white active:scale-95 transition-all"
-                title="Playlist Options"
+                title={tr("Playlist Options")}
               >
                 <MoreVertical className="w-5 h-5" />
               </button>
@@ -351,7 +352,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                       className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-white/10 text-left text-xs font-semibold text-zinc-200"
                     >
                       <Download className="w-4 h-4" />
-                      <span>Download All</span>
+                      <span>{tr("Download All")}</span>
                     </button>
                   )}
 
@@ -363,7 +364,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                     className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-white/10 text-left text-xs font-semibold text-zinc-200"
                   >
                     <Share2 className="w-4 h-4" />
-                    <span>Share Playlist</span>
+                    <span>{tr("Share Playlist")}</span>
                   </button>
                 </div>
               )}
@@ -391,7 +392,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
           onClick={handlePlayAll}
           disabled={allActiveTracks.length === 0}
           className="w-12 h-12 rounded-full bg-app-highlight text-app-inverse flex items-center justify-center hover:scale-105 active:scale-95 transition-transform shadow-lg disabled:opacity-40"
-          title="Play All"
+          title={tr("Play All")}
         >
           <Play className="w-5 h-5 fill-current ml-0.5" />
         </button>
@@ -400,7 +401,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
           onClick={handleShuffleAll}
           disabled={allActiveTracks.length === 0}
           className="p-2 text-zinc-300 hover:text-white active:scale-95 transition-transform disabled:opacity-40"
-          title="Shuffle Play"
+          title={tr("Shuffle Play")}
         >
           <Shuffle className="w-6 h-6" />
         </button>
@@ -409,7 +410,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
           onClick={handlePlayAll}
           disabled={allActiveTracks.length === 0}
           className="p-2 text-zinc-300 hover:text-white active:scale-95 transition-transform disabled:opacity-40"
-          title="Queue Playlist"
+          title={tr("Queue Playlist")}
         >
           <ListPlus className="w-6 h-6" />
         </button>
@@ -420,7 +421,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
             allActiveTracks.forEach(t => addTrackToLibrary(t));
           }}
           className="p-2 text-zinc-300 hover:text-white active:scale-95 transition-transform"
-          title="Saved to Library"
+          title={tr("Saved to Library")}
         >
           <Check className={`w-6 h-6 ${isCheckSaved ? 'text-white font-bold' : 'text-zinc-500'}`} />
         </button>
@@ -428,7 +429,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
         <button
           onClick={handleShare}
           className="p-2 text-zinc-300 hover:text-white active:scale-95 transition-transform"
-          title="Share Playlist"
+          title={tr("Share Playlist")}
         >
           <Share2 className="w-6 h-6" />
         </button>
@@ -462,9 +463,9 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
             className={`flex items-center gap-1 transition-colors ${
               isSortedAZ ? 'text-white font-bold' : 'hover:text-white'
             }`}
-            title="Sort A-Z"
+            title={tr("Sort A-Z")}
           >
-            <span>A-Z</span>
+            <span>{tr("A-Z")}</span>
             <ArrowUpDown className="w-3.5 h-3.5" />
           </button>
 
@@ -480,7 +481,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
             <button
               onClick={onDownloadAll}
               className="p-1.5 hover:text-white transition-colors"
-              title="Download All"
+              title={tr("Download All")}
             >
               <Download className="w-4 h-4" />
             </button>
@@ -491,7 +492,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
             className={`p-1.5 rounded-lg transition-colors ${
               showSearch ? 'bg-app-highlight text-app-inverse' : 'hover:text-white'
             }`}
-            title="Search Playlist"
+            title={tr("Search Playlist")}
           >
             <Search className="w-4 h-4" />
           </button>
@@ -499,7 +500,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
           <button
             onClick={() => setShowTopMenu(v => !v)}
             className="p-1.5 hover:text-white transition-colors"
-            title="Options"
+            title={tr("Options")}
           >
             <MoreVertical className="w-4 h-4" />
           </button>
@@ -518,7 +519,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
           <Search className="w-4 h-4 text-zinc-400" />
           <input
             type="text"
-            placeholder="Search tracks in playlist..."
+            placeholder={tr("Search tracks in playlist...")}
             value={searchFilter}
             onChange={e => setSearchFilter(e.target.value)}
             className="flex-1 bg-transparent text-sm text-white placeholder-zinc-500 focus:outline-none"
@@ -538,8 +539,8 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
       {allActiveTracks.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center py-20 text-center px-4">
           <Music2 className="w-12 h-12 text-zinc-600 mb-3" />
-          <p className="text-base font-semibold text-zinc-400">Empty playlist!</p>
-          <p className="text-xs text-zinc-500 mt-1">Check out suggested songs below to add tracks.</p>
+          <p className="text-base font-semibold text-zinc-400">{tr("Empty playlist!")}</p>
+          <p className="text-xs text-zinc-500 mt-1">{tr("Check out suggested songs below to add tracks.")}</p>
         </div>
       ) : (
         <div className="px-2 pt-2 space-y-1">
@@ -575,7 +576,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                           onMoveTrack(idx, idx - 1);
                         }}
                         className={`p-0.5 text-zinc-500 hover:text-white ${idx === 0 ? 'opacity-30' : ''}`}
-                        title="Move up"
+                        title={tr("Move up")}
                       >
                         <ArrowUp className="w-3.5 h-3.5" />
                       </span>
@@ -587,7 +588,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                           onMoveTrack(idx, idx + 1);
                         }}
                         className={`p-0.5 text-zinc-500 hover:text-white ${idx === processedTracks.length - 1 ? 'opacity-30' : ''}`}
-                        title="Move down"
+                        title={tr("Move down")}
                       >
                         <ArrowDown className="w-3.5 h-3.5" />
                       </span>
@@ -609,7 +610,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                         handleRemoveTrackItem(t.id);
                       }}
                       className="p-1.5 text-zinc-500 hover:text-red-400"
-                      title="Remove from Playlist"
+                      title={tr("Remove from Playlist")}
                     >
                       <Trash2 className="w-4 h-4" />
                     </span>
@@ -623,7 +624,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                       setSelectedTrackForMenu(t);
                     }}
                     className="p-1.5 text-zinc-400 hover:text-white"
-                    title="More Options"
+                    title={tr("More Options")}
                   >
                     <MoreVertical className="w-5 h-5" />
                   </span>
@@ -641,16 +642,16 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-wider">
-              Suggested Songs
+              {tr("Suggested Songs")}
             </h3>
-            <p className="text-xs text-zinc-500 mt-0.5">Recommended tracks matching this playlist</p>
+            <p className="text-xs text-zinc-500 mt-0.5">{tr("Recommended tracks matching this playlist")}</p>
           </div>
 
           <button
             onClick={() => void fetchSuggestions()}
             disabled={isLoadingSuggestions}
             className="flex items-center gap-1.5 text-xs text-zinc-300 hover:text-white px-3 py-1.5 rounded-full bg-zinc-800/80 hover:bg-zinc-700 active:scale-95 transition-all disabled:opacity-50"
-            title="Refresh Recommendations"
+            title={tr("Refresh Recommendations")}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSuggestions ? 'animate-spin' : ''}`} />
             <span>{isLoadingSuggestions ? 'Finding...' : 'Refresh'}</span>
@@ -660,11 +661,11 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
         {isLoadingSuggestions && suggestedTracks.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 gap-2 text-zinc-500">
             <RefreshCw className="w-5 h-5 animate-spin text-zinc-400" />
-            <p className="text-xs">Discovering matching tracks...</p>
+            <p className="text-xs">{tr("Discovering matching tracks...")}</p>
           </div>
         ) : suggestedTracks.length === 0 ? (
           <div className="p-5 text-center bg-zinc-900/40 rounded-xl border border-white/5">
-            <p className="text-xs text-zinc-500">No suggestions right now. Tap Refresh to discover more.</p>
+            <p className="text-xs text-zinc-500">{tr("No suggestions right now. Tap Refresh to discover more.")}</p>
           </div>
         ) : (
           <div className="space-y-1.5">
@@ -704,7 +705,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                         setSelectedTrackForMenu(t);
                       }}
                       className="p-1.5 text-zinc-500 hover:text-white rounded"
-                      title="Track Options"
+                      title={tr("Track Options")}
                     >
                       <MoreVertical className="w-4 h-4" />
                     </button>
@@ -712,7 +713,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                     {inPlaylist ? (
                       <span className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-zinc-800 text-zinc-400 text-xs font-semibold">
                         <Check className="w-3.5 h-3.5 text-zinc-300" />
-                        <span>Added</span>
+                        <span>{tr("Added")}</span>
                       </span>
                     ) : (
                       <button
@@ -721,10 +722,10 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                           handleAddSuggested(t);
                         }}
                         className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-app-highlight text-app-inverse hover:scale-105 text-xs font-semibold active:scale-95 transition-all shadow-md"
-                        title="Add to playlist"
+                        title={tr("Add to playlist")}
                       >
                         <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                        <span>Add</span>
+                        <span>{tr("Add")}</span>
                       </button>
                     )}
                   </div>

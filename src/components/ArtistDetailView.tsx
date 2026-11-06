@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { t as tr } from '../i18n';
 import { ChevronLeft, Play, Shuffle, MoreVertical, Disc3, Heart, Loader2 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import {
@@ -6,6 +7,7 @@ import {
   searchYouTubeMusicVideos,
   searchYouTubeMusicArtists,
   loadMoreSearchResults,
+  fetchArtistTopSongs,
 } from '../utils/ytMusicApi';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
 import type { Track } from '../types/music';
@@ -51,6 +53,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
   } = useAudio();
   const [extraTracks, setExtraTracks] = useState<Track[]>([]);
   const [videos, setVideos] = useState<Track[]>([]);
+  const [topSongs, setTopSongs] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
   const [menuTrack, setMenuTrack] = useState<Track | null>(null);
   // Header: the artist's photo, wide, fading and drifting as the page scrolls.
@@ -88,6 +91,12 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
       .finally(() => {
         if (mounted) setLoading(false);
       });
+    setTopSongs([]);
+    fetchArtistTopSongs(artistName)
+      .then(results => {
+        if (mounted) setTopSongs(results || []);
+      })
+      .catch(() => {});
     searchYouTubeMusicVideos(artistName)
       .then(results => {
         if (mounted) setVideos(results || []);
@@ -128,9 +137,14 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
     );
   }, [artistName, favorites, contextTracks, trackStore, allTracks]);
 
+  // YouTube Music's own most-popular order; the id hash is only a stand-in
+  // while that list loads or when the artist has none.
   const popular = useMemo(
-    () => [...allTracks].sort((a, b) => popularity(b) - popularity(a)).slice(0, 5),
-    [allTracks]
+    () =>
+      topSongs.length > 0
+        ? topSongs.slice(0, 5)
+        : [...allTracks].sort((a, b) => popularity(b) - popularity(a)).slice(0, 5),
+    [topSongs, allTracks]
   );
 
   const albums = useMemo(() => {
@@ -206,7 +220,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
         <button
           onClick={onBack}
           className="p-2.5 rounded-full bg-black/35 hover:bg-black/50 active:scale-95 text-white cursor-pointer transition-all backdrop-blur-md"
-          title="Back"
+          title={tr("Back")}
         >
           <ChevronLeft className="w-6 h-6 stroke-[2.5]" />
         </button>
@@ -246,10 +260,10 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
       <div className="relative pb-6 px-5 select-none">
         {/* Action Row */}
         <div className="flex items-center justify-start gap-6 pt-4">
-          <button onClick={handlePlayAll} className="p-3 rounded-full bg-app-highlight text-app-inverse hover:scale-110 active:scale-95 transition-transform shadow-lg" title="Play All">
+          <button onClick={handlePlayAll} className="p-3 rounded-full bg-app-highlight text-app-inverse hover:scale-110 active:scale-95 transition-transform shadow-lg" title={tr("Play All")}>
             <Play className="w-6 h-6 fill-current ml-0.5" />
           </button>
-          <button onClick={handleShuffle} className="p-3 text-app-primary cursor-pointer hover:scale-110 active:scale-95 transition-transform" title="Shuffle">
+          <button onClick={handleShuffle} className="p-3 text-app-primary cursor-pointer hover:scale-110 active:scale-95 transition-transform" title={tr("Shuffle")}>
             <Shuffle className="w-6 h-6" />
           </button>
         </div>
@@ -294,7 +308,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
                       toggleFavorite(t.id, t);
                     }}
                     className="p-2 shrink-0 cursor-pointer"
-                    title="Like"
+                    title={tr("Like")}
                   >
                     <Heart className={`w-5 h-5 ${isFav ? 'text-app-accent fill-current' : 'text-app-secondary'}`} />
                   </button>
@@ -309,7 +323,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
                       setMenuTrack(t);
                     }}
                     className="p-1.5 text-app-secondary shrink-0 cursor-pointer"
-                    title="More Options"
+                    title={tr("More Options")}
                   >
                     <MoreVertical className="w-5 h-5" />
                   </span>
@@ -323,7 +337,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
       {/* Most Popular */}
       {popular.length > 0 && (
         <div className="px-3 pt-2">
-          <h2 className="text-xl font-bold text-app-primary px-2 pb-3">Most popular</h2>
+          <h2 className="text-xl font-bold text-app-primary px-2 pb-3">{tr("Most popular")}</h2>
           <div className="space-y-1">
             {popular.map((t, idx) => {
               const isCurrent = currentTrack?.id === t.id;
@@ -356,7 +370,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
                       setMenuTrack(t);
                     }}
                     className="p-1.5 text-app-secondary shrink-0"
-                    title="More Options"
+                    title={tr("More Options")}
                   >
                     <MoreVertical className="w-5 h-5" />
                   </span>
@@ -370,7 +384,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
       {/* Videos */}
       {videos.length > 0 && (
         <div className="px-5 pt-8">
-          <h2 className="text-xl font-bold text-app-primary pb-4">Videos</h2>
+          <h2 className="text-xl font-bold text-app-primary pb-4">{tr("Videos")}</h2>
           <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
             {videos.slice(0, 10).map((v, idx) => (
               <button
@@ -402,7 +416,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
       {/* Records / Albums */}
       {albums.length > 0 && (
         <div className="px-5 pt-8">
-          <h2 className="text-xl font-bold text-app-primary pb-4">Records</h2>
+          <h2 className="text-xl font-bold text-app-primary pb-4">{tr("Records")}</h2>
           <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
             {albums.map(([name, albumTracks]) => (
               <button
@@ -430,9 +444,9 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
 
       {/* Songs */}
       <div className="px-3 pt-8">
-        <h2 className="text-xl font-bold text-app-primary px-2 pb-3">Songs</h2>
+        <h2 className="text-xl font-bold text-app-primary px-2 pb-3">{tr("Songs")}</h2>
         {allTracks.length === 0 && loading ? (
-          <p className="text-center text-sm text-app-secondary py-10">Loading songs...</p>
+          <p className="text-center text-sm text-app-secondary py-10">{tr("Loading songs...")}</p>
         ) : (
           <div className="space-y-1">
             {allTracks.map((t, idx) => {
@@ -467,7 +481,7 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
                       setMenuTrack(t);
                     }}
                     className="p-1.5 text-app-secondary shrink-0"
-                    title="More Options"
+                    title={tr("More Options")}
                   >
                     <MoreVertical className="w-5 h-5" />
                   </span>
@@ -481,13 +495,13 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
             {loadingMore ? (
               <Loader2 className="w-6 h-6 animate-spin text-app-secondary" />
             ) : noMore ? (
-              <p className="text-sm text-app-secondary">That's all the songs found</p>
+              <p className="text-sm text-app-secondary">{tr("That's all the songs found")}</p>
             ) : (
               <button
                 onClick={() => void loadMore()}
                 className="px-4 py-2 rounded-full bg-app-card border border-app-theme text-sm font-semibold text-app-primary"
               >
-                Load more songs
+                {tr("Load more songs")}
               </button>
             )}
           </div>

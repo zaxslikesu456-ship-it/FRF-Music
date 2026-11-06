@@ -430,6 +430,26 @@ public class PlaybackService extends Service {
                 }
 
                 @Override
+                public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+                    // Another app took audio focus for good (a video, a call,
+                    // another player) or the headphones were pulled out: ExoPlayer
+                    // paused itself. The web layer never hears about that, so its
+                    // player UI kept showing "playing" and the notification /
+                    // lock-screen Play button acted on that stale state. Tell it.
+                    if (!playWhenReady
+                            && (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+                            || reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)) {
+                        playing = false;
+                        stopProgressTicker();
+                        refreshPlaybackState();
+                        refreshNotification();
+                        JSObject state = new JSObject();
+                        state.put("playing", false);
+                        BackgroundAudioPlugin.sendEvent("nativePlayState", state);
+                    }
+                }
+
+                @Override
                 public void onIsPlayingChanged(boolean isPlaying) {
                     // READY also occurs while waiting for audio focus. Confirm
                     // ownership only once the player actually starts, including

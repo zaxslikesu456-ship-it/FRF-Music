@@ -1,4 +1,5 @@
 import React from 'react';
+import { t as tr } from '../i18n';
 import { Home, Search, LibraryBig, Settings } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import type { NavTab } from '../types/music';
@@ -7,10 +8,10 @@ export const BottomNav: React.FC = () => {
   const { activeTab, setActiveTab } = useAudio();
 
   const navItems: { id: NavTab; label: string; icon: React.ElementType }[] = [
-    { id: 'home', label: 'Home', icon: Home },
-    { id: 'search', label: 'Search', icon: Search },
-    { id: 'library', label: 'Library', icon: LibraryBig },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'home', label: tr("Home"), icon: Home },
+    { id: 'search', label: tr("Search"), icon: Search },
+    { id: 'library', label: tr("Library"), icon: LibraryBig },
+    { id: 'settings', label: tr("Settings"), icon: Settings },
   ];
 
   return (

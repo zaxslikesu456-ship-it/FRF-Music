@@ -32,48 +32,76 @@ function cleanSongTitle(title: string): { cleanTitle: string; cleanArtist: strin
   };
 }
 
-async function fetchFromLrcLibGet(trackName: string, artistName: string): Promise<string | null> {
+interface LrcResult {
+  synced: string | null;
+  plain: string | null;
+}
+
+const usable = (v: unknown): string | null =>
+  v && String(v).trim().length > 10 ? String(v).trim() : null;
+
+// LRCLIB lives at lrclib.net. (lrclib.com does not exist, so every lookup used
+// to fail and songs only ever got plain, untimed lyrics from the fallbacks.)
+// Both lookups return the timed and plain versions separately, so a timed
+// version found by a later lookup still wins over plain text from an earlier one.
+//
+// LRCLIB keeps several versions of most songs (album, radio edit, music video)
+// whose lines start at different times — up to several seconds apart. Taking the
+// first one made the lyrics run ahead of (or behind) the song, so the version
+// whose length matches the song being played is chosen.
+
+function closestByDuration(results: any[], durationSec: number): any | undefined {
+  if (!(durationSec > 0)) return results[0];
+  let best: any;
+  let bestDiff = Infinity;
+  for (const r of results) {
+    const d = Number(r?.duration);
+    if (!(d > 0)) continue;
+    const diff = Math.abs(d - durationSec);
+    if (diff < bestDiff) {
+      best = r;
+      bestDiff = diff;
+    }
+  }
+  // Nothing close enough: a far-off version would be badly out of time, but it
+  // is still better than no timed lyrics at all.
+  return best ?? results[0];
+}
+
+async function fetchFromLrcLibGet(trackName: string, artistName: string, durationSec: number): Promise<LrcResult> {
   try {
     const params = new URLSearchParams({ track_name: trackName });
     if (artistName) params.append('artist_name', artistName);
-    const data = await httpGetJson(`https://lrclib.com/api/get?${params.toString()}`, 5000);
-
-    // Prefer syncedLyrics with LRC timestamps for auto-scroll karaoke
-    if (data?.syncedLyrics && String(data.syncedLyrics).trim().length > 10) {
-      return String(data.syncedLyrics).trim();
-    }
-    if (data?.plainLyrics && String(data.plainLyrics).trim().length > 10) {
-      return String(data.plainLyrics).trim();
-    }
+    // With a duration LRCLIB only answers with a version of that length (±2 s).
+    if (durationSec > 0) params.append('duration', String(Math.round(durationSec)));
+    const data = await httpGetJson(`https://lrclib.net/api/get?${params.toString()}`, 5000);
+    return { synced: usable(data?.syncedLyrics), plain: usable(data?.plainLyrics) };
   } catch {
-    // try next
+    return { synced: null, plain: null };
   }
-  return null;
 }
 
-async function fetchFromLrcLibSearch(query: string): Promise<string | null> {
+async function fetchFromLrcLibSearch(query: string, durationSec: number): Promise<LrcResult> {
   try {
     const results = await httpGetJson(
-      `https://lrclib.com/api/search?q=${encodeURIComponent(query)}`,
+      `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`,
       5000
     );
     if (Array.isArray(results) && results.length > 0) {
-      const best =
-        results.find((r: any) => r.syncedLyrics) ||
-        results.find((r: any) => r.plainLyrics) ||
-        results[0];
-
-      if (best?.syncedLyrics && String(best.syncedLyrics).trim().length > 10) {
-        return String(best.syncedLyrics).trim();
-      }
-      if (best?.plainLyrics && String(best.plainLyrics).trim().length > 10) {
-        return String(best.plainLyrics).trim();
-      }
+      const synced = closestByDuration(
+        results.filter((r: any) => usable(r?.syncedLyrics)),
+        durationSec
+      );
+      const plain = results.find((r: any) => usable(r?.plainLyrics));
+      return {
+        synced: synced ? usable(synced.syncedLyrics) : null,
+        plain: plain ? usable(plain.plainLyrics) : null,
+      };
     }
   } catch {
     // try next
   }
-  return null;
+  return { synced: null, plain: null };
 }
 
 async function fetchFromLyrist(title: string, artist: string): Promise<string | null> {
@@ -105,37 +133,51 @@ async function fetchFromOvh(title: string, artist: string): Promise<string | nul
   return null;
 }
 
-export async function fetchLyrics(rawTitle: string, rawArtist: string): Promise<string | null> {
+/**
+ * durationSec: length of the song actually playing (0 if not known yet). It is
+ * used to pick the lyrics version that is in time with this recording.
+ */
+export async function fetchLyrics(
+  rawTitle: string,
+  rawArtist: string,
+  durationSec = 0
+): Promise<string | null> {
   if (!rawTitle) return null;
 
-  const key = `${rawTitle}::${rawArtist}`.toLowerCase();
+  const key = `${rawTitle}::${rawArtist}::${Math.round(durationSec || 0)}`.toLowerCase();
   if (cache.has(key)) return cache.get(key) || null;
 
   const { cleanTitle, cleanArtist } = cleanSongTitle(rawTitle);
   const effectiveArtist = rawArtist && rawArtist.toLowerCase() !== 'unknown artist' ? rawArtist : cleanArtist;
 
-  // Try providers in order of quality & accuracy
-  const providers: Array<() => Promise<string | null>> = [
-    // 1. LrcLib GET with cleaned title + artist
-    () => fetchFromLrcLibGet(cleanTitle, effectiveArtist),
-    // 2. LrcLib SEARCH with cleaned query
-    () => fetchFromLrcLibSearch(`${cleanTitle} ${effectiveArtist}`.trim()),
-    // 3. Lyrist (Genius backend) with cleaned title + artist
-    () => fetchFromLyrist(cleanTitle, effectiveArtist),
-    // 4. OVH Lyrics with cleaned artist + title
-    () => fetchFromOvh(cleanTitle, effectiveArtist),
-    // 5. Fallback LrcLib SEARCH with raw title
-    () => fetchFromLrcLibSearch(rawTitle),
+  const done = (lyrics: string | null) => {
+    cache.set(key, lyrics);
+    return lyrics;
+  };
+
+  // Timed lyrics are what let the lyrics view follow the song, so every LRCLIB
+  // lookup is tried for a timed version before settling for plain text.
+  let plain: string | null = null;
+  const lrcLookups: Array<() => Promise<LrcResult>> = [
+    () => fetchFromLrcLibGet(cleanTitle, effectiveArtist, durationSec),
+    () => fetchFromLrcLibSearch(`${cleanTitle} ${effectiveArtist}`.trim(), durationSec),
+    () => fetchFromLrcLibSearch(rawTitle, durationSec),
   ];
-
-  for (const provider of providers) {
-    const lyrics = await provider();
-    if (lyrics) {
-      cache.set(key, lyrics);
-      return lyrics;
-    }
+  for (const lookup of lrcLookups) {
+    const r = await lookup();
+    if (r.synced) return done(r.synced);
+    plain = plain || r.plain;
   }
+  if (plain) return done(plain);
 
-  cache.set(key, null);
-  return null;
+  // Plain-text fallbacks (Genius via Lyrist, then lyrics.ovh).
+  const fallbacks: Array<() => Promise<string | null>> = [
+    () => fetchFromLyrist(cleanTitle, effectiveArtist),
+    () => fetchFromOvh(cleanTitle, effectiveArtist),
+  ];
+  for (const provider of fallbacks) {
+    const lyrics = await provider();
+    if (lyrics) return done(lyrics);
+  }
+  return done(null);
 }

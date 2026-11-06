@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { t as tr } from '../i18n';
 import { PlayCircle, Loader2 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { searchYouTubeMusic, getCachedSearch } from '../utils/ytMusicApi';
@@ -328,7 +329,7 @@ export const HomeView: React.FC = () => {
         <button
           onClick={() => setActiveTab('settings')}
           className={`${avatarClass} rounded-full overflow-hidden bg-app-card border border-app-theme flex items-center justify-center shrink-0 shadow-sm`}
-          title="Profile & settings"
+          title={tr("Profile & settings")}
         >
           {settings.profileAvatar ? (
             <img src={settings.profileAvatar} alt="Profile" className="w-full h-full object-cover" />
@@ -340,22 +341,22 @@ export const HomeView: React.FC = () => {
         </button>
         <div className="min-w-0">
           <p className={headerTitleClass}>{settings.profileName}</p>
-          <p className="text-xs text-app-secondary">Profile & settings</p>
+          <p className="text-xs text-app-secondary">{tr("Profile & settings")}</p>
         </div>
       </div>
 
       {/* Quick Picks */}
-      <h1 className={quickPicksHeaderClass}>Quick Picks</h1>
+      <h1 className={quickPicksHeaderClass}>{tr("Quick Picks")}</h1>
 
       {loading && quickPicks.length === 0 ? (
         <div className="flex items-center justify-center py-16 gap-3">
           <Loader2 className="w-6 h-6 animate-spin text-app-primary" />
-          <p className="text-sm text-app-secondary">Loading songs...</p>
+          <p className="text-sm text-app-secondary">{tr("Loading songs...")}</p>
         </div>
       ) : quickPicks.length === 0 ? (
         <div className="px-5 py-10 text-center">
           <p className="text-sm text-app-secondary">
-            No songs yet — search for music or download songs to see them here.
+            {tr("No songs yet — search for music or download songs to see them here.")}
           </p>
         </div>
       ) : (
@@ -384,7 +385,7 @@ export const HomeView: React.FC = () => {
       {/* Daily mixes and Rediscover */}
       {madeForYou.length > 0 && (
         <div className="mt-8 anim-rise">
-          <h2 className={shelfSectionHeaderClass}>Made for you</h2>
+          <h2 className={shelfSectionHeaderClass}>{tr("Made for you")}</h2>
           <div className="flex gap-4 overflow-x-auto px-5 pb-2 no-scrollbar">
             {madeForYou.map(mix => (
               <button
@@ -418,7 +419,7 @@ export const HomeView: React.FC = () => {
       {/* Most played (lifetime play counts) */}
       {mostPlayed.length >= 3 && (
         <div className="mt-8 anim-rise">
-          <h2 className={shelfSectionHeaderClass}>Most played</h2>
+          <h2 className={shelfSectionHeaderClass}>{tr("Most played")}</h2>
           <div className="flex gap-4 overflow-x-auto px-5 pb-2 no-scrollbar">
             {mostPlayed.map(({ track: t, count }, idx) => (
               <button
@@ -510,7 +511,7 @@ export const HomeView: React.FC = () => {
       {(loadingMore || (loading && shelves.length === 0 && quickPicks.length > 0)) && (
         <div className="flex items-center justify-center py-10 gap-3">
           <Loader2 className="w-5 h-5 animate-spin text-app-primary" />
-          <p className="text-sm text-app-secondary">Discovering more music...</p>
+          <p className="text-sm text-app-secondary">{tr("Discovering more music...")}</p>
         </div>
       )}
     </div>

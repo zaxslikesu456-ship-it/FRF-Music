@@ -235,7 +235,7 @@ export function trackFromSong(s: SharedSong): Track | null {
     album: 'Shared playlist',
     duration: s.d || 0,
     url: '',
-    coverUrl: `https://i.ytimg.com/vi/${s.id}/hqdefault.jpg`,
+    coverUrl: `https://i.ytimg.com/vi/${s.id}/maxresdefault.jpg`,
     isYouTube: true,
     youtubeId: s.id,
     addedAt: Date.now(),

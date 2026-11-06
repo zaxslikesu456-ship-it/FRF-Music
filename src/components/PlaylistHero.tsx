@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { t as tr } from '../i18n';
 import { ChevronLeft, Play, Shuffle, Music, ArrowDownAZ, Search, X } from 'lucide-react';
 
 interface PlaylistHeroProps {
@@ -48,7 +49,7 @@ export const PlaylistHero: React.FC<PlaylistHeroProps> = ({
         }}
       >
         {onBack && (
-          <button onClick={onBack} className="absolute top-4 left-3 p-1 text-white" title="Back">
+          <button onClick={onBack} className="absolute top-4 left-3 p-1 text-white" title={tr("Back")}>
             <ChevronLeft className="w-7 h-7" />
           </button>
         )}
@@ -64,7 +65,7 @@ export const PlaylistHero: React.FC<PlaylistHeroProps> = ({
 
       <div className="bg-black px-4 pt-4 pb-3">
         <div className="flex items-center gap-6 text-white">
-          <button onClick={onPlay} disabled={playDisabled} className="disabled:opacity-40" title="Play all">
+          <button onClick={onPlay} disabled={playDisabled} className="disabled:opacity-40" title={tr("Play all")}>
             <span className="w-10 h-10 rounded-full bg-app-highlight text-app-inverse flex items-center justify-center">
               <Play className="w-5 h-5 fill-current ml-0.5" />
             </span>
@@ -72,7 +73,7 @@ export const PlaylistHero: React.FC<PlaylistHeroProps> = ({
           <button
             onClick={onShuffle}
             className={isShuffle ? 'text-app-highlight' : 'text-white'}
-            title="Shuffle"
+            title={tr("Shuffle")}
           >
             <Shuffle className="w-6 h-6" />
           </button>
@@ -89,7 +90,7 @@ export const PlaylistHero: React.FC<PlaylistHeroProps> = ({
             <button
               onClick={onToggleSort}
               className={sortAz ? 'text-app-highlight' : ''}
-              title="Sort A-Z"
+              title={tr("Sort A-Z")}
             >
               <ArrowDownAZ className="w-6 h-6" />
             </button>
@@ -100,7 +101,7 @@ export const PlaylistHero: React.FC<PlaylistHeroProps> = ({
               onQueryChange('');
             }}
             className={searchOpen ? 'text-app-highlight' : ''}
-            title="Search"
+            title={tr("Search")}
           >
             <Search className="w-6 h-6" />
           </button>
@@ -113,11 +114,11 @@ export const PlaylistHero: React.FC<PlaylistHeroProps> = ({
               autoFocus
               value={query}
               onChange={e => onQueryChange(e.target.value)}
-              placeholder="Search"
+              placeholder={tr("Search")}
               className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-white/40"
             />
             {query && (
-              <button onClick={() => onQueryChange('')} className="text-white/60" title="Clear">
+              <button onClick={() => onQueryChange('')} className="text-white/60" title={tr("Clear")}>
                 <X className="w-4 h-4" />
               </button>
             )}

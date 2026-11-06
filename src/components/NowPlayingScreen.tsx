@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
+import { t as tr } from '../i18n';
 import { flyCover, miniCoverRect } from '../utils/coverTransition';
 import { onBackButton } from '../utils/backButton';
 import { AudioVisualizer } from './AudioVisualizer';
@@ -30,7 +31,14 @@ import {
   Volume2,
   VolumeX,
   Share2,
+  Copy,
+  Check,
+  LocateFixed,
+  RotateCcw,
+  RotateCw,
 } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Capacitor } from '@capacitor/core';
 import { LyricCardModal } from './LyricCardModal';
 import type { LyricCardInput } from '../utils/lyricCard';
 import { useAudio } from '../context/AudioContext';
@@ -57,6 +65,7 @@ export const NowPlayingScreen: React.FC = () => {
     nextTrack,
     previousTrack,
     seekTo,
+    setVideoCompanion,
     toggleRepeatMode,
     toggleShuffle,
     setIsPlayerOpen,
@@ -89,6 +98,12 @@ export const NowPlayingScreen: React.FC = () => {
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [centerMode, setCenterMode] = useState<PlayerCenterMode>('artwork');
+  // This screen stays mounted while closed, so it used to reopen on whatever
+  // view was last used (lyrics or video) for the next song. It now always opens
+  // on the cover art; the view only changes when you pick one.
+  useEffect(() => {
+    if (isPlayerOpen) setCenterMode('artwork');
+  }, [isPlayerOpen]);
   const [rawLyrics, setRawLyrics] = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [lyricCard, setLyricCard] = useState<LyricCardInput | null>(null);
@@ -119,22 +134,68 @@ export const NowPlayingScreen: React.FC = () => {
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
 
+  // Length of the recording being played, used to pick the lyrics version that
+  // is in time with it. 0 until the player knows it; the lyrics are looked up
+  // again once it does.
+  const songLength = duration > 1 ? Math.round(duration) : 0;
+  const lyricsForTrackRef = useRef<string | null>(null);
+
   // Fetch lyrics when track changes or user opens lyrics view
   useEffect(() => {
     if (centerMode !== 'lyrics' || !currentTrack) return;
     let mounted = true;
-    setLyricsLoading(true);
-    setRawLyrics(null);
-    fetchLyrics(currentTrack.title, currentTrack.artist).then(text => {
+    // Same song, length just became known: keep showing the current lyrics
+    // while the better-timed version loads.
+    const sameTrack = lyricsForTrackRef.current === currentTrack.id;
+    if (!sameTrack) {
+      setLyricsLoading(true);
+      setRawLyrics(null);
+    }
+    fetchLyrics(currentTrack.title, currentTrack.artist, songLength).then(text => {
       if (mounted) {
-        setRawLyrics(text);
+        lyricsForTrackRef.current = currentTrack.id;
+        if (text || !sameTrack) setRawLyrics(text);
         setLyricsLoading(false);
       }
     });
     return () => {
       mounted = false;
     };
-  }, [centerMode, currentTrack]);
+  }, [centerMode, currentTrack, songLength]);
+
+  // Ask for the picture while the video view is open (the audio keeps coming
+  // from the app's own engine; the video runs muted beside it).
+  useEffect(() => {
+    if (centerMode !== 'video' || !isPlayerOpen) return;
+    setVideoCompanion(true);
+    return () => setVideoCompanion(false);
+  }, [centerMode, isPlayerOpen]);
+
+  // On phones the YouTube player shows no controls of its own (they drew its
+  // logo and title over the video), so the app draws play/pause and ±10 s on
+  // top of it. A tap shows them; they fade after a few seconds.
+  const [videoRect, setVideoRect] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [videoControlsVisible, setVideoControlsVisible] = useState(false);
+  const videoControlsTimerRef = useRef<number | null>(null);
+  const showVideoControls = () => {
+    setVideoControlsVisible(true);
+    if (videoControlsTimerRef.current) window.clearTimeout(videoControlsTimerRef.current);
+    videoControlsTimerRef.current = window.setTimeout(() => {
+      videoControlsTimerRef.current = null;
+      setVideoControlsVisible(false);
+    }, 3000);
+  };
+  const hideVideoControls = () => {
+    if (videoControlsTimerRef.current) window.clearTimeout(videoControlsTimerRef.current);
+    videoControlsTimerRef.current = null;
+    setVideoControlsVisible(false);
+  };
+  useEffect(
+    () => () => {
+      if (videoControlsTimerRef.current) window.clearTimeout(videoControlsTimerRef.current);
+    },
+    []
+  );
 
   // Position YouTube player element over the video slot when in Video view mode
   useEffect(() => {
@@ -145,13 +206,25 @@ export const NowPlayingScreen: React.FC = () => {
       const updatePosition = () => {
         if (!videoSlotRef.current) return;
         const rect = videoSlotRef.current.getBoundingClientRect();
+        setVideoRect(prev =>
+          prev &&
+          prev.left === rect.left &&
+          prev.top === rect.top &&
+          prev.width === rect.width &&
+          prev.height === rect.height
+            ? prev
+            : { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+        );
         ytEl.style.position = 'fixed';
         ytEl.style.left = `${rect.left}px`;
         ytEl.style.top = `${rect.top}px`;
         ytEl.style.width = `${rect.width}px`;
         ytEl.style.height = `${rect.height}px`;
         ytEl.style.opacity = '1';
-        ytEl.style.pointerEvents = 'auto';
+        // On phones a touch makes the embed draw its own chrome (big YouTube
+        // logo, title bar, CC/settings) over the video. The app has its own
+        // controls, so the video ignores touches there.
+        ytEl.style.pointerEvents = Capacitor.isNativePlatform() ? 'none' : 'auto';
         ytEl.style.zIndex = '50';
         ytEl.style.borderRadius = '1rem';
         ytEl.style.overflow = 'hidden';
@@ -164,6 +237,7 @@ export const NowPlayingScreen: React.FC = () => {
       return () => {
         clearInterval(interval);
         window.removeEventListener('resize', updatePosition);
+        setVideoRect(null);
         ytEl.style.position = 'fixed';
         ytEl.style.left = '-10000px';
         ytEl.style.top = '0';
@@ -191,29 +265,141 @@ export const NowPlayingScreen: React.FC = () => {
     return parseLrc(rawLyrics);
   }, [rawLyrics]);
 
+  // Per-song timing nudge for lyrics that are still a little early or late.
+  // Positive = lyrics shown later. Saved per track.
+  const LYRIC_OFFSETS_KEY = 'bw_lyric_offsets';
+  const [lyricOffset, setLyricOffset] = useState(0);
+  useEffect(() => {
+    try {
+      const map = JSON.parse(localStorage.getItem(LYRIC_OFFSETS_KEY) || '{}');
+      setLyricOffset(currentTrack ? Number(map[currentTrack.id]) || 0 : 0);
+    } catch {
+      setLyricOffset(0);
+    }
+  }, [currentTrack?.id]);
+  const nudgeLyrics = (delta: number) => {
+    if (!currentTrack) return;
+    const trackId = currentTrack.id;
+    // Builds on the latest value so quick repeated taps all count.
+    setLyricOffset(prev => {
+      const next = Math.round((prev + delta) * 10) / 10;
+      try {
+        const map = JSON.parse(localStorage.getItem(LYRIC_OFFSETS_KEY) || '{}');
+        if (next === 0) delete map[trackId];
+        else map[trackId] = next;
+        localStorage.setItem(LYRIC_OFFSETS_KEY, JSON.stringify(map));
+      } catch {
+        // storage unavailable: the nudge still applies for now
+      }
+      return next;
+    });
+  };
+  const lyricTime = currentTime - lyricOffset;
+
   // Determine currently active lyric line index based on playback currentTime
   const activeLyricIndex = useMemo(() => {
     if (syncedLyrics.length === 0) return -1;
     let index = -1;
     for (let i = 0; i < syncedLyrics.length; i++) {
-      if (currentTime >= syncedLyrics[i].time) {
+      if (lyricTime >= syncedLyrics[i].time) {
         index = i;
       } else {
         break;
       }
     }
     return index;
-  }, [syncedLyrics, currentTime]);
+  }, [syncedLyrics, lyricTime]);
 
-  // Auto-scroll active lyric line to center smoothly
+  // Follow mode (like Spotify): the lyrics scroll by themselves so the line
+  // being sung stays in the middle. Scrolling by hand pauses it; it picks up
+  // again after a few seconds, or straight away from "Back to current line".
+  const [followLyrics, setFollowLyrics] = useState(
+    () => localStorage.getItem('bw_lyrics_follow') !== '0'
+  );
+  const [followPaused, setFollowPaused] = useState(false);
+  const followResumeTimerRef = useRef<number | null>(null);
+
+  const scrollToActiveLine = (smooth: boolean) => {
+    const box = lyricsContainerRef.current;
+    const line = activeLyricRef.current;
+    if (!box || !line) return;
+    const boxRect = box.getBoundingClientRect();
+    const lineRect = line.getBoundingClientRect();
+    const top = box.scrollTop + (lineRect.top - boxRect.top) - (box.clientHeight - lineRect.height) / 2;
+    box.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
+  };
+
+  const resumeFollow = () => {
+    if (followResumeTimerRef.current) window.clearTimeout(followResumeTimerRef.current);
+    followResumeTimerRef.current = null;
+    setFollowPaused(false);
+    scrollToActiveLine(true);
+  };
+
+  const pauseFollowForManualScroll = (e: React.SyntheticEvent) => {
+    if (!followLyrics) return;
+    // Taps on the Follow / Copy / Share buttons are not scrolling.
+    if ((e.target as HTMLElement | null)?.closest?.('button')) return;
+    setFollowPaused(true);
+    if (followResumeTimerRef.current) window.clearTimeout(followResumeTimerRef.current);
+    followResumeTimerRef.current = window.setTimeout(() => {
+      followResumeTimerRef.current = null;
+      setFollowPaused(false);
+    }, 6000);
+  };
+
+  const toggleFollowLyrics = () => {
+    const next = !followLyrics;
+    setFollowLyrics(next);
+    localStorage.setItem('bw_lyrics_follow', next ? '1' : '0');
+    if (next) resumeFollow();
+  };
+
+  useEffect(
+    () => () => {
+      if (followResumeTimerRef.current) window.clearTimeout(followResumeTimerRef.current);
+    },
+    []
+  );
+
+  // Keep the line being sung in the middle while following.
   useEffect(() => {
-    if (centerMode === 'lyrics' && activeLyricRef.current) {
-      activeLyricRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-      });
+    if (centerMode !== 'lyrics' || !followLyrics || followPaused) return;
+    scrollToActiveLine(true);
+  }, [activeLyricIndex, centerMode, followLyrics, followPaused]);
+
+  // Copy the whole lyrics (every line), not just one line.
+  const [lyricsCopied, setLyricsCopied] = useState(false);
+  const copyLyrics = async () => {
+    const text =
+      syncedLyrics.length > 0
+        ? syncedLyrics.map(l => l.text).filter(Boolean).join('\n')
+        : (rawLyrics || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).join('\n');
+    if (!text) return;
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      // Older WebViews: fall back to a temporary textarea.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        ok = document.execCommand('copy');
+      } catch {
+        ok = false;
+      }
+      ta.remove();
     }
-  }, [activeLyricIndex, centerMode]);
+    if (ok) {
+      setLyricsCopied(true);
+      window.setTimeout(() => setLyricsCopied(false), 1800);
+    }
+  };
 
   // Build a share card around the line that is playing now (or the first line).
   const shareLyric = () => {
@@ -351,7 +537,7 @@ export const NowPlayingScreen: React.FC = () => {
           <button
             onClick={closePlayer}
             className="p-2.5 text-app-primary hover:scale-110 active:scale-95 transition-transform"
-            title="Minimize"
+            title={tr("Minimize")}
           >
             <ChevronDown className="w-7 h-7" />
           </button>
@@ -364,10 +550,10 @@ export const NowPlayingScreen: React.FC = () => {
               <button
                 onClick={() => setSleepTimer(null)}
                 className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-app-secondary bg-app-card/70 rounded-full px-2 py-0.5 active:scale-95 transition-transform"
-                title="Playback stops after this song — tap to cancel"
+                title={tr("Playback stops after this song — tap to cancel")}
               >
                 <Timer className="w-3 h-3" />
-                Ends after this song
+                {tr("Ends after this song")}
               </button>
             ) : (
               sleepSecondsRemaining != null &&
@@ -375,7 +561,7 @@ export const NowPlayingScreen: React.FC = () => {
                 <button
                   onClick={() => setSleepTimer(null)}
                   className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-app-secondary bg-app-card/70 rounded-full px-2 py-0.5 active:scale-95 transition-transform"
-                  title="Sleep timer ends soon — tap to cancel"
+                  title={tr("Sleep timer ends soon — tap to cancel")}
                 >
                   <Timer className="w-3 h-3" />
                   {formatTime(sleepSecondsRemaining)}
@@ -389,7 +575,7 @@ export const NowPlayingScreen: React.FC = () => {
             <button
               onClick={() => setIsEqualizerOpen(true)}
               className="p-2 text-app-secondary hover:text-app-primary hover:scale-105 active:scale-95 transition-all"
-              title="Studio Equalizer"
+              title={tr("Studio Equalizer")}
             >
               <Sliders className="w-5 h-5" />
             </button>
@@ -400,7 +586,7 @@ export const NowPlayingScreen: React.FC = () => {
               className={`p-2 transition-colors ${
                 showQueueOverlay ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
               }`}
-              title="Queue Sheet"
+              title={tr("Queue Sheet")}
             >
               <List className="w-6 h-6" />
             </button>
@@ -409,7 +595,7 @@ export const NowPlayingScreen: React.FC = () => {
             <button
               onClick={() => setShowOptions(true)}
               className="p-2 text-app-secondary hover:text-app-primary transition-colors"
-              title="Track Options"
+              title={tr("Track Options")}
             >
               <MoreVertical className="w-6 h-6" />
             </button>
@@ -418,7 +604,7 @@ export const NowPlayingScreen: React.FC = () => {
             <button
               onClick={stopTrack}
               className="p-2 text-app-secondary hover:text-red-400 transition-colors"
-              title="Stop & Close Song"
+              title={tr("Stop & Close Song")}
             >
               <X className="w-6 h-6" />
             </button>
@@ -432,21 +618,21 @@ export const NowPlayingScreen: React.FC = () => {
             className={`h-1.5 rounded-full transition-all duration-300 ${
               centerMode === 'artwork' ? 'w-6 bg-app-highlight' : 'w-1.5 bg-white/20 hover:bg-white/50'
             }`}
-            title="Artwork"
+            title={tr("Artwork")}
           />
           <button
             onClick={() => setCenterMode('lyrics')}
             className={`h-1.5 rounded-full transition-all duration-300 ${
               centerMode === 'lyrics' ? 'w-6 bg-app-highlight' : 'w-1.5 bg-white/20 hover:bg-white/50'
             }`}
-            title="Lyrics"
+            title={tr("Lyrics")}
           />
           <button
             onClick={() => setCenterMode('video')}
             className={`h-1.5 rounded-full transition-all duration-300 ${
               centerMode === 'video' ? 'w-6 bg-app-highlight' : 'w-1.5 bg-white/20 hover:bg-white/50'
             }`}
-            title="Video"
+            title={tr("Video")}
           />
         </div>
 
@@ -454,19 +640,70 @@ export const NowPlayingScreen: React.FC = () => {
         {centerMode === 'lyrics' ? (
           <div
             ref={lyricsContainerRef}
-            className="flex-1 min-h-0 overflow-y-auto w-full py-4 no-scrollbar space-y-5 px-2 animate-in fade-in duration-200"
+            className="flex-1 min-h-0 overflow-y-auto w-full py-4 no-scrollbar space-y-5 px-2 animate-in fade-in duration-200 select-text"
+            style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+            onTouchStart={pauseFollowForManualScroll}
+            onWheel={pauseFollowForManualScroll}
           >
-            <div className="flex items-center justify-center gap-3 pb-1">
+            <div className="flex flex-wrap items-center justify-center gap-2 pb-1">
               <p className="text-center text-xs text-app-secondary tracking-wide uppercase">
-                {syncedLyrics.length > 0 ? 'Synced Lyrics • Tap line to jump' : 'Lyrics'}
+                {syncedLyrics.length > 0 ? tr("Synced Lyrics") : tr("Lyrics")}
               </p>
+              {!lyricsLoading && syncedLyrics.length > 0 && (
+                <button
+                  onClick={toggleFollowLyrics}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-semibold ${
+                    followLyrics ? 'border-transparent' : 'bg-app-card border-app-theme text-app-secondary'
+                  }`}
+                  // On: inverted colours (readable in every theme).
+                  style={followLyrics ? { background: 'var(--text-primary)', color: 'var(--bg-primary)' } : undefined}
+                  title={followLyrics ? 'Stop following the lyrics' : 'Follow the lyrics as they play'}
+                  aria-pressed={followLyrics}
+                >
+                  <LocateFixed className="w-3.5 h-3.5" /> {tr("Follow")}
+                </button>
+              )}
+              {!lyricsLoading && syncedLyrics.length > 0 && (
+                <div
+                  className="flex items-center rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
+                  title={tr("Lyrics early or late? Nudge them for this song")}
+                >
+                  <button
+                    onClick={() => nudgeLyrics(-0.5)}
+                    className="px-2.5 py-1"
+                    aria-label={tr("Show lyrics earlier")}
+                  >
+                    −
+                  </button>
+                  <span className="min-w-[3.2rem] text-center tabular-nums text-app-secondary">
+                    {lyricOffset === 0 ? tr("Timing") : `${lyricOffset > 0 ? '+' : ''}${lyricOffset.toFixed(1)}s`}
+                  </span>
+                  <button
+                    onClick={() => nudgeLyrics(0.5)}
+                    className="px-2.5 py-1"
+                    aria-label={tr("Show lyrics later")}
+                  >
+                    +
+                  </button>
+                </div>
+              )}
+              {!lyricsLoading && (syncedLyrics.length > 0 || rawLyrics) && (
+                <button
+                  onClick={copyLyrics}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
+                  title={tr("Copy all lyrics")}
+                >
+                  {lyricsCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {lyricsCopied ? tr("Copied") : tr("Copy")}
+                </button>
+              )}
               {!lyricsLoading && (syncedLyrics.length > 0 || rawLyrics) && (
                 <button
                   onClick={shareLyric}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
-                  title="Share a lyric card"
+                  title={tr("Share a lyric card")}
                 >
-                  <Share2 className="w-3.5 h-3.5" /> Share
+                  <Share2 className="w-3.5 h-3.5" /> {tr("Share")}
                 </button>
               )}
             </div>
@@ -474,20 +711,24 @@ export const NowPlayingScreen: React.FC = () => {
             {lyricsLoading ? (
               <div className="flex flex-col items-center justify-center py-20 gap-3">
                 <Loader2 className="w-8 h-8 animate-spin text-app-primary" />
-                <p className="text-app-secondary text-sm">Fetching lyrics...</p>
+                <p className="text-app-secondary text-sm">{tr("Fetching lyrics...")}</p>
               </div>
             ) : syncedLyrics.length > 0 ? (
               syncedLyrics.map((line, idx) => {
                 const isActive = idx === activeLyricIndex;
                 // Karaoke: the line that is being sung fills in with the accent
                 // colour from left to right (the fill eases between progress ticks).
-                const fill = isActive ? lineProgress(line, syncedLyrics[idx + 1], currentTime + 0.25) : 0;
+                const fill = isActive ? lineProgress(line, syncedLyrics[idx + 1], lyricTime + 0.25) : 0;
                 return (
                   <p
                     key={`lyric-${idx}`}
                     ref={isActive ? activeLyricRef : null}
-                    onClick={() => seekTo(line.time)}
-                    className={`text-center transition-all duration-300 cursor-pointer select-none leading-relaxed ${
+                    onClick={() => {
+                      seekTo(Math.max(0, line.time + lyricOffset));
+                      // Jumping to a line means "carry on from here".
+                      if (followLyrics) resumeFollow();
+                    }}
+                    className={`text-center transition-all duration-300 cursor-pointer select-text leading-relaxed ${
                       isActive
                         ? 'font-extrabold text-xl md:text-2xl scale-105'
                         : idx < activeLyricIndex
@@ -507,7 +748,21 @@ export const NowPlayingScreen: React.FC = () => {
                     )}
                   </p>
                 );
-              })
+              }).concat(
+                followLyrics && followPaused ? (
+                  <div key="lyrics-resume" className="sticky bottom-2 flex justify-center pointer-events-none">
+                    <button
+                      onClick={resumeFollow}
+                      className="pointer-events-auto flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold shadow-lg"
+                      style={{ background: 'var(--text-primary)', color: 'var(--bg-primary)' }}
+                    >
+                      <LocateFixed className="w-3.5 h-3.5" /> {tr("Back to current line")}
+                    </button>
+                  </div>
+                ) : (
+                  []
+                )
+              )
             ) : rawLyrics ? (
               <div className="space-y-3 py-2 px-2">
                 {rawLyrics.split('\n').map((line, idx) => (
@@ -521,7 +776,7 @@ export const NowPlayingScreen: React.FC = () => {
               </div>
             ) : (
               <div className="text-center text-app-secondary text-sm py-16">
-                No lyrics found for this song
+                {tr("No lyrics found for this song")}
               </div>
             )}
           </div>
@@ -541,13 +796,78 @@ export const NowPlayingScreen: React.FC = () => {
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center pointer-events-none">
                 <VideoIcon className="w-8 h-8 text-app-primary opacity-80" />
                 <span className="text-xs text-app-secondary">
-                  Live YouTube Video Player
+                  {tr("Live YouTube Video Player")}
                 </span>
               </div>
             </div>
             <p className="text-xs text-app-secondary/60 mt-3 text-center">
-              Swipe right to return to lyrics or cover art
+              {Capacitor.isNativePlatform() ? `${tr("Tap the video for controls")} • ` : ''}{tr("Swipe right to return to lyrics or cover art")}
             </p>
+            {Capacitor.isNativePlatform() &&
+              videoRect &&
+              createPortal(
+                // Sits just above the YouTube player (z 50), in the same spot.
+                <div
+                  onClick={() => (videoControlsVisible ? hideVideoControls() : showVideoControls())}
+                  style={{
+                    position: 'fixed',
+                    left: videoRect.left,
+                    top: videoRect.top,
+                    width: videoRect.width,
+                    height: videoRect.height,
+                    zIndex: 51,
+                    borderRadius: '1rem',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    className={`absolute inset-0 flex items-center justify-center gap-10 bg-black/40 transition-opacity duration-200 ${
+                      videoControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                    }`}
+                  >
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        seekTo(Math.max(0, currentTime - 10));
+                        showVideoControls();
+                      }}
+                      className="p-2 text-white active:scale-95"
+                      aria-label={tr("Back 10 seconds")}
+                    >
+                      <RotateCcw className="w-7 h-7" />
+                    </button>
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        togglePlay();
+                        showVideoControls();
+                      }}
+                      className="p-3 rounded-full bg-white/90 text-black active:scale-95"
+                      aria-label={isPlaying ? 'Pause' : 'Play'}
+                    >
+                      {isPlaying ? <Pause className="w-7 h-7 fill-current" /> : <Play className="w-7 h-7 fill-current" />}
+                    </button>
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        seekTo(duration > 0 ? Math.min(duration - 1, currentTime + 10) : currentTime + 10);
+                        showVideoControls();
+                      }}
+                      className="p-2 text-white active:scale-95"
+                      aria-label={tr("Forward 10 seconds")}
+                    >
+                      <RotateCw className="w-7 h-7" />
+                    </button>
+                    <div className="absolute left-3 right-3 bottom-2.5 h-1 rounded-full bg-white/30 overflow-hidden">
+                      <div
+                        className="h-full bg-white"
+                        style={{ width: `${duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>,
+                document.body
+              )}
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0 animate-in fade-in duration-200">
@@ -575,7 +895,7 @@ export const NowPlayingScreen: React.FC = () => {
             </div>
             </div>
             <AudioVisualizer className="max-w-[320px] mt-3" height={44} />
-            <p className="text-[11px] text-app-secondary/50 mt-3">Double-tap artwork to like</p>
+            <p className="text-[11px] text-app-secondary/50 mt-3">{tr("Double-tap artwork to like")}</p>
           </div>
         )}
 
@@ -588,7 +908,7 @@ export const NowPlayingScreen: React.FC = () => {
             <button
               onClick={() => openArtistProfile(currentTrack.artist)}
               className="block max-w-full text-base text-app-secondary truncate mt-0.5 hover:text-app-primary hover:underline text-left"
-              title="View artist profile"
+              title={tr("View artist profile")}
             >
               {currentTrack.artist}
             </button>
@@ -598,7 +918,7 @@ export const NowPlayingScreen: React.FC = () => {
             <button
               onClick={() => toggleFavorite(currentTrack.id, currentTrack)}
               className="p-2 active:scale-95 transition-transform"
-              title="Like"
+              title={tr("Like")}
             >
               <Heart
                 className={`w-6 h-6 transition-colors ${
@@ -610,7 +930,7 @@ export const NowPlayingScreen: React.FC = () => {
             <button
               onClick={() => setShowAddToPlaylist(true)}
               className="p-2 text-app-secondary hover:text-app-primary active:scale-95 transition-transform"
-              title="Add to playlist"
+              title={tr("Add to playlist")}
             >
               <ListPlus className="w-6 h-6" />
             </button>
@@ -621,7 +941,7 @@ export const NowPlayingScreen: React.FC = () => {
               className={`p-2 transition-transform active:scale-95 ${
                 centerMode === 'lyrics' ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
               }`}
-              title="Toggle Lyrics"
+              title={tr("Toggle Lyrics")}
             >
               <Mic className="w-6 h-6" />
             </button>
@@ -632,7 +952,7 @@ export const NowPlayingScreen: React.FC = () => {
               className={`p-2 transition-transform active:scale-95 ${
                 centerMode === 'video' ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
               }`}
-              title="Toggle Video"
+              title={tr("Toggle Video")}
             >
               <VideoIcon className="w-6 h-6" />
             </button>
@@ -640,7 +960,7 @@ export const NowPlayingScreen: React.FC = () => {
             <button
               onClick={() => setShowOptions(true)}
               className="p-2 text-app-secondary hover:text-app-primary active:scale-95 transition-transform"
-              title="More options"
+              title={tr("More options")}
             >
               <MoreVertical className="w-6 h-6" />
             </button>
@@ -684,7 +1004,7 @@ export const NowPlayingScreen: React.FC = () => {
           <button
             onClick={previousTrack}
             className="p-3 text-app-primary hover:scale-110 active:scale-95 transition-transform"
-            title="Previous"
+            title={tr("Previous")}
           >
             <SkipBack className="w-8 h-8 fill-current" />
           </button>
@@ -712,7 +1032,7 @@ export const NowPlayingScreen: React.FC = () => {
           <button
             onClick={nextTrack}
             className="p-3 text-app-primary hover:scale-110 active:scale-95 transition-transform"
-            title="Next"
+            title={tr("Next")}
           >
             <SkipForward className="w-8 h-8 fill-current" />
           </button>
@@ -722,7 +1042,7 @@ export const NowPlayingScreen: React.FC = () => {
             className={`p-2.5 rounded-full transition-all ${
               isShuffle ? 'text-app-primary bg-app-card' : 'text-app-secondary hover:text-app-primary'
             }`}
-            title="Shuffle"
+            title={tr("Shuffle")}
           >
             <Shuffle className="w-6 h-6" />
           </button>
@@ -840,7 +1160,7 @@ export const NowPlayingScreen: React.FC = () => {
                             }}
                             disabled={idx === 0}
                             className="p-1 text-app-secondary hover:text-app-primary disabled:opacity-20"
-                            title="Move Up"
+                            title={tr("Move Up")}
                           >
                             <ArrowUp className="w-4 h-4" />
                           </button>
@@ -851,7 +1171,7 @@ export const NowPlayingScreen: React.FC = () => {
                             }}
                             disabled={idx === upNextTracks.length - 1}
                             className="p-1 text-app-secondary hover:text-app-primary disabled:opacity-20"
-                            title="Move Down"
+                            title={tr("Move Down")}
                           >
                             <ArrowDown className="w-4 h-4" />
                           </button>
@@ -862,7 +1182,7 @@ export const NowPlayingScreen: React.FC = () => {
                             removeFromQueue(idx);
                           }}
                           className="p-1.5 text-app-secondary hover:text-red-400 transition-colors"
-                          title="Remove from queue"
+                          title={tr("Remove from queue")}
                         >
                           <X className="w-4 h-4" />
                         </button>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { t as tr } from '../i18n';
 import {
   Search,
   ChevronLeft,
@@ -9,7 +10,18 @@ import {
   Loader2,
   X,
   History,
+  Library,
+  Heart,
+  Download,
+  ListMusic,
 } from 'lucide-react';
+import {
+  searchLibrary,
+  loadRecentItems,
+  saveRecentItems,
+  recentItemKey,
+  type RecentSearchItem,
+} from '../utils/searchLocal';
 import { useAudio } from '../context/AudioContext';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
 import { ArtistDetailView } from './ArtistDetailView';
@@ -30,7 +42,7 @@ import {
 } from '../utils/ytMusicApi';
 import type { Track, CommunityPlaylist } from '../types/music';
 
-type SearchMode = 'results' | 'songs' | 'artists' | 'albums' | 'videos' | 'playlists';
+type SearchMode = 'results' | 'library' | 'songs' | 'artists' | 'albums' | 'videos' | 'playlists';
 
 const deriveArtistsFromSongs = (query: string, songs: Track[]): ArtistResult[] => {
   if (!songs || songs.length === 0) return [];
@@ -108,13 +120,58 @@ export const SearchView: React.FC = () => {
     searchQuery,
     setSearchQuery,
     playQueue,
+    playWithArtistTop,
     currentTrack,
     isPlaying,
     downloadPlaylist,
     importPlaylistToLibrary,
     openArtistProfile,
     addTrackToLibrary,
+    tracks,
+    favoriteTracks,
+    favorites,
+    downloadedTracks,
+    downloads,
+    recentlyPlayed,
+    playlists,
+    trackStore,
   } = useAudio();
+
+  // Your own music that matches the search: liked songs, downloads, history and
+  // playlists. Needs no network, so it also works offline.
+  const libraryMatches = React.useMemo(
+    () =>
+      searchLibrary(searchQuery, {
+        tracks: [favoriteTracks, downloadedTracks, tracks, recentlyPlayed],
+        playlists,
+        resolve: id => trackStore[id] || tracks.find(t => t.id === id),
+        downloadedIds: new Set(downloads),
+      }),
+    [searchQuery, favoriteTracks, downloadedTracks, tracks, recentlyPlayed, playlists, trackStore, downloads]
+  );
+  const likedIds = React.useMemo(() => new Set(favorites), [favorites]);
+  const downloadedIds = React.useMemo(() => new Set(downloads), [downloads]);
+  const [activeLocalPlaylist, setActiveLocalPlaylist] = useState<{ id: string; title: string; tracks: Track[] } | null>(null);
+
+  // Songs and artists you opened from search, shown when the box is empty.
+  const [recentItems, setRecentItems] = useState<RecentSearchItem[]>(() => loadRecentItems());
+  const rememberItem = (item: RecentSearchItem) => {
+    setRecentItems(prev => {
+      const next = [item, ...prev.filter(i => recentItemKey(i) !== recentItemKey(item))].slice(0, 12);
+      saveRecentItems(next);
+      return next;
+    });
+  };
+  const clearAllRecent = () => {
+    setRecentItems([]);
+    saveRecentItems([]);
+    setSearchHistory([]);
+    try {
+      localStorage.setItem('bw_music_search_history_v1', '[]');
+    } catch {
+      // ignore
+    }
+  };
 
   const [searchMode, setSearchMode] = useState<SearchMode>('results');
 
@@ -440,19 +497,24 @@ export const SearchView: React.FC = () => {
   };
 
   const chips: { id: SearchMode; label: string }[] = [
-    { id: 'results', label: 'Results' },
-    { id: 'songs', label: 'Songs' },
-    { id: 'artists', label: 'Artists' },
-    { id: 'albums', label: 'Albums' },
-    { id: 'videos', label: 'Videos' },
-    { id: 'playlists', label: 'Community Playlists' },
+    { id: 'results', label: tr("Results") },
+    { id: 'library', label: tr("Your library") },
+    { id: 'songs', label: tr("Songs") },
+    { id: 'artists', label: tr("Artists") },
+    { id: 'albums', label: tr("Albums") },
+    { id: 'videos', label: tr("Videos") },
+    { id: 'playlists', label: tr("Community Playlists") },
   ];
 
   const SongRow: React.FC<{ track: Track; list: Track[]; index: number }> = ({ track, list, index }) => {
     const isCurrent = currentTrack?.id === track.id;
     return (
       <button
-        onClick={() => playQueue(list, index)}
+        onClick={() => {
+          rememberItem({ kind: 'track', track, at: Date.now() });
+          if (track.isYouTube) playWithArtistTop(track, list);
+          else playQueue(list, index);
+        }}
         className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
       >
         <img src={track.coverUrl} alt={track.title} loading="lazy" className="w-14 h-14 rounded-lg object-cover shrink-0" />
@@ -466,7 +528,7 @@ export const SearchView: React.FC = () => {
               openArtistProfile(track.artist);
             }}
             className="block text-sm text-app-secondary truncate mt-0.5 hover:text-app-primary hover:underline"
-            title="View artist profile"
+            title={tr("View artist profile")}
           >
             Song, {track.artist}
           </span>
@@ -480,13 +542,70 @@ export const SearchView: React.FC = () => {
             setSelectedTrackForMenu(track);
           }}
           className="p-2 text-app-secondary hover:text-app-primary"
-          title="Track options"
+          title={tr("Track options")}
         >
           <MoreVertical className="w-5 h-5" />
         </span>
       </button>
     );
   };
+
+  // A song from your own library, marked liked / downloaded.
+  const LibrarySongRow: React.FC<{ track: Track; list: Track[]; index: number }> = ({ track, list, index }) => (
+    <button
+      onClick={() => {
+        rememberItem({ kind: 'track', track, at: Date.now() });
+        playQueue(list, index);
+      }}
+      className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
+    >
+      <img src={track.coverUrl} alt={track.title} loading="lazy" className="w-14 h-14 rounded-lg object-cover shrink-0 bg-app-surface" />
+      <div className="flex-1 min-w-0">
+        <p className={`text-base font-semibold truncate ${currentTrack?.id === track.id ? 'text-app-accent' : 'text-app-primary'}`}>
+          {track.title}
+        </p>
+        <p className="text-sm text-app-secondary truncate flex items-center gap-1.5">
+          {downloadedIds.has(track.id) && <Download className="w-3.5 h-3.5 shrink-0" />}
+          {likedIds.has(track.id) && <Heart className="w-3.5 h-3.5 shrink-0 fill-current" />}
+          <span className="truncate">{track.artist}</span>
+        </p>
+      </div>
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={e => {
+          e.stopPropagation();
+          setSelectedTrackForMenu(track);
+        }}
+        className="p-2 text-app-secondary"
+        title={tr("More")}
+      >
+        <MoreVertical className="w-5 h-5" />
+      </span>
+    </button>
+  );
+
+  const LocalPlaylistRow: React.FC<{ id: string; name: string; tracks: Track[] }> = ({ id, name, tracks: plTracks }) => (
+    <button
+      onClick={() => setActiveLocalPlaylist({ id, title: name, tracks: plTracks })}
+      className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
+    >
+      {plTracks[0]?.coverUrl ? (
+        <img src={plTracks[0].coverUrl} alt="" loading="lazy" className="w-14 h-14 rounded-lg object-cover shrink-0" />
+      ) : (
+        <div className="w-14 h-14 rounded-lg bg-app-surface flex items-center justify-center shrink-0">
+          <ListMusic className="w-6 h-6 text-app-secondary" />
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <p className="text-base font-semibold text-app-primary truncate">{name}</p>
+        <p className="text-sm text-app-secondary truncate flex items-center gap-1.5">
+          <Library className="w-3.5 h-3.5 shrink-0" />
+          Your playlist · {plTracks.length} songs
+        </p>
+      </div>
+    </button>
+  );
 
   const ArtistRows: React.FC<{ artists: ArtistResult[]; limit?: number }> = ({ artists, limit }) => (
     <>
@@ -496,6 +615,7 @@ export const SearchView: React.FC = () => {
           onClick={() => {
             setActiveArtist(a);
             saveHistory(a.name);
+            rememberItem({ kind: 'artist', name: a.name, thumbnail: a.thumbnail, at: Date.now() });
           }}
           className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
         >
@@ -548,6 +668,22 @@ export const SearchView: React.FC = () => {
           localTracks={[]}
           onBack={() => setActiveArtist(null)}
           onOpenAlbum={title => handleOpenAlbum({ title, artist: activeArtist.name })}
+        />
+      </>
+    );
+  }
+
+  if (activeLocalPlaylist) {
+    return (
+      <>
+        {menuModal}
+        <PlaylistDetailView
+          title={activeLocalPlaylist.title}
+          subtitle={`${activeLocalPlaylist.tracks.length} songs`}
+          coverUrl={activeLocalPlaylist.tracks[0]?.coverUrl}
+          tracks={activeLocalPlaylist.tracks}
+          playlistId={activeLocalPlaylist.id}
+          onBack={() => setActiveLocalPlaylist(null)}
         />
       </>
     );
@@ -612,7 +748,7 @@ export const SearchView: React.FC = () => {
                 setSearchQuery('');
               }}
               className="p-1 text-app-primary"
-              title="Back"
+              title={tr("Back")}
             >
               <ChevronLeft className="w-7 h-7" />
             </button>
@@ -647,7 +783,7 @@ export const SearchView: React.FC = () => {
                 autoComplete="off"
                 autoCorrect="off"
                 spellCheck={false}
-                placeholder="Songs, artists, albums, playlists..."
+                placeholder={tr("Songs, artists, albums, playlists...")}
                 className="w-full bg-app-surface border border-app-theme rounded-full py-3 pl-12 pr-10 text-base text-app-primary placeholder:text-app-secondary focus:outline-none focus:border-app-theme"
               />
               {inputValue ? (
@@ -658,7 +794,7 @@ export const SearchView: React.FC = () => {
                     inputRef.current?.focus();
                   }}
                   className="absolute right-3 top-3 p-0.5 text-app-secondary hover:text-app-primary"
-                  title="Clear"
+                  title={tr("Clear")}
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -718,9 +854,52 @@ export const SearchView: React.FC = () => {
 
           {!searchQuery && (
             <div className="px-5 space-y-6">
+              {recentItems.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between pb-2">
+                    <p className="text-sm text-app-secondary">{tr("RECENTLY OPENED")}</p>
+                  </div>
+                  <div className="flex gap-4 overflow-x-auto pb-1 -mx-5 px-5 no-scrollbar">
+                    {recentItems.map(item => (
+                      <button
+                        key={recentItemKey(item)}
+                        onClick={() => {
+                          if (item.kind === 'track') {
+                            rememberItem({ ...item, at: Date.now() });
+                            if (item.track.isYouTube) playWithArtistTop(item.track, [item.track]);
+                            else playQueue([item.track], 0);
+                          } else {
+                            rememberItem({ ...item, at: Date.now() });
+                            setActiveArtist({ id: item.name, name: item.name, thumbnail: item.thumbnail || '' } as ArtistResult);
+                          }
+                        }}
+                        className="w-24 shrink-0 text-left"
+                      >
+                        <img
+                          src={item.kind === 'track' ? item.track.coverUrl : item.thumbnail}
+                          alt=""
+                          loading="lazy"
+                          className={`w-24 h-24 object-cover bg-app-surface ${item.kind === 'artist' ? 'rounded-full' : 'rounded-xl'}`}
+                        />
+                        <p className="text-sm font-semibold text-app-primary mt-1.5 truncate">
+                          {item.kind === 'track' ? item.track.title : item.name}
+                        </p>
+                        <p className="text-xs text-app-secondary truncate">
+                          {item.kind === 'track' ? item.track.artist : 'Artist'}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {searchHistory.length > 0 && (
                 <div className="space-y-1">
-                  <p className="text-sm text-app-secondary pb-2">RECENT SEARCHES</p>
+                  <div className="flex items-center justify-between pb-2">
+                    <p className="text-sm text-app-secondary">{tr("RECENT SEARCHES")}</p>
+                    <button onClick={clearAllRecent} className="text-sm text-app-secondary hover:text-app-primary">
+                      {tr("Clear all")}
+                    </button>
+                  </div>
                   {searchHistory.map(q => (
                     <div key={q} className="flex items-center justify-between py-2">
                       <button
@@ -733,7 +912,7 @@ export const SearchView: React.FC = () => {
                       <button
                         onClick={() => removeHistory(q)}
                         className="p-2 text-app-secondary hover:text-app-primary shrink-0"
-                        title="Remove"
+                        title={tr("Remove")}
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -742,7 +921,7 @@ export const SearchView: React.FC = () => {
                 </div>
               )}
               <div className="space-y-3">
-              <p className="text-sm text-app-secondary font-medium tracking-wide">TRENDING ARTISTS & GENRES</p>
+              <p className="text-sm text-app-secondary font-medium tracking-wide">{tr("TRENDING ARTISTS & GENRES")}</p>
               <div className="flex flex-wrap gap-2">
                 {['Drake', 'Travis Scott', 'Future', 'King Von', 'Lil Baby', 'Kendrick Lamar', 'Metro Boomin', 'Hip Hop Hits'].map(term => (
                   <button
@@ -761,12 +940,31 @@ export const SearchView: React.FC = () => {
           {/* RESULTS MODE */}
           {searchMode === 'results' && searchQuery && (
             <div className="px-5 space-y-8">
+              {(libraryMatches.tracks.length > 0 || libraryMatches.playlists.length > 0) && (
+                <div>
+                  <div className="flex items-center justify-between pb-2">
+                    <h2 className="text-2xl font-bold text-app-primary">{tr("In your library")}</h2>
+                    <button onClick={() => setSearchMode('library')} className="text-base text-app-secondary">
+                      {tr("View all")}
+                    </button>
+                  </div>
+                  <div className="space-y-1 -mx-2">
+                    {libraryMatches.playlists.slice(0, 2).map(({ playlist, tracks: plTracks }) => (
+                      <LocalPlaylistRow key={playlist.id} id={playlist.id} name={playlist.name} tracks={plTracks} />
+                    ))}
+                    {libraryMatches.tracks.slice(0, 3).map((t, idx) => (
+                      <LibrarySongRow key={t.id} track={t} list={libraryMatches.tracks} index={idx} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {artistResults.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between pb-2">
-                    <h2 className="text-2xl font-bold text-app-primary">Artists</h2>
+                    <h2 className="text-2xl font-bold text-app-primary">{tr("Artists")}</h2>
                     <button onClick={() => setSearchMode('artists')} className="text-base text-app-secondary">
-                      View all
+                      {tr("View all")}
                     </button>
                   </div>
                   <ArtistRows artists={artistResults} limit={3} />
@@ -776,9 +974,9 @@ export const SearchView: React.FC = () => {
               {searchResults.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between pb-2">
-                    <h2 className="text-2xl font-bold text-app-primary">Songs</h2>
+                    <h2 className="text-2xl font-bold text-app-primary">{tr("Songs")}</h2>
                     <button onClick={() => setSearchMode('songs')} className="text-base text-app-secondary">
-                      View all
+                      {tr("View all")}
                     </button>
                   </div>
                   <div className="space-y-1 -mx-2">
@@ -792,9 +990,9 @@ export const SearchView: React.FC = () => {
               {playlistResults.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between pb-3">
-                    <h2 className="text-2xl font-bold text-app-primary">Playlists</h2>
+                    <h2 className="text-2xl font-bold text-app-primary">{tr("Playlists")}</h2>
                     <button onClick={() => setSearchMode('playlists')} className="text-base text-app-secondary">
-                      View all
+                      {tr("View all")}
                     </button>
                   </div>
                   <div className="flex gap-4 overflow-x-auto pb-2 -mx-5 px-5 no-scrollbar">
@@ -816,9 +1014,9 @@ export const SearchView: React.FC = () => {
               {albumResults.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between pb-3">
-                    <h2 className="text-2xl font-bold text-app-primary">Albums</h2>
+                    <h2 className="text-2xl font-bold text-app-primary">{tr("Albums")}</h2>
                     <button onClick={() => setSearchMode('albums')} className="text-base text-app-secondary">
-                      View all
+                      {tr("View all")}
                     </button>
                   </div>
                   <div className="flex gap-4 overflow-x-auto pb-2 -mx-5 px-5 no-scrollbar">
@@ -837,8 +1035,25 @@ export const SearchView: React.FC = () => {
                 </div>
               )}
 
-              {!isSearching && searchResults.length === 0 && artistResults.length === 0 && albumResults.length === 0 && playlistResults.length === 0 && (
-                <p className="text-center text-app-secondary py-10">No results found</p>
+              {!isSearching && searchResults.length === 0 && artistResults.length === 0 && albumResults.length === 0 && playlistResults.length === 0 && libraryMatches.tracks.length === 0 && (
+                <p className="text-center text-app-secondary py-10">{tr("No results found")}</p>
+              )}
+            </div>
+          )}
+
+          {/* YOUR LIBRARY MODE */}
+          {searchMode === 'library' && searchQuery && (
+            <div className="px-3 space-y-1">
+              {libraryMatches.playlists.map(({ playlist, tracks: plTracks }) => (
+                <LocalPlaylistRow key={playlist.id} id={playlist.id} name={playlist.name} tracks={plTracks} />
+              ))}
+              {libraryMatches.tracks.map((t, idx) => (
+                <LibrarySongRow key={t.id} track={t} list={libraryMatches.tracks} index={idx} />
+              ))}
+              {libraryMatches.tracks.length === 0 && libraryMatches.playlists.length === 0 && (
+                <p className="text-center text-app-secondary py-10">
+                  Nothing in your liked songs, downloads, history or playlists matches "{searchQuery}"
+                </p>
               )}
             </div>
           )}
@@ -862,7 +1077,7 @@ export const SearchView: React.FC = () => {
             <div className="px-5">
               <ArtistRows artists={artistResults} />
               {artistResults.length === 0 && !isSearching && (
-                <p className="text-center text-app-secondary py-10">No artists found</p>
+                <p className="text-center text-app-secondary py-10">{tr("No artists found")}</p>
               )}
             </div>
           )}
@@ -878,7 +1093,7 @@ export const SearchView: React.FC = () => {
                 </button>
               ))}
               {albumResults.length === 0 && !isSearching && (
-                <p className="col-span-2 text-center text-app-secondary py-10">No albums found</p>
+                <p className="col-span-2 text-center text-app-secondary py-10">{tr("No albums found")}</p>
               )}
             </div>
           )}
@@ -890,7 +1105,7 @@ export const SearchView: React.FC = () => {
                 <SongRow key={`${t.id}-${idx}`} track={t} list={videoResults} index={idx} />
               ))}
               {videoResults.length === 0 && !isSearching && (
-                <p className="text-center text-app-secondary py-10">No videos found</p>
+                <p className="text-center text-app-secondary py-10">{tr("No videos found")}</p>
               )}
             </div>
           )}
@@ -929,7 +1144,7 @@ export const SearchView: React.FC = () => {
                           ? 'bg-red-500/20 text-red-300'
                           : 'bg-white/10 hover:bg-white/20 text-app-primary hover:scale-105'
                     }`}
-                    title="Add to My Playlists"
+                    title={tr("Add to My Playlists")}
                   >
                     {playlistAddState[pl.id] === 'added' ? (
                       <Check className="w-4 h-4" />
@@ -954,7 +1169,7 @@ export const SearchView: React.FC = () => {
                 </p>
               )}
               {playlistResults.length === 0 && !isSearching && (
-                <p className="text-center text-app-secondary py-10">No community playlists found</p>
+                <p className="text-center text-app-secondary py-10">{tr("No community playlists found")}</p>
               )}
             </div>
           )}

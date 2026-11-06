@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { t as tr } from '../i18n';
 import { X, Plus, Check, ListMusic } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import type { Track } from '../types/music';
@@ -37,7 +38,7 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({ track, o
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-app-theme">
           <div className="min-w-0 pr-2">
-            <h3 className="text-sm font-bold text-app-primary uppercase tracking-wider">ADD TO PLAYLIST</h3>
+            <h3 className="text-sm font-bold text-app-primary uppercase tracking-wider">{tr("ADD TO PLAYLIST")}</h3>
             <p className="text-xs text-app-secondary font-mono truncate mt-0.5">{track.title}</p>
           </div>
 
@@ -54,7 +55,7 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({ track, o
           <form onSubmit={handleCreateAndAdd} className="space-y-3 pt-1">
             <input
               type="text"
-              placeholder="New Playlist Name..."
+              placeholder={tr("New Playlist Name...")}
               value={newPlaylistName}
               onChange={e => setNewPlaylistName(e.target.value)}
               autoFocus
@@ -66,13 +67,13 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({ track, o
                 onClick={() => setShowCreate(false)}
                 className="px-3 py-1.5 text-xs font-mono text-app-secondary hover:text-app-primary"
               >
-                CANCEL
+                {tr("CANCEL")}
               </button>
               <button
                 type="submit"
                 className="px-4 py-1.5 text-xs font-bold bg-app-highlight text-app-inverse rounded-xl hover:opacity-90"
               >
-                CREATE & SAVE
+                {tr("CREATE & SAVE")}
               </button>
             </div>
           </form>
@@ -82,14 +83,14 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({ track, o
             className="w-full py-2.5 bg-app-card border border-app-theme hover:border-app-highlight text-xs font-mono font-bold text-app-primary rounded-xl flex items-center justify-center gap-2 transition-all"
           >
             <Plus className="w-4 h-4 stroke-[2.5]" />
-            <span>CREATE NEW PLAYLIST</span>
+            <span>{tr("CREATE NEW PLAYLIST")}</span>
           </button>
         )}
 
         {/* Playlists List */}
         <div className="space-y-2 max-h-60 overflow-y-auto pt-1">
           {playlists.length === 0 ? (
-            <p className="text-xs text-app-secondary font-mono text-center py-4">No custom playlists created yet.</p>
+            <p className="text-xs text-app-secondary font-mono text-center py-4">{tr("No custom playlists created yet.")}</p>
           ) : (
             playlists.map(p => {
               const isAlreadyIn = p.trackIds.includes(track.id) || addedIds.includes(p.id);
@@ -113,7 +114,7 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({ track, o
 
                   {isAlreadyIn ? (
                     <span className="text-[10px] font-mono text-app-inverse bg-app-highlight px-2 py-0.5 rounded font-bold flex items-center gap-1">
-                      <Check className="w-3 h-3 stroke-[3]" /> ADDED
+                      <Check className="w-3 h-3 stroke-[3]" /> {tr("ADDED")}
                     </span>
                   ) : (
                     <span className="text-xs font-mono text-app-secondary hover:text-app-primary">+ ADD</span>

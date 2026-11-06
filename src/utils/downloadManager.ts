@@ -868,7 +868,7 @@ export async function restoreDownloadsFromMusic(
         album: 'FRF Music',
         duration: Number(it.duration) || 0,
         url: '',
-        coverUrl: 'https://i.ytimg.com/vi/' + it.youtubeId + '/hqdefault.jpg',
+        coverUrl: 'https://i.ytimg.com/vi/' + it.youtubeId + '/maxresdefault.jpg',
         isYouTube: true,
         youtubeId: it.youtubeId,
         addedAt: Date.now(),

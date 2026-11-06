@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useRef, useMemo 
 import type { Track, Playlist, RepeatMode, SettingsState, NavTab } from '../types/music';
 import { INITIAL_TRACKS } from '../utils/sampleData';
 import { applyThemeSettings } from '../utils/theme';
-import { searchYouTubeMusic, findBestAlternateVideoId, fetchDirectAudioStreamUrl } from '../utils/ytMusicApi';
+import { wipeAllDataAndRestart } from '../utils/wipeData';
+import { searchYouTubeMusic, findBestAlternateVideoId, fetchDirectAudioStreamUrl, fetchArtistTopSongs } from '../utils/ytMusicApi';
 import {
   verifyOfflineRecord,
   deleteOfflineFile,
@@ -41,6 +42,7 @@ import {
   undeclineSmart,
 } from '../utils/smartDownloadsStore';
 import { normalizationGainDb } from '../utils/loudness';
+import { nativeCover } from '../utils/cover';
 import { getArtColors, type ArtColors } from '../utils/artColors';
 import { isTauriRuntime } from '../utils/http';
 import { logPlayStart, logListened, flushListening, getListeningLog, replaceListeningLog } from '../utils/listening';
@@ -257,6 +259,8 @@ interface AudioContextType {
   // Actions
   playTrack: (track: Track) => void;
   playQueue: (list: Track[], startIndex?: number) => void;
+  playWithArtistTop: (track: Track, fallbackList?: Track[]) => void;
+  setVideoCompanion: (on: boolean) => void;
   addToQueue: (track: Track, position?: 'next' | 'last') => void;
   reorderQueue: (from: number, to: number) => void;
   removeFromQueue: (index: number) => void;
@@ -974,6 +978,12 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const pendingSeekRef = useRef<number>(LAST_SESSION.position || 0);
   const playGenRef = useRef(0);
   const activeYoutubeIdRef = useRef<string | null>(null);
+  // Companion video: when the song's sound comes from the app's own audio
+  // engine, the Now Playing video view runs the YouTube player muted beside it,
+  // kept in step with the real audio. "Wanted" is the screen's request; "active"
+  // holds the track id currently loaded in the player (null = not running).
+  const videoCompanionWantedRef = useRef(false);
+  const videoCompanionActiveRef = useRef<string | null>(null);
   const youtubePlaybackOverridesRef = useRef<Record<string, string>>(loadYouTubePlaybackOverrides());
   const failedYoutubeIdsRef = useRef(new Set<string>());
   const isYoutubeRecoveryRunningRef = useRef(false);
@@ -1025,8 +1035,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         album: currentTrack.album || 'Aura Music',
         artwork: currentTrack.coverUrl
           ? [
-              { src: currentTrack.coverUrl, sizes: '192x192', type: 'image/jpeg' },
-              { src: currentTrack.coverUrl, sizes: '512x512', type: 'image/jpeg' },
+              { src: nativeCover(currentTrack.coverUrl), sizes: '192x192', type: 'image/jpeg' },
+              { src: nativeCover(currentTrack.coverUrl), sizes: '512x512', type: 'image/jpeg' },
             ]
           : [],
       });
@@ -1063,7 +1073,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         title: currentTrack.title,
         artist: currentTrack.artist || 'FRF Music',
         isPlaying,
-        coverUrl: currentTrack.coverUrl,
+        coverUrl: nativeCover(currentTrack.coverUrl),
         duration: duration || currentTrack.duration || 0,
         position: positionRef.current || 0,
       }).catch(() => {});
@@ -1080,6 +1090,14 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }),
       (BackgroundAudio as any).addListener('remotePause', () => {
         latestActionsRef.current?.pauseFromRemote?.();
+      }),
+      // Android paused the native player by itself (another app took audio
+      // focus, headphones unplugged). Mirror that so the player UI and the
+      // Play button in the notification / lock screen agree with reality.
+      (BackgroundAudio as any).addListener('nativePlayState', (data: { playing?: boolean }) => {
+        if (typeof data?.playing === 'boolean' && nativeOwnerRef.current) {
+          setIsPlaying(data.playing);
+        }
       }),
       (BackgroundAudio as any).addListener('remoteTogglePlay', () => {
         latestActionsRef.current?.togglePlay?.();
@@ -1339,7 +1357,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         BackgroundAudio.handoverNow!({
           title: track.title,
           artist: track.artist,
-          coverUrl: track.coverUrl || '',
+          coverUrl: nativeCover(track.coverUrl),
           streamUrl: src.startsWith('http') ? src : '',
           filePath: src && !src.startsWith('http') ? src : '',
           position: getCurrentPosition(),
@@ -1472,6 +1490,31 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         (getOfflinePlaybackUrl(track.id) ||
           audioModeTrackIdRef.current === track.id)
     );
+
+  // Back in the foreground: another app may have taken audio focus and paused
+  // the player while this page was hidden (those pause events are ignored
+  // then), so bring isPlaying in line with what the player is really doing.
+  useEffect(() => {
+    const syncWithPlayer = () => {
+      if (document.hidden || nativeOwnerRef.current || needsLoadRef.current) return;
+      const track = currentTrackRef.current;
+      if (!track || !isPlayingRef.current) return;
+      try {
+        const audioMode = isAudioMode(track);
+        const yt = ytPlayerRef.current;
+        if (track.isYouTube && !audioMode && yt?.getPlayerState) {
+          if (yt.getPlayerState() === 2) setIsPlaying(false); // 2 = paused
+        } else if (audioRef.current && (!track.isYouTube || audioMode)) {
+          const a = audioRef.current;
+          if (a.paused && !a.ended && a.readyState >= 2) setIsPlaying(false);
+        }
+      } catch {
+        // player not ready; leave the state alone
+      }
+    };
+    document.addEventListener('visibilitychange', syncWithPlayer);
+    return () => document.removeEventListener('visibilitychange', syncWithPlayer);
+  }, []);
 
   // Library only contains songs the user downloaded or added locally.
   // Discovery happens on Home and in Library > Discover instead.
@@ -1607,6 +1650,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ytReadyWaitersRef.current.splice(0).forEach(fn => fn());
     },
     onStateChange: (event: any) => {
+      // The muted companion video must not drive play state or end the song.
+      if (videoCompanionActiveRef.current) return;
       if (event.data === 1) {
         hasPlayedRef.current = true;
         setIsPlaying(true);
@@ -1641,6 +1686,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     },
         onError: async (event: any) => {
+          if (videoCompanionActiveRef.current) return;
           const errorCode = Number(event?.data);
           console.warn('YouTube Player Error:', errorCode);
           const t = currentTrackRef.current;
@@ -1795,8 +1841,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       host: 'https://www.youtube-nocookie.com',
       playerVars: {
         autoplay: 1,
-        controls: 1,
+        // On phones the embed's own control bar draws a big YouTube logo, title
+        // and CC/settings icons over the video, and the app has its own controls.
+        controls: Capacitor.isNativePlatform() ? 0 : 1,
         disablekb: 1,
+        iv_load_policy: 3,
         fs: 0,
         rel: 0,
         enablejsapi: 1,
@@ -1853,6 +1902,78 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     });
   };
+
+  const stopVideoCompanion = () => {
+    if (!videoCompanionActiveRef.current) return;
+    videoCompanionActiveRef.current = null;
+    // The companion clears activeYoutubeIdRef when it starts; if that is set
+    // again, the main player has taken the video over and must not be stopped.
+    if (activeYoutubeIdRef.current) return;
+    try {
+      ytPlayerRef.current?.stopVideo?.();
+    } catch {
+      // ignore
+    }
+  };
+
+  // Now Playing's video view asks for the picture. It only applies when the
+  // app's own audio engine (not the YouTube player) is making the sound; when
+  // the YouTube player is the source, its video is already the real thing.
+  const setVideoCompanion = (on: boolean) => {
+    videoCompanionWantedRef.current = on;
+    if (!on) stopVideoCompanion();
+  };
+
+  useEffect(() => {
+    const tick = () => {
+      const track = currentTrackRef.current;
+      const eligible = Boolean(
+        videoCompanionWantedRef.current &&
+          track?.isYouTube &&
+          track.youtubeId &&
+          (nativeOwnerRef.current || isAudioMode(track))
+      );
+      if (!eligible) {
+        stopVideoCompanion();
+        return;
+      }
+      if (videoCompanionActiveRef.current !== track!.id) {
+        const id = youtubePlaybackOverridesRef.current[track!.id] || track!.youtubeId!;
+        // Mark active first so the player's own events are ignored from the start.
+        videoCompanionActiveRef.current = track!.id;
+        activeYoutubeIdRef.current = null;
+        void loadYtApi().then(() => {
+          const yt = ytPlayerRef.current;
+          if (videoCompanionActiveRef.current !== track!.id || !yt?.loadVideoById) return;
+          try {
+            yt.mute?.();
+            yt.loadVideoById({ videoId: id, startSeconds: Math.max(0, positionRef.current) });
+            yt.mute?.();
+          } catch {
+            // ignore
+          }
+        });
+        return;
+      }
+      const yt = ytPlayerRef.current;
+      if (!yt?.getCurrentTime) return;
+      try {
+        const want = positionRef.current;
+        if (Math.abs(yt.getCurrentTime() - want) > 1.5) yt.seekTo(want, true);
+        const state = yt.getPlayerState?.();
+        if (isPlayingRef.current) {
+          if (state !== 1 && state !== 3) yt.playVideo();
+          yt.mute?.();
+        } else if (state === 1) {
+          yt.pauseVideo();
+        }
+      } catch {
+        // ignore
+      }
+    };
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // Android still uses the iframe as a backup; desktop skips it on startup
   // because the hidden player element is not in DesktopFrame and the iframe
@@ -2179,7 +2300,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         title: currentTrack.title,
         artist: currentTrack.artist,
         isPlaying,
-        coverUrl: currentTrack.coverUrl || '',
+        coverUrl: nativeCover(currentTrack.coverUrl),
         streamUrl: stream || '',
         filePath: rec ? rec.path : '',
         position: positionRef.current,
@@ -2207,10 +2328,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           album: currentTrack.album || 'FRF Music',
           artwork: currentTrack.coverUrl
             ? [
-                { src: currentTrack.coverUrl, sizes: '96x96', type: 'image/jpeg' },
-                { src: currentTrack.coverUrl, sizes: '128x128', type: 'image/jpeg' },
-                { src: currentTrack.coverUrl, sizes: '192x192', type: 'image/jpeg' },
-                { src: currentTrack.coverUrl, sizes: '512x512', type: 'image/jpeg' },
+                { src: nativeCover(currentTrack.coverUrl), sizes: '96x96', type: 'image/jpeg' },
+                { src: nativeCover(currentTrack.coverUrl), sizes: '128x128', type: 'image/jpeg' },
+                { src: nativeCover(currentTrack.coverUrl), sizes: '192x192', type: 'image/jpeg' },
+                { src: nativeCover(currentTrack.coverUrl), sizes: '512x512', type: 'image/jpeg' },
               ]
             : [],
         });
@@ -2235,8 +2356,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     };
 
-    safeSet('play', () => latestActionsRef.current.togglePlay());
-    safeSet('pause', () => latestActionsRef.current.togglePlay());
+    // Explicit play / pause, not a toggle: a toggle trusts isPlaying, which can
+    // be stale after another app takes audio focus (see resumeFromRemote).
+    safeSet('play', () => latestActionsRef.current.resumeFromRemote());
+    safeSet('pause', () => latestActionsRef.current.pauseFromRemote());
     safeSet('previoustrack', () => latestActionsRef.current.previousTrack());
     safeSet('nexttrack', () => latestActionsRef.current.nextTrack());
     safeSet('seekto', details => {
@@ -2416,7 +2539,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         trackId: track.id,
         title: track.title,
         artist: track.artist,
-        coverUrl: track.coverUrl,
+        coverUrl: nativeCover(track.coverUrl),
         startTime,
         duration: track.duration,
         gainDb: gainDbFor(track),
@@ -2498,10 +2621,40 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setCurrentTime(time);
   };
 
+  // Play / Pause from the notification, lock screen or headset must act on what
+  // the player is really doing. They used to trust isPlaying, which goes stale
+  // when another app takes audio focus and pauses the player (the pause is
+  // ignored while the app is in the background): Play then did nothing and the
+  // user had to open the app and press play.
   const resumeFromRemote = () => {
-    if (!currentTrackRef.current) return;
+    const track = currentTrackRef.current;
+    if (!track) return;
     if (nativeOwnerRef.current && BackgroundAudio?.resume) {
       void BackgroundAudio.resume().catch(() => {});
+      setIsPlaying(true);
+      return;
+    }
+    // A restored session has nothing loaded yet; the normal toggle loads it.
+    if (needsLoadRef.current) {
+      latestActionsRef.current.togglePlay();
+      return;
+    }
+    const audioMode = isAudioMode(track);
+    const yt = ytPlayerRef.current;
+    if (track.isYouTube && !audioMode && yt?.getPlayerState) {
+      try {
+        const state = yt.getPlayerState();
+        // 1 = playing, 3 = buffering
+        if (state !== 1 && state !== 3) yt.playVideo?.();
+        setIsPlaying(true);
+        return;
+      } catch {
+        // fall through to the toggle
+      }
+    } else if (audioRef.current && (!track.isYouTube || audioMode)) {
+      if (audioRef.current.paused) {
+        audioRef.current.play().catch(() => setIsPlaying(false));
+      }
       setIsPlaying(true);
       return;
     }
@@ -2513,11 +2666,28 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const pauseFromRemote = () => {
-    if (!currentTrackRef.current) return;
+    const track = currentTrackRef.current;
+    if (!track) return;
     if (nativeOwnerRef.current && BackgroundAudio?.pause) {
       void BackgroundAudio.pause().catch(() => {});
       setIsPlaying(false);
       return;
+    }
+    const audioMode = isAudioMode(track);
+    const yt = ytPlayerRef.current;
+    try {
+      if (track.isYouTube && !audioMode && yt?.pauseVideo) {
+        yt.pauseVideo();
+        setIsPlaying(false);
+        return;
+      }
+      if (audioRef.current && (!track.isYouTube || audioMode)) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+        return;
+      }
+    } catch {
+      // fall through to the toggle
     }
     if (isPlayingRef.current) {
       latestActionsRef.current.togglePlay();
@@ -2582,7 +2752,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         trackId: track.id,
         title: track.title,
         artist: track.artist,
-        coverUrl: track.coverUrl,
+        coverUrl: nativeCover(track.coverUrl),
         startTime,
         duration: track.duration,
         gainDb: gainDbFor(track),
@@ -3053,6 +3223,28 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     playTrack(list[safeIndex]);
   };
 
+  // Plays a song picked from search, then continues with that artist's most
+  // popular songs (their YouTube Music "Songs" shelf) instead of whatever else
+  // the search happened to return. Playback starts at once; the queue fills in
+  // when the artist's list arrives. fallbackList is used if it cannot be found.
+  const playWithArtistTop = (track: Track, fallbackList?: Track[]) => {
+    playQueue([track], 0);
+    const fallback = () => {
+      if (fallbackList && fallbackList.length > 1 && currentTrackRef.current?.id === track.id) {
+        setQueue(fallbackList);
+      }
+    };
+    void fetchArtistTopSongs(track.artist)
+      .then(top => {
+        // The listener may have skipped on to something else while this loaded.
+        if (currentTrackRef.current?.id !== track.id) return;
+        const rest = top.filter(t => t.id !== track.id);
+        if (rest.length === 0) return fallback();
+        setQueue([track, ...rest]);
+      })
+      .catch(fallback);
+  };
+
   // Queue a track without replacing the current play queue. 'next' plays it
   // immediately after the current song; 'last' appends it to the end. When
   // nothing is playing yet, the track simply starts.
@@ -3240,7 +3432,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           filePath: record?.path || undefined,
           title: target.title,
           artist: target.artist,
-          coverUrl: target.coverUrl,
+          coverUrl: nativeCover(target.coverUrl),
           duration: target.duration,
           gainDb: gainDbFor(target),
         });
@@ -3355,7 +3547,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           filePath,
           title: t.title,
           artist: t.artist,
-          coverUrl: t.coverUrl,
+          coverUrl: nativeCover(t.coverUrl),
           duration: t.duration,
           gainDb: gainDbFor(t),
         });
@@ -4026,19 +4218,12 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return true;
   };
 
+  // Wipes everything (IndexedDB backup, offline files, caches, alarms...) and
+  // restarts the app; see wipeData.ts for why localStorage alone was not enough.
   const clearAllData = () => {
-    updateSettings({ sleepTimerMinutes: 0 });
-    BackgroundAudio?.stop().catch(() => {});
-    localStorage.clear();
-    setTracks([]);
-    setQueue([]);
-    setPlaylists([]);
-    setFavorites([]);
-    setFavoriteTracks([]);
-    setRecentlyPlayed([]);
-    setDownloads([]);
-    setCurrentTrack(null);
     setIsPlaying(false);
+    setCurrentTrack(null);
+    void wipeAllDataAndRestart();
   };
 
   // Top tracks by lifetime plays, resolved to their track objects. Backs the
@@ -4101,6 +4286,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         playTrack,
         playQueue,
+        playWithArtistTop,
+        setVideoCompanion,
         addToQueue,
         reorderQueue,
         removeFromQueue,

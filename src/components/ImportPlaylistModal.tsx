@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom';
+import { t as tr } from '../i18n';
 import React, { useRef, useState } from 'react';
 import { X, ClipboardPaste, FileUp, Check } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
@@ -170,9 +171,9 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
             <div className="p-2.5 rounded-2xl bg-app-card border border-app-theme text-app-primary">
               <ClipboardPaste className="w-5 h-5" />
             </div>
-            <h2 className="text-xl font-bold text-app-primary">Import playlist</h2>
+            <h2 className="text-xl font-bold text-app-primary">{tr("Import playlist")}</h2>
           </div>
-          <button onClick={close} className="p-2 text-app-secondary rounded-full" title="Close">
+          <button onClick={close} className="p-2 text-app-secondary rounded-full" title={tr("Close")}>
             <X className="w-6 h-6" />
           </button>
         </div>
@@ -189,7 +190,7 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
               <textarea
                 value={text}
                 onChange={e => setText(e.target.value)}
-                placeholder="Paste here..."
+                placeholder={tr("Paste here...")}
                 rows={7}
                 className="w-full rounded-2xl bg-app-card border border-app-theme p-3 text-sm text-app-primary placeholder:text-app-secondary outline-none resize-none"
               />
@@ -205,7 +206,7 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-app-card border border-app-theme text-sm font-semibold text-app-primary"
               >
                 <FileUp className="w-4 h-4" />
-                Choose a file
+                {tr("Choose a file")}
               </button>
               {error && <p className="text-sm text-red-400">{error}</p>}
             </>
@@ -214,7 +215,7 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
           {phase === 'preview' && parsed && (
             <>
               <p className="text-sm text-app-secondary">
-                Found <span className="font-bold text-app-primary">{parsed.songs.length} songs</span>
+                {tr("Found")} <span className="font-bold text-app-primary">{parsed.songs.length} songs</span>
                 {kind === 'code'
                   ? ' in this share code.'
                   : kind === 'csv'
@@ -226,7 +227,7 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
               </p>
               {notice && <p className="text-xs text-amber-300 leading-relaxed">{notice}</p>}
               <label className="block">
-                <span className="text-xs font-semibold text-app-secondary tracking-wider">PLAYLIST NAME</span>
+                <span className="text-xs font-semibold text-app-secondary tracking-wider">{tr("PLAYLIST NAME")}</span>
                 <input
                   value={name}
                   onChange={e => setName(e.target.value)}
@@ -298,7 +299,7 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
                 onClick={reset}
                 className="px-5 py-3 rounded-xl bg-app-card border border-app-theme text-app-primary font-semibold text-sm"
               >
-                Back
+                {tr("Back")}
               </button>
               <button
                 onClick={() => void runImport()}
@@ -313,7 +314,7 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
               onClick={reset}
               className="flex-1 py-3 rounded-xl bg-app-card border border-app-theme text-app-primary font-semibold text-sm"
             >
-              Cancel
+              {tr("Cancel")}
             </button>
           )}
           {phase === 'done' && (
@@ -321,7 +322,7 @@ export const ImportPlaylistModal: React.FC<{ isOpen: boolean; onClose: () => voi
               onClick={close}
               className="flex-1 py-3 rounded-xl bg-app-highlight text-app-inverse font-bold text-sm"
             >
-              Done
+              {tr("Done")}
             </button>
           )}
         </div>

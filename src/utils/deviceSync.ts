@@ -83,7 +83,7 @@ export function trackFromSyncEntry(videoId: string, e: [string, string, number])
     album: 'Synced',
     duration: e[2] || 0,
     url: '',
-    coverUrl: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+    coverUrl: `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
     isYouTube: true,
     youtubeId: videoId,
     addedAt: Date.now(),

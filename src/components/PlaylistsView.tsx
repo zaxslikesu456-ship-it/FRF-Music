@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { t as tr } from '../i18n';
 import { Plus, ListMusic, Heart, Play, Trash2, Edit3, X, Disc } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { PlaylistDetailView } from './PlaylistDetailView';
@@ -160,7 +161,7 @@ export const PlaylistsView: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between pt-1 pb-2 border-b border-app-theme">
         <div>
-          <h1 className="text-xl font-black text-app-primary tracking-tight uppercase">PLAYLIST MANAGER</h1>
+          <h1 className="text-xl font-black text-app-primary tracking-tight uppercase">{tr("PLAYLIST MANAGER")}</h1>
           <p className="text-xs text-app-secondary font-mono">{playlists.length + 1} Playlists Total</p>
         </div>
 
@@ -169,7 +170,7 @@ export const PlaylistsView: React.FC = () => {
           className="flex items-center gap-1.5 bg-app-highlight text-app-inverse px-3.5 py-2 rounded-xl font-bold text-xs hover:opacity-90 active:scale-95 transition-all shadow-md"
         >
           <Plus className="w-4 h-4 stroke-[2.5]" />
-          <span>NEW PLAYLIST</span>
+          <span>{tr("NEW PLAYLIST")}</span>
         </button>
       </div>
 
@@ -178,7 +179,7 @@ export const PlaylistsView: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-app-surface border border-app-theme rounded-3xl p-5 w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between pb-2 border-b border-app-theme">
-              <h3 className="text-base font-extrabold text-app-primary uppercase tracking-wide">CREATE NEW PLAYLIST</h3>
+              <h3 className="text-base font-extrabold text-app-primary uppercase tracking-wide">{tr("CREATE NEW PLAYLIST")}</h3>
               <button
                 onClick={() => setShowCreateModal(false)}
                 className="p-1 rounded-full text-app-secondary hover:text-app-primary"
@@ -189,7 +190,7 @@ export const PlaylistsView: React.FC = () => {
 
             <form onSubmit={handleCreate} className="space-y-3">
               <div>
-                <label className="text-xs font-mono text-app-secondary uppercase">Playlist Title</label>
+                <label className="text-xs font-mono text-app-secondary uppercase">{tr("Playlist Title")}</label>
                 <input
                   type="text"
                   value={newPlaylistName}
@@ -202,12 +203,12 @@ export const PlaylistsView: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-xs font-mono text-app-secondary uppercase">Description (Optional)</label>
+                <label className="text-xs font-mono text-app-secondary uppercase">{tr("Description (Optional)")}</label>
                 <input
                   type="text"
                   value={newPlaylistDesc}
                   onChange={e => setNewPlaylistDesc(e.target.value)}
-                  placeholder="Short description..."
+                  placeholder={tr("Short description...")}
                   className="w-full mt-1 bg-app-card border border-app-theme rounded-xl py-2.5 px-3.5 text-sm text-app-primary placeholder:text-app-secondary focus:outline-none focus:border-app-highlight font-mono"
                 />
               </div>
@@ -218,13 +219,13 @@ export const PlaylistsView: React.FC = () => {
                   onClick={() => setShowCreateModal(false)}
                   className="px-4 py-2 rounded-xl border border-app-theme text-xs font-mono text-app-secondary hover:text-app-primary"
                 >
-                  CANCEL
+                  {tr("CANCEL")}
                 </button>
                 <button
                   type="submit"
                   className="px-4 py-2 rounded-xl bg-app-highlight text-app-inverse text-xs font-mono font-bold hover:opacity-90 active:scale-95 transition-all shadow-md"
                 >
-                  CREATE PLAYLIST
+                  {tr("CREATE PLAYLIST")}
                 </button>
               </div>
             </form>
@@ -237,7 +238,7 @@ export const PlaylistsView: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-app-surface border border-app-theme rounded-3xl p-5 w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between pb-2 border-b border-app-theme">
-              <h3 className="text-base font-extrabold text-app-primary uppercase tracking-wide">RENAME PLAYLIST</h3>
+              <h3 className="text-base font-extrabold text-app-primary uppercase tracking-wide">{tr("RENAME PLAYLIST")}</h3>
               <button
                 onClick={() => setEditingPlaylist(null)}
                 className="p-1 rounded-full text-app-secondary hover:text-app-primary"
@@ -248,7 +249,7 @@ export const PlaylistsView: React.FC = () => {
 
             <form onSubmit={handleSaveRename} className="space-y-3">
               <div>
-                <label className="text-xs font-mono text-app-secondary uppercase">Playlist Title</label>
+                <label className="text-xs font-mono text-app-secondary uppercase">{tr("Playlist Title")}</label>
                 <input
                   type="text"
                   value={editName}
@@ -259,7 +260,7 @@ export const PlaylistsView: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-xs font-mono text-app-secondary uppercase">Description</label>
+                <label className="text-xs font-mono text-app-secondary uppercase">{tr("Description")}</label>
                 <input
                   type="text"
                   value={editDesc}
@@ -274,13 +275,13 @@ export const PlaylistsView: React.FC = () => {
                   onClick={() => setEditingPlaylist(null)}
                   className="px-4 py-2 rounded-xl border border-app-theme text-xs font-mono text-app-secondary hover:text-app-primary"
                 >
-                  CANCEL
+                  {tr("CANCEL")}
                 </button>
                 <button
                   type="submit"
                   className="px-4 py-2 rounded-xl bg-app-highlight text-app-inverse text-xs font-mono font-bold hover:opacity-90 active:scale-95 transition-all shadow-md"
                 >
-                  SAVE CHANGES
+                  {tr("SAVE CHANGES")}
                 </button>
               </div>
             </form>
@@ -298,7 +299,7 @@ export const PlaylistsView: React.FC = () => {
             <Heart className="w-8 h-8 fill-current" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-base font-extrabold text-app-primary truncate">Favorites</h3>
+            <h3 className="text-base font-extrabold text-app-primary truncate">{tr("Favorites")}</h3>
             <p className="text-xs text-app-secondary font-mono truncate">{favoriteTracks.length} tracks favorited</p>
           </div>
         </div>
@@ -310,7 +311,7 @@ export const PlaylistsView: React.FC = () => {
               playPlaylist('favorites');
             }}
             className="w-10 h-10 rounded-full bg-app-highlight text-app-inverse flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all"
-            title="Play Favorites"
+            title={tr("Play Favorites")}
           >
             <Play className="w-4 h-4 fill-current ml-0.5" />
           </button>
@@ -324,7 +325,7 @@ export const PlaylistsView: React.FC = () => {
         {playlists.length === 0 ? (
           <div className="text-center py-8 border border-dashed border-app-theme rounded-2xl">
             <ListMusic className="w-8 h-8 text-app-secondary mx-auto mb-2" />
-            <p className="text-xs text-app-secondary font-mono">No custom playlists created yet</p>
+            <p className="text-xs text-app-secondary font-mono">{tr("No custom playlists created yet")}</p>
           </div>
         ) : (
           playlists.map(pl => {
@@ -356,7 +357,7 @@ export const PlaylistsView: React.FC = () => {
                       playPlaylist(pl.id);
                     }}
                     className="w-9 h-9 rounded-full bg-app-highlight text-app-inverse flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow"
-                    title="Play Playlist"
+                    title={tr("Play Playlist")}
                   >
                     <Play className="w-4 h-4 fill-current ml-0.5" />
                   </button>
@@ -370,7 +371,7 @@ export const PlaylistsView: React.FC = () => {
                       setEditDesc(pl.description || '');
                     }}
                     className="p-2 rounded-full text-app-secondary hover:text-app-primary hover:bg-app-surface transition-all"
-                    title="Rename Playlist"
+                    title={tr("Rename Playlist")}
                   >
                     <Edit3 className="w-4 h-4" />
                   </button>
@@ -382,7 +383,7 @@ export const PlaylistsView: React.FC = () => {
                       handleDelete(pl.id, pl.name);
                     }}
                     className="p-2 rounded-full text-app-secondary hover:text-app-highlight hover:bg-app-surface transition-all"
-                    title="Delete Playlist"
+                    title={tr("Delete Playlist")}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>

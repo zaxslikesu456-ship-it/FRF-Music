@@ -1,6 +1,7 @@
 import type { Track, CommunityPlaylist } from '../types/music';
 import { Capacitor } from '@capacitor/core';
 import { httpGetJson, httpPostJson, httpGetText } from './http';
+import { hiResCover } from './cover';
 
 const YTM_API_KEY = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30';
 const IS_NATIVE = Capacitor.isNativePlatform();
@@ -235,7 +236,11 @@ function parseShelfEntries(entries: any[]): Track[] {
       album,
       duration,
       url: '',
-      coverUrl: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+      // Square album art when the result has it, else the video thumbnail.
+      coverUrl: hiResCover(
+        renderer.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails?.slice(-1)[0]?.url ||
+          `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`
+      ),
       isYouTube: true,
       youtubeId: videoId,
       addedAt: Date.now(),
@@ -286,7 +291,7 @@ function mapInvidiousVideos(items: any): Track[] {
       album: 'YouTube Music',
       duration: item.lengthSeconds || 200,
       url: '',
-      coverUrl: `https://i.ytimg.com/vi/${item.videoId}/mqdefault.jpg`,
+      coverUrl: `https://i.ytimg.com/vi/${item.videoId}/maxresdefault.jpg`,
       isYouTube: true,
       youtubeId: item.videoId,
       addedAt: Date.now(),
@@ -336,7 +341,7 @@ async function fetchYouTubeHtmlSearch(query: string): Promise<Track[]> {
           album: 'YouTube Music',
           duration,
           url: '',
-          coverUrl: `https://i.ytimg.com/vi/${vr.videoId}/mqdefault.jpg`,
+          coverUrl: `https://i.ytimg.com/vi/${vr.videoId}/maxresdefault.jpg`,
           isYouTube: true,
           youtubeId: vr.videoId,
           addedAt: Date.now(),
@@ -626,7 +631,7 @@ function parseInnerTubePlaylists(data: any): CommunityPlaylist[] {
       const songCount = infoCol?.[2]?.text || 'Playlist';
 
       const thumbs = renderer.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-      const coverUrl = thumbs?.[thumbs.length - 1]?.url || thumbs?.[0]?.url || '';
+      const coverUrl = hiResCover(thumbs?.[thumbs.length - 1]?.url || thumbs?.[0]?.url || '');
 
       if (cleanId) {
         playlists.push({
@@ -710,7 +715,7 @@ function mapInvidiousPlaylists(items: any): CommunityPlaylist[] {
     .map((item: any) => {
       const firstVidId = item.videos?.[0]?.videoId;
       const coverUrl = firstVidId
-        ? `https://i.ytimg.com/vi/${firstVidId}/mqdefault.jpg`
+        ? `https://i.ytimg.com/vi/${firstVidId}/maxresdefault.jpg`
         : item.playlistThumbnail ||
           `https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300`;
 
@@ -818,7 +823,7 @@ function parseArtistOrAlbumEntries(data: any, kind: 'artist' | 'album') {
       r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails ||
       r.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails ||
       [];
-    const thumbnail = thumbs.length ? thumbs[thumbs.length - 1].url : '';
+    const thumbnail = hiResCover(thumbs.length ? thumbs[thumbs.length - 1].url : '');
 
     const browseId =
       r.navigationEndpoint?.browseEndpoint?.browseId ||
@@ -867,7 +872,7 @@ export async function searchYouTubeMusicArtists(query: string): Promise<ArtistRe
           subtitle: i.subscriberCount
             ? `${formatCount(i.subscriberCount)} subscribers`
             : 'Artist',
-          thumbnail: thumbs.length ? thumbs[thumbs.length - 1].url : '',
+          thumbnail: hiResCover(thumbs.length ? thumbs[thumbs.length - 1].url : ''),
         };
       });
   };
@@ -876,6 +881,91 @@ export async function searchYouTubeMusicArtists(query: string): Promise<ArtistRe
     fetchInnerTube,
     ...getInvidiousBases().map(b => () => fetchInvidious(b)),
   ]);
+}
+
+// The artist's own "Songs" shelf on YouTube Music, which YouTube orders by
+// popularity — the real "most popular" list, unlike search relevance. The shelf
+// on the artist page holds only a handful; its "show all" endpoint has the rest.
+const artistTopCache = new Map<string, { tracks: Track[]; at: number }>();
+const artistTopInflight = new Map<string, Promise<Track[]>>();
+const ARTIST_TOP_TTL_MS = 30 * 60 * 1000;
+
+export async function fetchArtistTopSongs(artistName: string): Promise<Track[]> {
+  // A track credits "A, B"; the first name is the one whose page we want.
+  const name = (artistName || '').split(/,|&| feat\.? | ft\.? /i)[0].trim();
+  if (!name) return [];
+  const key = name.toLowerCase();
+  const cached = artistTopCache.get(key);
+  if (cached && Date.now() - cached.at < ARTIST_TOP_TTL_MS) return cached.tracks;
+  const inflight = artistTopInflight.get(key);
+  if (inflight) return inflight;
+
+  const pending = (async (): Promise<Track[]> => {
+    try {
+      const artists = await searchYouTubeMusicArtists(name);
+      const hit =
+        artists.find(a => a.name.toLowerCase().trim() === key) ||
+        artists.find(a => {
+          const n = a.name.toLowerCase();
+          return n.includes(key) || key.includes(n);
+        });
+      if (!hit || !hit.id.startsWith('UC')) return [];
+
+      const page = await httpPostJson(
+        `${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`,
+        { ...buildClientContext(), browseId: hit.id },
+        4000
+      );
+      const sections =
+        page?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content
+          ?.sectionListRenderer?.contents || [];
+      const shelf = sections
+        .map((s: any) => s?.musicShelfRenderer)
+        .find((s: any) => s?.contents?.length);
+      if (!shelf) return [];
+
+      let entries: any[] = shelf.contents;
+      const more = shelf.bottomEndpoint?.browseEndpoint;
+      if (more?.browseId) {
+        try {
+          const full = await httpPostJson(
+            `${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`,
+            { ...buildClientContext(), browseId: more.browseId, params: more.params },
+            4000
+          );
+          const fullSections =
+            full?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content
+              ?.sectionListRenderer?.contents || [];
+          const fullShelf = fullSections
+            .map((s: any) => s?.musicPlaylistShelfRenderer || s?.musicShelfRenderer)
+            .find((s: any) => s?.contents?.length);
+          if (fullShelf && fullShelf.contents.length > entries.length) entries = fullShelf.contents;
+        } catch {
+          // keep the short shelf
+        }
+      }
+
+      // Artist-page rows leave out the artist column, so credit the artist.
+      const tracks = parseShelfEntries(entries)
+        .map(t =>
+          !t.artist || t.artist === 'YouTube Artist' || t.artist === t.title
+            ? { ...t, artist: hit.name }
+            : t
+        )
+        .slice(0, 30);
+      if (tracks.length) artistTopCache.set(key, { tracks, at: Date.now() });
+      return tracks;
+    } catch {
+      return [];
+    }
+  })();
+
+  artistTopInflight.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    artistTopInflight.delete(key);
+  }
 }
 
 function formatCount(n: number): string {
@@ -910,7 +1000,7 @@ export async function searchYouTubeMusicAlbums(query: string): Promise<AlbumResu
         title: i.title || 'Album',
         artist: i.author || 'YouTube Artist',
         coverUrl: i.videos?.[0]?.videoId
-          ? `https://i.ytimg.com/vi/${i.videos[0].videoId}/mqdefault.jpg`
+          ? `https://i.ytimg.com/vi/${i.videos[0].videoId}/maxresdefault.jpg`
           : '',
       }));
   };
@@ -1034,10 +1124,11 @@ export async function fetchYouTubePlaylistTracks(
         }
 
         const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-        const coverUrl =
+        const coverUrl = hiResCover(
           thumbs[thumbs.length - 1]?.url ||
-          thumbs[0]?.url ||
-          `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+            thumbs[0]?.url ||
+            `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`
+        );
 
         tracks.push({
           id: `yt-${videoId}`,
@@ -1080,7 +1171,7 @@ export async function fetchYouTubePlaylistTracks(
             album: data.title || 'Community Playlist',
             duration: video.lengthSeconds || 200,
             url: '',
-            coverUrl: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+            coverUrl: `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
             isYouTube: true,
             youtubeId: videoId,
             addedAt: Date.now(),

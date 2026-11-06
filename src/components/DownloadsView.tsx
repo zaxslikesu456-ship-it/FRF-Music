@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { t as tr } from '../i18n';
 import { Download, MoreVertical, Trash2, BarChart3 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
@@ -100,7 +101,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
 
       <div className="-mx-4 -mt-4">
         <PlaylistHero
-          title="Downloads"
+          title={tr("Downloads")}
           subtitle="playlist"
           count={allDownloaded.length}
           onBack={onBack}
@@ -163,7 +164,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
                   <button
                     onClick={() => removeFromQueue(d.trackId)}
                     className="p-2 text-app-secondary hover:text-red-400 shrink-0"
-                    title="Skip this download"
+                    title={tr("Skip this download")}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -184,14 +185,14 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
             <div className="flex items-center gap-4 text-xs font-semibold">
               {failedCount > 0 && (
                 <button onClick={retryAllFailed} className="text-app-primary">
-                  Retry failed
+                  {tr("Retry failed")}
                 </button>
               )}
               <button onClick={paused ? resumeQueue : pauseQueue} className="text-app-primary">
                 {paused ? 'Resume' : 'Pause'}
               </button>
               <button onClick={clearQueue} className="text-app-secondary">
-                Clear
+                {tr("Clear")}
               </button>
             </div>
           </div>
@@ -231,13 +232,13 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
                     onClick={() => retryDownload(q.track.id)}
                     className="px-3 py-1.5 rounded-xl bg-white/10 text-xs font-semibold text-app-primary shrink-0"
                   >
-                    Retry
+                    {tr("Retry")}
                   </button>
                 )}
                 <button
                   onClick={() => removeFromQueue(q.track.id)}
                   className="p-2 text-app-secondary hover:text-red-400 shrink-0"
-                  title="Remove from queue"
+                  title={tr("Remove from queue")}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -254,9 +255,9 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
             <Download className="w-8 h-8 text-app-secondary" />
           </div>
           <div className="space-y-1 max-w-xs">
-            <h3 className="text-base font-bold text-app-primary uppercase tracking-wide">NO DOWNLOADED SONGS</h3>
+            <h3 className="text-base font-bold text-app-primary uppercase tracking-wide">{tr("NO DOWNLOADED SONGS")}</h3>
             <p className="text-xs text-app-secondary font-mono">
-              Click the 3 lines/dots option menu on any song and select Download to save songs to your download list.
+              {tr("Click the 3 lines/dots option menu on any song and select Download to save songs to your download list.")}
             </p>
           </div>
         </div>
@@ -264,7 +265,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
         /* Downloaded Tracks Listing */
         <div className="px-2 pt-2 space-y-1">
           {downloadedTracks.length === 0 && allDownloaded.length > 0 && (
-            <p className="text-center text-sm text-app-secondary py-8">No matching songs</p>
+            <p className="text-center text-sm text-app-secondary py-8">{tr("No matching songs")}</p>
           )}
           {downloadedTracks.map((track, index) => {
             const isCurrent = currentTrack?.id === track.id;
@@ -286,7 +287,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
                     {track.title}
                     {isSmartOwned(track.id) && (
                       <span className="ml-2 align-middle px-1.5 py-0.5 rounded bg-white/10 text-[10px] font-semibold text-zinc-300 uppercase tracking-wide">
-                        Auto
+                        {tr("Auto")}
                       </span>
                     )}
                   </p>
@@ -308,7 +309,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
                       removeDownload(track.id);
                     }}
                     className="p-1.5 text-zinc-500 hover:text-red-400"
-                    title="Remove from Downloads"
+                    title={tr("Remove from Downloads")}
                   >
                     <Trash2 className="w-4 h-4" />
                   </span>
@@ -321,7 +322,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
                       setSelectedTrack(track);
                     }}
                     className="p-1.5 text-zinc-400 hover:text-white"
-                    title="More Options"
+                    title={tr("More Options")}
                   >
                     <MoreVertical className="w-5 h-5" />
                   </span>

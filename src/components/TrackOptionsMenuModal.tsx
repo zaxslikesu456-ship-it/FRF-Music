@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { t as tr } from '../i18n';
 import {
   X,
   Download,
@@ -151,7 +152,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
           >
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
               <h3 className="text-lg font-bold flex items-center gap-2">
-                <Info className="w-5 h-5 text-blue-400" /> Track Details
+                <Info className="w-5 h-5 text-blue-400" /> {tr("Track Details")}
               </h3>
               <button
                 onClick={() => setShowInfoModal(false)}
@@ -173,7 +174,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
               onClick={() => setShowInfoModal(false)}
               className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-semibold transition-colors"
             >
-              Close
+              {tr("Close")}
             </button>
           </div>
         </div>
@@ -191,15 +192,15 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
           >
             <div className="w-10 h-1.5 rounded-full bg-zinc-700 mx-auto mb-2" />
             <h3 className="text-lg font-bold text-center pb-2 border-b border-zinc-800">
-              Sleep Timer
+              {tr("Sleep Timer")}
             </h3>
             {[
-              { label: 'Off', val: null },
-              { label: '15 Minutes', val: 15 },
-              { label: '30 Minutes', val: 30 },
-              { label: '45 Minutes', val: 45 },
-              { label: '60 Minutes', val: 60 },
-              { label: 'End of this song', val: -1 },
+              { label: tr("Off"), val: null },
+              { label: tr("15 Minutes"), val: 15 },
+              { label: tr("30 Minutes"), val: 30 },
+              { label: tr("45 Minutes"), val: 45 },
+              { label: tr("60 Minutes"), val: 60 },
+              { label: tr("End of this song"), val: -1 },
             ].map(item => {
               const selected =
                 item.val === -1
@@ -264,14 +265,14 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
                 <button
                   onClick={() => setShowInfoModal(true)}
                   className="p-2 text-zinc-300 hover:text-white rounded-full bg-zinc-900 border border-zinc-800"
-                  title="Song Info"
+                  title={tr("Song Info")}
                 >
                   <Info className="w-5 h-5" />
                 </button>
                 <button
                   onClick={() => downloadTrack(track)}
                   className="p-2 text-zinc-300 hover:text-white rounded-full bg-zinc-900 border border-zinc-800"
-                  title="Download Song"
+                  title={tr("Download Song")}
                 >
                   {isDownloaded ? (
                     <Check className="w-5 h-5 text-app-accent" />
@@ -339,14 +340,14 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
                     <button
                       onClick={handleOpenExternal}
                       className="p-1.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white transition-colors"
-                      title="Open in YouTube"
+                      title={tr("Open in YouTube")}
                     >
                       <YoutubeIcon className="w-5 h-5 fill-current text-white" />
                     </button>
                     <button
                       onClick={handleOpenExternal}
                       className="p-1.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white transition-colors"
-                      title="Open in Web Browser"
+                      title={tr("Open in Web Browser")}
                     >
                       <Play className="w-4 h-4 fill-current text-white" />
                     </button>
