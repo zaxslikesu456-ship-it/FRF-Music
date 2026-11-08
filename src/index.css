@@ -398,4 +398,7 @@ html.app-hidden .pause-when-hidden * {
   animation-play-state: paused !important;
 }
 
-.backface-hidden { backface-visibility: hidden; transform: translateZ(0); }
+/* No transform here: the spin keyframes only have a "to", so a base transform made the
+   browser blend translateZ(0) into rotate(360deg), which is a full turn back to rest, and the
+   disc stood still. */
+.backface-hidden { backface-visibility: hidden; }
