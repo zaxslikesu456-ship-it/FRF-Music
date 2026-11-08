@@ -271,8 +271,10 @@ export function buildRediscover({ known, favoriteIds, playCounts }: MixInput): M
 }
 
 /**
- * Three daily mixes. Each is led by one of your top artists and filled with your
- * own songs that match, then any extra songs passed in (searched suggestions).
+ * Daily mixes, each led by one of your top artists: your own songs by them,
+ * then their most popular songs and YouTube Music's radio for your favourite
+ * song of theirs (passed in as `extras`, already mixed). Random liked songs
+ * from other artists are no longer padded in — they made mixes feel random.
  */
 function pickLeads({ known, favoriteIds, playCounts }: MixInput) {
   const fav = new Set(favoriteIds);
@@ -287,21 +289,41 @@ function pickLeads({ known, favoriteIds, playCounts }: MixInput) {
   const scored = Array.from(byArtist.entries()).map(([name, list]) => {
     let score = (secs[name] || 0) / 60;
     for (const t of list) score += (playCounts[t.id] || 0) * 2 + (fav.has(t.id) ? 3 : 0);
-    return { name, list, score };
+    // The song of theirs you play most (or liked), used to start the radio.
+    const seed = [...list]
+      .filter(t => t.youtubeId)
+      .sort(
+        (a, b) =>
+          (playCounts[b.id] || 0) + (fav.has(b.id) ? 2 : 0) - ((playCounts[a.id] || 0) + (fav.has(a.id) ? 2 : 0))
+      )[0];
+    return { name, list, score, seed };
   });
   const leads = scored
     .filter(s => s.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 9);
-  return { pool: shuffled(leads, rnd).slice(0, 3), rnd, fav };
+    .slice(0, 10);
+  return { pool: shuffled(leads, rnd).slice(0, 4), rnd, fav };
+}
+
+/** "Drake, J. Cole and more": the mix's leading artists. */
+function mixSubtitle(lead: string, tracks: Track[]): string {
+  const counts = new Map<string, { name: string; n: number }>();
+  for (const t of tracks) {
+    const name = (t.artist || '').split(/,|&| feat\.? | ft\.? /i)[0].trim();
+    const k = artistKey(name);
+    if (!name || k === artistKey(lead) || name === 'YouTube Artist') continue;
+    counts.set(k, { name, n: (counts.get(k)?.n || 0) + 1 });
+  }
+  const others = [...counts.values()].sort((a, b) => b.n - a.n).slice(0, 2).map(x => x.name);
+  const leadName = tracks.find(t => artistKey(t.artist) === artistKey(lead))?.artist.split(',')[0].trim() || lead;
+  return [leadName, ...others].join(', ') + ' and more';
 }
 
 export function buildDailyMixes(
   input: MixInput,
   extras: Record<string, Track[]> = {}
 ): Mix[] {
-  const { known } = input;
-  const { pool, rnd, fav } = pickLeads(input);
+  const { pool, rnd } = pickLeads(input);
   const mixes: Mix[] = [];
   pool.forEach(lead => {
     const seen = new Set<string>();
@@ -311,22 +333,57 @@ export function buildDailyMixes(
       seen.add(t.id);
       out.push(t);
     };
-    // Your songs by this artist first, then liked songs, then searched extras.
-    shuffled(lead.list, rnd).forEach(add);
-    shuffled(known.filter(t => fav.has(t.id)), rnd).slice(0, 8).forEach(add);
-    (extras[lead.name] || []).forEach(add);
-    if (out.length < 4) return;
+    const yours = shuffled(lead.list, rnd).slice(0, 10);
+    const more = extras[lead.name] || [];
+    // Weave your songs between the new ones so the mix isn't all one artist up front.
+    for (let i = 0; i < Math.max(yours.length, more.length); i++) {
+      if (i < yours.length) add(yours[i]);
+      if (i < more.length) add(more[i]);
+      if (i * 2 < more.length && more[i * 2 + 1]) add(more[i * 2 + 1]);
+    }
+    if (out.length < 6) return;
+    const tracks = out.slice(0, 30);
     mixes.push({
       id: `daily-${mixes.length + 1}`,
       title: `Daily Mix ${mixes.length + 1}`,
-      subtitle: `${lead.name} and more`,
-      tracks: shuffled(out, rnd).slice(0, 30),
+      subtitle: mixSubtitle(lead.name, tracks),
+      tracks,
     });
   });
   return mixes;
 }
 
-/** The artists today's mixes are built around, so Home can search extra songs for them. */
+/** New-to-you songs from the radios of your favourite artists' songs. */
+export function buildDiscoverMix(input: MixInput, candidates: Track[]): Mix | null {
+  const knownIds = new Set(input.known.map(t => t.id));
+  const knownArtists = new Set(input.known.map(t => artistKey(t.artist)));
+  const rnd = seeded('discover' + dayKey());
+  const perArtist = new Map<string, number>();
+  const out: Track[] = [];
+  for (const t of shuffled(candidates, rnd)) {
+    const a = artistKey(t.artist);
+    if (knownIds.has(t.id) || knownArtists.has(a)) continue;
+    if ((perArtist.get(a) || 0) >= 2) continue;
+    perArtist.set(a, (perArtist.get(a) || 0) + 1);
+    out.push(t);
+    if (out.length >= 30) break;
+  }
+  if (out.length < 8) return null;
+  return {
+    id: 'discover',
+    title: 'Discover Mix',
+    subtitle: 'New songs and artists picked for you',
+    tracks: out,
+  };
+}
+
+/** Today's lead artists and the song of each that starts its radio. */
+export function leadSeedsForToday(input: MixInput): { name: string; seedVideoId: string }[] {
+  return pickLeads(input).pool.map(p => ({ name: p.name, seedVideoId: p.seed?.youtubeId || '' }));
+}
+
+/** The artists today's mixes are built around. */
 export function leadArtistsForToday(input: MixInput): string[] {
   return pickLeads(input).pool.map(p => p.name);
 }
+

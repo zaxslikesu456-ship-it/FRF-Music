@@ -14,7 +14,11 @@ import {
   Heart,
   Download,
   ListMusic,
+  Play,
+  User,
+  Trash2,
 } from 'lucide-react';
+import { useContextMenu } from './ContextMenu';
 import {
   searchLibrary,
   loadRecentItems,
@@ -161,6 +165,24 @@ export const SearchView: React.FC = () => {
       saveRecentItems(next);
       return next;
     });
+  };
+  // Right-click (long press on phones) a recently opened song or artist.
+  const recentMenu = useContextMenu();
+  const forgetItem = (item: RecentSearchItem) => {
+    setRecentItems(prev => {
+      const next = prev.filter(i => recentItemKey(i) !== recentItemKey(item));
+      saveRecentItems(next);
+      return next;
+    });
+  };
+  const openRecentItem = (item: RecentSearchItem) => {
+    rememberItem({ ...item, at: Date.now() });
+    if (item.kind === 'track') {
+      if (item.track.isYouTube) playWithArtistTop(item.track, [item.track]);
+      else playQueue([item.track], 0);
+    } else {
+      setActiveArtist({ id: item.name, name: item.name, thumbnail: item.thumbnail || '' } as ArtistResult);
+    }
   };
   const clearAllRecent = () => {
     setRecentItems([]);
@@ -858,21 +880,26 @@ export const SearchView: React.FC = () => {
                 <div>
                   <div className="flex items-center justify-between pb-2">
                     <p className="text-sm text-app-secondary">{tr("RECENTLY OPENED")}</p>
+                    {recentMenu.element}
                   </div>
                   <div className="flex gap-4 overflow-x-auto pb-1 -mx-5 px-5 no-scrollbar">
                     {recentItems.map(item => (
                       <button
                         key={recentItemKey(item)}
-                        onClick={() => {
-                          if (item.kind === 'track') {
-                            rememberItem({ ...item, at: Date.now() });
-                            if (item.track.isYouTube) playWithArtistTop(item.track, [item.track]);
-                            else playQueue([item.track], 0);
-                          } else {
-                            rememberItem({ ...item, at: Date.now() });
-                            setActiveArtist({ id: item.name, name: item.name, thumbnail: item.thumbnail || '' } as ArtistResult);
-                          }
-                        }}
+                        onClick={() => openRecentItem(item)}
+                        onContextMenu={e =>
+                          recentMenu.open(e, [
+                            item.kind === 'track'
+                              ? { label: tr('Play'), icon: Play, onClick: () => openRecentItem(item) }
+                              : { label: tr('Open artist'), icon: User, onClick: () => openRecentItem(item) },
+                            {
+                              label: tr('Remove from recently opened'),
+                              icon: Trash2,
+                              danger: true,
+                              onClick: () => forgetItem(item),
+                            },
+                          ])
+                        }
                         className="w-24 shrink-0 text-left"
                       >
                         <img

@@ -883,24 +883,38 @@ export async function searchYouTubeMusicArtists(query: string): Promise<ArtistRe
   ]);
 }
 
-// The artist's own "Songs" shelf on YouTube Music, which YouTube orders by
-// popularity — the real "most popular" list, unlike search relevance. The shelf
-// on the artist page holds only a handful; its "show all" endpoint has the rest.
-const artistTopCache = new Map<string, { tracks: Track[]; at: number }>();
-const artistTopInflight = new Map<string, Promise<Track[]>>();
+// An artist's YouTube Music page: their "Songs" shelf (which YouTube orders by
+// popularity — the real "most popular" list, unlike search relevance; the
+// shelf holds a handful, its "show all" endpoint has the rest), plus the
+// header's description and audience numbers.
+export interface ArtistPage {
+  name: string;
+  browseId: string;
+  topSongs: Track[];
+  /** The artist's own description on YouTube Music (often just a website link). */
+  description: string;
+  monthlyAudience: string;
+  subscribers: string;
+  views: string;
+}
+
+const artistPageCache = new Map<string, { page: ArtistPage | null; at: number }>();
+const artistPageInflight = new Map<string, Promise<ArtistPage | null>>();
 const ARTIST_TOP_TTL_MS = 30 * 60 * 1000;
 
-export async function fetchArtistTopSongs(artistName: string): Promise<Track[]> {
+const runsText = (x: any): string => (x?.runs || []).map((r: any) => r.text).join('').trim();
+
+export async function fetchArtistPage(artistName: string): Promise<ArtistPage | null> {
   // A track credits "A, B"; the first name is the one whose page we want.
   const name = (artistName || '').split(/,|&| feat\.? | ft\.? /i)[0].trim();
-  if (!name) return [];
+  if (!name) return null;
   const key = name.toLowerCase();
-  const cached = artistTopCache.get(key);
-  if (cached && Date.now() - cached.at < ARTIST_TOP_TTL_MS) return cached.tracks;
-  const inflight = artistTopInflight.get(key);
+  const cached = artistPageCache.get(key);
+  if (cached && Date.now() - cached.at < ARTIST_TOP_TTL_MS) return cached.page;
+  const inflight = artistPageInflight.get(key);
   if (inflight) return inflight;
 
-  const pending = (async (): Promise<Track[]> => {
+  const pending = (async (): Promise<ArtistPage | null> => {
     try {
       const artists = await searchYouTubeMusicArtists(name);
       const hit =
@@ -909,62 +923,238 @@ export async function fetchArtistTopSongs(artistName: string): Promise<Track[]> 
           const n = a.name.toLowerCase();
           return n.includes(key) || key.includes(n);
         });
-      if (!hit || !hit.id.startsWith('UC')) return [];
+      if (!hit || !hit.id.startsWith('UC')) return null;
 
       const page = await httpPostJson(
         `${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`,
         { ...buildClientContext(), browseId: hit.id },
         4000
       );
+      const header = page?.header?.musicImmersiveHeaderRenderer || page?.header?.musicVisualHeaderRenderer || {};
       const sections =
         page?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content
           ?.sectionListRenderer?.contents || [];
+      const about = sections.map((s: any) => s?.musicDescriptionShelfRenderer).find(Boolean);
+      const info: ArtistPage = {
+        name: hit.name,
+        browseId: hit.id,
+        topSongs: [],
+        description: runsText(about?.description) || runsText(header.description),
+        monthlyAudience: runsText(header.monthlyListenerCount),
+        subscribers: runsText(header.subscriptionButton?.subscribeButtonRenderer?.subscriberCountText),
+        views: runsText(about?.subheader),
+      };
+
       const shelf = sections
         .map((s: any) => s?.musicShelfRenderer)
         .find((s: any) => s?.contents?.length);
-      if (!shelf) return [];
-
-      let entries: any[] = shelf.contents;
-      const more = shelf.bottomEndpoint?.browseEndpoint;
-      if (more?.browseId) {
-        try {
-          const full = await httpPostJson(
-            `${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`,
-            { ...buildClientContext(), browseId: more.browseId, params: more.params },
-            4000
-          );
-          const fullSections =
-            full?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content
-              ?.sectionListRenderer?.contents || [];
-          const fullShelf = fullSections
-            .map((s: any) => s?.musicPlaylistShelfRenderer || s?.musicShelfRenderer)
-            .find((s: any) => s?.contents?.length);
-          if (fullShelf && fullShelf.contents.length > entries.length) entries = fullShelf.contents;
-        } catch {
-          // keep the short shelf
+      if (shelf) {
+        let entries: any[] = shelf.contents;
+        const more = shelf.bottomEndpoint?.browseEndpoint;
+        if (more?.browseId) {
+          try {
+            const full = await httpPostJson(
+              `${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`,
+              { ...buildClientContext(), browseId: more.browseId, params: more.params },
+              4000
+            );
+            const fullSections =
+              full?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content
+                ?.sectionListRenderer?.contents || [];
+            const fullShelf = fullSections
+              .map((s: any) => s?.musicPlaylistShelfRenderer || s?.musicShelfRenderer)
+              .find((s: any) => s?.contents?.length);
+            if (fullShelf && fullShelf.contents.length > entries.length) entries = fullShelf.contents;
+          } catch {
+            // keep the short shelf
+          }
         }
+        // Artist-page rows leave out the artist column, so credit the artist.
+        info.topSongs = parseShelfEntries(entries)
+          .map(t =>
+            !t.artist || t.artist === 'YouTube Artist' || t.artist === t.title
+              ? { ...t, artist: hit.name }
+              : t
+          )
+          .slice(0, 30);
       }
-
-      // Artist-page rows leave out the artist column, so credit the artist.
-      const tracks = parseShelfEntries(entries)
-        .map(t =>
-          !t.artist || t.artist === 'YouTube Artist' || t.artist === t.title
-            ? { ...t, artist: hit.name }
-            : t
-        )
-        .slice(0, 30);
-      if (tracks.length) artistTopCache.set(key, { tracks, at: Date.now() });
-      return tracks;
+      artistPageCache.set(key, { page: info, at: Date.now() });
+      return info;
     } catch {
-      return [];
+      return null;
     }
   })();
 
-  artistTopInflight.set(key, pending);
+  artistPageInflight.set(key, pending);
   try {
     return await pending;
   } finally {
-    artistTopInflight.delete(key);
+    artistPageInflight.delete(key);
+  }
+}
+
+export async function fetchArtistTopSongs(artistName: string): Promise<Track[]> {
+  return (await fetchArtistPage(artistName))?.topSongs || [];
+}
+
+
+// ---------------------------------------------------------------------------
+// Home feed sources: YouTube Music's own curated lists, so Home fills itself
+// with real, current music instead of keyword searches ("top hits 2026", which
+// mostly found re-uploads and compilation videos).
+// ---------------------------------------------------------------------------
+
+export interface CuratedPlaylist {
+  playlistId: string;
+  title: string;
+}
+
+export interface MoodCategory {
+  title: string;
+  browseId: string;
+  params: string;
+}
+
+async function ytmBrowse(body: Record<string, unknown>): Promise<any> {
+  return httpPostJson(`${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`, { ...buildClientContext(), ...body }, 6000);
+}
+
+function browseSections(data: any): any[] {
+  return data?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+}
+
+function carouselTitle(c: any): string {
+  return (c?.header?.musicCarouselShelfBasicHeaderRenderer?.title?.runs || []).map((r: any) => r.text).join('');
+}
+
+function playlistsFromCarousel(c: any): CuratedPlaylist[] {
+  const out: CuratedPlaylist[] = [];
+  for (const item of c?.contents || []) {
+    const r = item?.musicTwoRowItemRenderer;
+    const id: string = r?.navigationEndpoint?.browseEndpoint?.browseId || '';
+    // Playlists only (VL...), not albums or artists.
+    if (!id.startsWith('VL')) continue;
+    out.push({ playlistId: id, title: (r.title?.runs || []).map((x: any) => x.text).join('') || 'Playlist' });
+  }
+  return out;
+}
+
+/** The songs in YouTube Music's own "Quick picks" row. */
+export async function fetchHomeQuickPicks(): Promise<Track[]> {
+  try {
+    const sections = browseSections(await ytmBrowse({ browseId: 'FEmusic_home' }));
+    for (const s of sections) {
+      const c = s?.musicCarouselShelfRenderer;
+      const songs = (c?.contents || []).filter((x: any) => x?.musicResponsiveListItemRenderer);
+      if (songs.length >= 6) return parseShelfEntries(songs);
+    }
+  } catch {
+    // fall back to the caller's own picks
+  }
+  return [];
+}
+
+/** Chart playlists (top music videos, trending...). */
+export async function fetchChartPlaylists(): Promise<CuratedPlaylist[]> {
+  try {
+    const sections = browseSections(await ytmBrowse({ browseId: 'FEmusic_charts' }));
+    const out: CuratedPlaylist[] = [];
+    for (const s of sections) out.push(...playlistsFromCarousel(s?.musicCarouselShelfRenderer));
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Moods & moments and genres (Chill, Workout, Hip-Hop, K-Pop...). */
+export async function fetchMoodCategories(): Promise<MoodCategory[]> {
+  try {
+    const sections = browseSections(await ytmBrowse({ browseId: 'FEmusic_moods_and_genres' }));
+    const out: MoodCategory[] = [];
+    for (const s of sections) {
+      for (const item of s?.gridRenderer?.items || []) {
+        const b = item?.musicNavigationButtonRenderer;
+        const ep = b?.clickCommand?.browseEndpoint;
+        if (ep?.browseId && ep?.params) {
+          out.push({ title: b.buttonText?.runs?.[0]?.text || '', browseId: ep.browseId, params: ep.params });
+        }
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** The curated playlists inside one mood or genre, grouped by its rows. */
+export async function fetchCategoryPlaylists(cat: MoodCategory): Promise<{ title: string; playlists: CuratedPlaylist[] }[]> {
+  try {
+    const sections = browseSections(await ytmBrowse({ browseId: cat.browseId, params: cat.params }));
+    return sections
+      .map(s => s?.musicCarouselShelfRenderer)
+      .filter(Boolean)
+      .map(c => ({ title: carouselTitle(c), playlists: playlistsFromCarousel(c) }))
+      .filter(g => g.playlists.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+// Songs like this one: YouTube Music's own radio for the song (the "Up next"
+// list it builds from the song, playlist RDAMVM<id>). Far closer to the song's
+// style than searching its artist's name. The first entry is the song itself.
+const similarCache = new Map<string, Track[]>();
+
+export async function fetchSimilarSongs(videoId: string): Promise<Track[]> {
+  if (!videoId) return [];
+  const cached = similarCache.get(videoId);
+  if (cached) return cached;
+  try {
+    const data = await httpPostJson(
+      `${getYtmBase()}/next?alt=json&key=${YTM_API_KEY}`,
+      { ...buildClientContext(), videoId, playlistId: `RDAMVM${videoId}`, isAudioOnly: true },
+      5000
+    );
+    const items =
+      data?.contents?.singleColumnMusicWatchNextResultsRenderer?.tabbedRenderer
+        ?.watchNextTabbedResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.musicQueueRenderer
+        ?.content?.playlistPanelRenderer?.contents || [];
+    const tracks: Track[] = [];
+    const seen = new Set<string>();
+    for (const it of items) {
+      const v = it?.playlistPanelVideoRenderer;
+      const id: string = v?.videoId || '';
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      // Byline reads "Artist • 1.9B views • 11M likes": the artist is what
+      // comes before the first separator.
+      const runs: { text?: string }[] = v.longBylineText?.runs || v.shortBylineText?.runs || [];
+      const artistRuns: string[] = [];
+      for (const r of runs) {
+        if ((r.text || '').trim() === '•') break;
+        artistRuns.push(r.text || '');
+      }
+      const lengthText: string = v.lengthText?.runs?.[0]?.text || '';
+      const parts = lengthText.split(':').map(Number);
+      const duration =
+        parts.length === 2 ? parts[0] * 60 + parts[1] : parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : 200;
+      tracks.push({
+        id: `yt-${id}`,
+        title: v.title?.runs?.[0]?.text || 'Unknown Song',
+        artist: artistRuns.join('').trim() || 'YouTube Artist',
+        album: 'YouTube Music',
+        duration: Number.isFinite(duration) ? duration : 200,
+        url: '',
+        coverUrl: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+        isYouTube: true,
+        youtubeId: id,
+        addedAt: Date.now(),
+      });
+    }
+    if (tracks.length > 0) similarCache.set(videoId, tracks);
+    return tracks;
+  } catch {
+    return [];
   }
 }
 

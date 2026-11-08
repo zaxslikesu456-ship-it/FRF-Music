@@ -23,6 +23,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
+import { fetchSimilarSongs, fetchArtistTopSongs } from '../utils/ytMusicApi';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
 import { encodeShareCode, shareMessage, songFromTrack } from '../utils/playlistShare';
 import { copyText } from '../utils/clipboard';
@@ -50,6 +51,9 @@ const formatDuration = (secs: number) => {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 };
 
+// Each playlist's last suggestions (by its song list), kept while the app runs.
+const suggestionCache = new Map<string, { track: Track; reason: string }[]>();
+
 export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
   title,
   subtitle,
@@ -70,9 +74,6 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
     isPlaying,
     isShuffle,
     toggleShuffle,
-    tracks: allLibraryTracks,
-    recentlyPlayed,
-    favorites,
     searchYTMusic,
     addTrackToPlaylist,
     addTrackToLibrary,
@@ -175,69 +176,180 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
     }
   };
 
-  // Fetch smart suggestions based on playlist tracks and user listening history
-  const fetchSuggestions = useCallback(async () => {
+  // Suggestions that match this playlist: popular songs by its own artists,
+  // then YouTube Music's radio ("songs like this") for a few of its songs.
+  //
+  // This used to restart on every player update — the search function it
+  // depended on is recreated on each render, so every song switch (and every
+  // playback tick) fetched again with different seeds and replaced the list.
+  // Now it only runs when the playlist changes or you tap Refresh, all requests
+  // run at once, results show as soon as the first ones arrive, a newer run
+  // makes an older one's late results be ignored, and the list is remembered
+  // for the playlist so reopening it is instant.
+  const suggestionRoundRef = React.useRef(0);
+  const suggestionRunRef = React.useRef(0);
+  const allActiveTracksRef = React.useRef(allActiveTracks);
+  allActiveTracksRef.current = allActiveTracks;
+  const searchRef = React.useRef(searchYTMusic);
+  searchRef.current = searchYTMusic;
+  const playlistKey = tracks.map(t => t.id).join('|');
+
+  const fetchSuggestions = useCallback(async (useCache = false) => {
+    const current = allActiveTracksRef.current;
+    const run = ++suggestionRunRef.current;
+    const isLatest = () => run === suggestionRunRef.current;
+    if (current.length === 0) {
+      setSuggestedTracks([]);
+      setIsLoadingSuggestions(false);
+      return;
+    }
+    const cacheKey = current.map(t => t.id).join('|');
+    if (useCache) {
+      const cached = suggestionCache.get(cacheKey);
+      if (cached) {
+        setSuggestedTracks(cached);
+        setIsLoadingSuggestions(false);
+        return;
+      }
+    }
     setIsLoadingSuggestions(true);
-    try {
-      const existingIds = new Set(allActiveTracks.map(t => t.id));
-      const playlistArtists = allActiveTracks.map(t => t.artist).filter(Boolean);
-      const recentArtists = (recentlyPlayed || []).map(t => t.artist).filter(Boolean);
-      const favArtists = (allLibraryTracks || []).filter(t => favorites.includes(t.id)).map(t => t.artist);
 
-      const artistCounts: Record<string, number> = {};
-      [...playlistArtists, ...playlistArtists, ...recentArtists, ...favArtists].forEach(a => {
-        if (a && a !== 'Unknown Artist' && a !== 'YouTube Artist' && a !== 'Local Audio') {
-          artistCounts[a] = (artistCounts[a] || 0) + 1;
-        }
-      });
+    const existingIds = new Set(current.map(t => t.id));
+    const existingKeys = new Set(current.map(t => `${t.title}|${t.artist}`.toLowerCase()));
+    const isNew = (t: Track) =>
+      !existingIds.has(t.id) && !existingKeys.has(`${t.title}|${t.artist}`.toLowerCase());
 
-      const topArtists = Object.keys(artistCounts).sort((a, b) => artistCounts[b] - artistCounts[a]);
+    // Seeds: three songs spread across the playlist, different on each Refresh.
+    const pool = current.filter(t => t.youtubeId);
+    const round = suggestionRoundRef.current++;
+    const step = Math.max(1, Math.floor(pool.length / 3));
+    const seeds: Track[] = [];
+    for (let k = 0; k < Math.min(3, pool.length); k++) {
+      const s = pool[(round + k * step) % pool.length];
+      if (!seeds.includes(s)) seeds.push(s);
+    }
+
+    // The playlist's own artists, by how much of the playlist they make up.
+    const artistCounts: Record<string, number> = {};
+    current.forEach(t => {
+      const a = (t.artist || '').split(/,|&| feat\.? | ft\.? /i)[0].trim();
+      if (a && !['Unknown Artist', 'YouTube Artist', 'Local Audio'].includes(a)) {
+        artistCounts[a] = (artistCounts[a] || 0) + 1;
+      }
+    });
+    const playlistArtists = Object.keys(artistCounts).sort((a, b) => artistCounts[b] - artistCounts[a]);
+    const playlistArtistSet = new Set(playlistArtists.map(a => a.toLowerCase()));
+    const byPlaylistArtist = (t: Track) =>
+      t.artist.toLowerCase().split(/,|&| feat\.? | ft\.? /i).some(a => playlistArtistSet.has(a.trim()));
+    // Up to three artists (rotating on Refresh).
+    const artistPick = playlistArtists.length
+      ? Array.from({ length: Math.min(3, playlistArtists.length) }, (_, k) => playlistArtists[(round + k) % playlistArtists.length])
+      : [];
+
+    // Everything is requested at once; the list is rebuilt as each answer arrives.
+    const topLists: (Track[] | undefined)[] = artistPick.map(() => undefined);
+    const radios: (Track[] | undefined)[] = seeds.map(() => undefined);
+
+    const compose = (): { track: Track; reason: string }[] => {
       const suggestions: { track: Track; reason: string }[] = [];
-      const seenIds = new Set<string>();
-
-      // 1. First add matching tracks from library not yet in playlist
-      allLibraryTracks.forEach(t => {
-        if (!existingIds.has(t.id) && !seenIds.has(t.id)) {
-          if (topArtists.some(art => t.artist.toLowerCase().includes(art.toLowerCase()))) {
-            seenIds.add(t.id);
-            suggestions.push({ track: t, reason: `From your library • ${t.artist}` });
-          }
-        }
-      });
-
-      // 2. Fetch fresh tracks from YT Music
-      const searchQueries = topArtists.length > 0
-        ? topArtists.slice(0, 3).map(a => ({ query: `${a} popular songs`, reason: `Similar to ${a}` }))
-        : [
-            { query: `${title} music songs`, reason: 'Based on playlist' },
-            { query: 'top trending hits 2026', reason: 'Trending now' },
-          ];
-
-      for (const { query, reason } of searchQueries.slice(0, 2)) {
-        try {
-          const results = await searchYTMusic(query);
-          for (const item of results) {
-            if (!existingIds.has(item.id) && !seenIds.has(item.id) && suggestions.length < 12) {
-              seenIds.add(item.id);
-              suggestions.push({ track: item, reason });
-            }
-          }
-        } catch {
-          // ignore
+      const taken = new Set<string>();
+      const push = (t: Track, reason: string) => {
+        if (taken.has(t.id) || !isNew(t)) return false;
+        taken.add(t.id);
+        suggestions.push({ track: t, reason });
+        return true;
+      };
+      // About six from the playlist's artists, taking turns so one doesn't take over.
+      const queues = topLists.map((list, k) => ({ artist: artistPick[k], songs: (list || []).filter(isNew) }));
+      let added = 0;
+      for (let pass = 0; added < 6 && queues.some(q => q.songs.length > 0) && pass < 10; pass++) {
+        for (const q of queues) {
+          const t = q.songs.shift();
+          if (t && push(t, tr('More from {artist}', { artist: q.artist }))) added++;
+          if (added >= 6) break;
         }
       }
+      // The rest: the closest radio songs (several seeds agreeing ranks higher;
+      // the playlist's own artists count double), at most two per artist.
+      const scored = new Map<string, { track: Track; score: number; seed: Track }>();
+      radios.forEach((list, i) => {
+        (list || []).forEach((t, pos) => {
+          if (!isNew(t)) return;
+          const add = (1 + 0.5 * (1 - Math.min(pos, 50) / 50)) * (byPlaylistArtist(t) ? 2 : 1);
+          const prev = scored.get(t.id);
+          if (prev) prev.score += add;
+          else scored.set(t.id, { track: t, score: add, seed: seeds[i] });
+        });
+      });
+      const perArtist: Record<string, number> = {};
+      for (const x of [...scored.values()].sort((a, b) => b.score - a.score)) {
+        if (suggestions.length >= 10) break;
+        const a = x.track.artist.toLowerCase();
+        if ((perArtist[a] || 0) >= 2) continue;
+        if (push(x.track, tr('Like "{song}"', { song: x.seed.title }))) perArtist[a] = (perArtist[a] || 0) + 1;
+      }
+      return suggestions;
+    };
 
-      setSuggestedTracks(suggestions.slice(0, 10));
-    } catch {
-      // ignore
-    } finally {
-      setIsLoadingSuggestions(false);
+    const show = () => {
+      if (!isLatest()) return;
+      const list = compose();
+      if (list.length > 0) setSuggestedTracks(list);
+    };
+
+    await Promise.allSettled([
+      ...artistPick.map((a, k) =>
+        fetchArtistTopSongs(a)
+          .then(list => {
+            topLists[k] = list;
+          })
+          .catch(() => {
+            topLists[k] = [];
+          })
+          .finally(show)
+      ),
+      ...seeds.map((s, i) =>
+        fetchSimilarSongs(s.youtubeId!)
+          .then(list => {
+            radios[i] = list;
+          })
+          .catch(() => {
+            radios[i] = [];
+          })
+          .finally(show)
+      ),
+    ]);
+    if (!isLatest()) return;
+
+    let final = compose();
+    // Nothing from YouTube Music at all: search the main artist.
+    if (final.length === 0 && playlistArtists[0]) {
+      const found = await searchRef.current(playlistArtists[0]).catch(() => [] as Track[]);
+      if (!isLatest()) return;
+      final = found
+        .filter(isNew)
+        .slice(0, 10)
+        .map(t => ({ track: t, reason: tr('More from {artist}', { artist: playlistArtists[0] }) }));
     }
-  }, [title, searchYTMusic]);
+    setSuggestedTracks(final);
+    if (final.length > 0) suggestionCache.set(cacheKey, final);
+    setIsLoadingSuggestions(false);
+  }, []);
 
+  // Only when the playlist's songs change (opening it, adding a song) — not on
+  // every player update. Reopening a playlist shows its remembered list.
   useEffect(() => {
-    void fetchSuggestions();
-  }, [fetchSuggestions]);
+    suggestionRoundRef.current = 0;
+    void fetchSuggestions(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playlistKey]);
+  useEffect(
+    () => () => {
+      // Leaving the playlist: drop any answers still on the way.
+      suggestionRunRef.current++;
+    },
+    []
+  );
 
   const handleAddSuggested = (track: Track) => {
     // 1. Persist in local added tracks state so it stays in UI forever

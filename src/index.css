@@ -364,3 +364,29 @@ input[type="range"]::-moz-range-thumb {
   100% { transform: scale(1.35); opacity: 0; }
 }
 
+
+/* Home rows: a thin scrollbar you can see and drag (mouse users can't swipe). */
+.home-row-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-secondary, #888) 45%, transparent) transparent;
+}
+.home-row-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.home-row-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.home-row-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-secondary, #888) 45%, transparent);
+  border-radius: 999px;
+}
+
+/* PC: while a panel edge is being dragged, nothing else (the YouTube video
+   iframe, text) may grab the pointer. */
+body.pc-resizing {
+  cursor: col-resize !important;
+  user-select: none;
+}
+body.pc-resizing iframe {
+  pointer-events: none !important;
+}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { t as tr } from '../i18n';
 import {
   Home,
@@ -24,10 +24,16 @@ import {
   User,
   Tv,
   PictureInPicture2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
 } from 'lucide-react';
+import { usePcLayout, ResizeHandle, SIDEBAR, PLAYER } from './PcLayout';
+import { MiniPlayer } from './MiniPlayer';
 import { PcExtrasBridge } from './PcExtrasBridge';
 import { invokeTauri } from '../utils/miniPlayer';
-import { fetchLyrics } from '../utils/lyrics';
+import { LyricsPanel } from './LyricsPanel';
+import { usePlaylistMenu } from './PlaylistMenu';
 import { useAudio } from '../context/AudioContext';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
@@ -80,27 +86,6 @@ const DesktopNowPlaying: React.FC = () => {
   const [showOptions, setShowOptions] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
   const [showVideo, setShowVideo] = useState(false);
-  const [lyrics, setLyrics] = useState<string | null>(null);
-  const [lyricsLoading, setLyricsLoading] = useState(false);
-
-  // Length of the recording playing; picks the lyrics version that is in time.
-  const songLength = duration > 1 ? Math.round(duration) : 0;
-
-  useEffect(() => {
-    if (!showLyrics || !currentTrack) return;
-    let mounted = true;
-    setLyricsLoading(true);
-    setLyrics(null);
-    fetchLyrics(currentTrack.title, currentTrack.artist, songLength).then(text => {
-      if (mounted) {
-        setLyrics(text);
-        setLyricsLoading(false);
-      }
-    });
-    return () => {
-      mounted = false;
-    };
-  }, [showLyrics, currentTrack, songLength]);
 
   if (!currentTrack) {
     return (
@@ -298,18 +283,8 @@ const DesktopNowPlaying: React.FC = () => {
         </button>
       </div>
 
-      {showLyrics && (
-        <div className="pt-5 min-h-0 flex-1 overflow-y-auto no-scrollbar">
-          <p className="text-xs text-app-secondary pb-2">{tr("LYRICS")}</p>
-          {lyricsLoading ? (
-            <p className="text-sm text-app-secondary py-4">{tr("Loading lyrics...")}</p>
-          ) : lyrics ? (
-            <p className="text-sm text-app-primary whitespace-pre-wrap leading-relaxed">{lyrics}</p>
-          ) : (
-            <p className="text-sm text-app-secondary py-4">{tr("No lyrics found for this song")}</p>
-          )}
-        </div>
-      )}
+      {/* Same lyrics view as the phone: synced, Follow, timing nudge, Copy, Share */}
+      {showLyrics && <LyricsPanel className="mt-3 min-h-0 flex-1" />}
 
       {!showLyrics && (
         <div className="pt-5 min-h-0 flex-1 flex flex-col overflow-y-auto no-scrollbar">
@@ -390,8 +365,10 @@ export const DesktopFrame: React.FC = () => {
     isEqualizerOpen,
     setIsEqualizerOpen,
   } = useAudio();
+  const { layout, update } = usePcLayout();
 
   const [sidebarPlaylistId, setSidebarPlaylistId] = useState<string | null>(null);
+  const playlistMenu = usePlaylistMenu();
 
   const sidebarPlaylist = playlists.find(p => p.id === sidebarPlaylistId) || null;
   const sidebarPlaylistTracks = sidebarPlaylist
@@ -421,9 +398,23 @@ export const DesktopFrame: React.FC = () => {
           className="absolute inset-0 w-full h-full object-cover pointer-events-none -z-10"
         />
       )}
-      {/* Left Navigation */}
-      <aside className="w-56 shrink-0 bg-app-surface border-r border-app-theme flex flex-col p-3">
-        <h1 className="text-2xl font-black px-3 py-5">{tr("Aura Music")}</h1>
+      {/* Left sidebar: drag its edge to resize, or hide it to a slim strip */}
+      {layout.sidebarOpen ? (
+      <aside
+        className="relative shrink-0 bg-app-surface border-r border-app-theme flex flex-col p-3"
+        style={{ width: layout.sidebarWidth }}
+      >
+        <div className="flex items-center justify-between gap-2 pl-3 pr-1 py-5">
+          <h1 className="text-2xl font-black truncate">{tr("Aura Music")}</h1>
+          <button
+            onClick={() => update({ sidebarOpen: false })}
+            className="p-1.5 rounded-lg text-app-secondary hover:text-app-primary hover:bg-app-card shrink-0"
+            title={tr('Hide the sidebar')}
+            aria-label={tr('Hide the sidebar')}
+          >
+            <PanelLeftClose className="w-4 h-4" />
+          </button>
+        </div>
         <div className="space-y-1">
           {navItems.map(item => {
             const Icon = item.icon;
@@ -446,6 +437,7 @@ export const DesktopFrame: React.FC = () => {
         {/* Your Playlists */}
         <div className="mt-6 min-h-0 flex-1 overflow-y-auto no-scrollbar">
           <p className="px-3 pb-2 text-xs font-semibold text-app-secondary">{tr("YOUR PLAYLISTS")}</p>
+          {playlistMenu.element}
           <div className="space-y-1">
             <button
               onClick={() => setSidebarPlaylistId('favorites')}
@@ -462,13 +454,18 @@ export const DesktopFrame: React.FC = () => {
               <button
                 key={pl.id}
                 onClick={() => setSidebarPlaylistId(pl.id)}
+                onContextMenu={e => playlistMenu.open(e, pl, () => setSidebarPlaylistId(pl.id))}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                   sidebarPlaylistId === pl.id
                     ? 'bg-app-card text-app-primary'
                     : 'text-app-secondary hover:text-app-primary'
                 }`}
               >
-                <ListMusic className="w-4 h-4 shrink-0" />
+                {pl.coverUrl ? (
+                  <img src={pl.coverUrl} alt="" className="w-5 h-5 rounded object-cover shrink-0" />
+                ) : (
+                  <ListMusic className="w-4 h-4 shrink-0" />
+                )}
                 <span className="truncate font-semibold">{pl.name}</span>
                 <span className="ml-auto text-xs text-app-secondary">{pl.trackIds.length}</span>
               </button>
@@ -483,26 +480,89 @@ export const DesktopFrame: React.FC = () => {
         <p className="px-3 pt-3 text-[11px] text-app-secondary">
           {tr("Streams via YouTube Music & Invidious")}
         </p>
+        <ResizeHandle
+          edge="right"
+          width={layout.sidebarWidth}
+          limits={SIDEBAR}
+          onResize={w => update({ sidebarWidth: w })}
+          onCollapse={() => update({ sidebarOpen: false })}
+          label={tr('Drag to resize the sidebar')}
+        />
       </aside>
+      ) : (
+        /* Sidebar hidden: a slim strip with the tabs, to bring it back */
+        <aside className="w-14 shrink-0 bg-app-surface border-r border-app-theme flex flex-col items-center gap-1 py-3">
+          <button
+            onClick={() => update({ sidebarOpen: true })}
+            className="p-2.5 mb-2 rounded-lg text-app-secondary hover:text-app-primary hover:bg-app-card"
+            title={tr('Show the sidebar')}
+            aria-label={tr('Show the sidebar')}
+          >
+            <PanelLeftOpen className="w-5 h-5" />
+          </button>
+          {navItems.map(item => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`p-2.5 rounded-lg transition-colors ${
+                  isActive ? 'bg-app-card text-app-accent' : 'text-app-secondary hover:text-app-primary'
+                }`}
+                title={item.label}
+                aria-label={item.label}
+              >
+                <Icon className="w-5 h-5" />
+              </button>
+            );
+          })}
+        </aside>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 min-w-0 flex flex-col overflow-hidden relative">
-        {activeTab === 'home' && <HomeView />}
-        {activeTab === 'search' && <SearchView />}
-        {activeTab === 'library' && <LibraryView />}
-        {activeTab === 'settings' && <SettingsView />}
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
+          {activeTab === 'home' && <HomeView />}
+          {activeTab === 'search' && <SearchView />}
+          {activeTab === 'library' && <LibraryView />}
+          {activeTab === 'settings' && <SettingsView />}
 
-        {downloadStatus && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[70] px-4 py-2.5 rounded-2xl bg-app-card border border-app-theme text-app-primary text-xs font-mono font-bold shadow-2xl max-w-[80%] text-center">
-            {downloadStatus}
-          </div>
-        )}
+          {downloadStatus && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[70] px-4 py-2.5 rounded-2xl bg-app-card border border-app-theme text-app-primary text-xs font-mono font-bold shadow-2xl max-w-[80%] text-center">
+              {downloadStatus}
+            </div>
+          )}
+        </div>
+        {/* Player panel hidden: the phone-style bar at the bottom instead */}
+        {!layout.playerOpen && <MiniPlayer onShowPanel={() => update({ playerOpen: true })} />}
       </main>
 
-      {/* Right Now Playing Panel */}
-      <aside className="w-80 shrink-0 bg-app-surface border-l border-app-theme overflow-hidden">
-        <DesktopNowPlaying />
-      </aside>
+      {/* Right player panel: drag its edge to resize, or hide it (the bottom bar takes over) */}
+      {layout.playerOpen && (
+        <aside
+          className="relative shrink-0 bg-app-surface border-l border-app-theme overflow-hidden"
+          style={{ width: layout.playerWidth }}
+        >
+          <ResizeHandle
+            edge="left"
+            width={layout.playerWidth}
+            limits={PLAYER}
+            onResize={w => update({ playerWidth: w })}
+            onCollapse={() => update({ playerOpen: false })}
+            label={tr('Drag to resize the player')}
+          />
+          <button
+            onClick={() => update({ playerOpen: false })}
+            className="absolute top-2 right-2 z-20 p-1.5 rounded-lg text-app-secondary hover:text-app-primary hover:bg-app-card"
+            title={tr('Hide the player panel')}
+            aria-label={tr('Hide the player panel')}
+          >
+            <PanelRightClose className="w-4 h-4" />
+          </button>
+          <DesktopNowPlaying />
+        </aside>
+      )}
 
       {/* Playlist Overlay (from sidebar) */}
       {sidebarPlaylistId && (
@@ -521,7 +581,7 @@ export const DesktopFrame: React.FC = () => {
             <PlaylistDetailView
               title={sidebarPlaylist.name}
               subtitle={sidebarPlaylist.description || 'Playlist'}
-              coverUrl={sidebarPlaylistTracks[0]?.coverUrl}
+              coverUrl={sidebarPlaylist.coverUrl || sidebarPlaylistTracks[0]?.coverUrl}
               tracks={sidebarPlaylistTracks}
               onBack={() => setSidebarPlaylistId(null)}
               onDownloadAll={() => downloadPlaylist(sidebarPlaylist.name, sidebarPlaylistTracks, sidebarPlaylist.id)}

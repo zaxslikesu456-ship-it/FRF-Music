@@ -7,10 +7,12 @@ import {
   searchYouTubeMusicVideos,
   searchYouTubeMusicArtists,
   loadMoreSearchResults,
-  fetchArtistTopSongs,
+  fetchArtistPage,
+  type ArtistPage,
 } from '../utils/ytMusicApi';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
 import type { Track } from '../types/music';
+import { getArtistBio, type ArtistBio } from '../utils/artistBio';
 
 interface ArtistDetailViewProps {
   artistName: string;
@@ -54,6 +56,10 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
   const [extraTracks, setExtraTracks] = useState<Track[]>([]);
   const [videos, setVideos] = useState<Track[]>([]);
   const [topSongs, setTopSongs] = useState<Track[]>([]);
+  // About: description (YouTube Music, or Wikipedia when that is only a link) and audience numbers.
+  const [about, setAbout] = useState<ArtistPage | null>(null);
+  const [bio, setBio] = useState<ArtistBio | null>(null);
+  const [bioOpen, setBioOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [menuTrack, setMenuTrack] = useState<Track | null>(null);
   // Header: the artist's photo, wide, fading and drifting as the page scrolls.
@@ -92,9 +98,17 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
         if (mounted) setLoading(false);
       });
     setTopSongs([]);
-    fetchArtistTopSongs(artistName)
-      .then(results => {
-        if (mounted) setTopSongs(results || []);
+    setAbout(null);
+    setBio(null);
+    setBioOpen(false);
+    fetchArtistPage(artistName)
+      .then(page => {
+        if (!mounted || !page) return;
+        setTopSongs(page.topSongs);
+        setAbout(page);
+        return getArtistBio(page.name, page.description).then(b => {
+          if (mounted) setBio(b);
+        });
       })
       .catch(() => {});
     searchYouTubeMusicVideos(artistName)
@@ -268,6 +282,47 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* About the artist */}
+      {(bio || about?.monthlyAudience || about?.subscribers) && (
+        <div className="px-5 pb-6">
+          <h2 className="text-xl font-bold text-app-primary pb-2">{tr('About')}</h2>
+          {(about?.monthlyAudience || about?.subscribers || about?.views) && (
+            <p className="text-sm text-app-secondary pb-2">
+              {[about?.monthlyAudience, about?.subscribers && tr('{count} subscribers', { count: about.subscribers }), about?.views]
+                .filter(Boolean)
+                .join(' • ')}
+            </p>
+          )}
+          {bio && (
+            <>
+              <p
+                className={`text-sm text-app-primary leading-relaxed whitespace-pre-line select-text ${bioOpen ? '' : 'line-clamp-4'}`}
+                style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+              >
+                {bio.text}
+              </p>
+              <div className="flex items-center gap-4 pt-1.5">
+                {bio.text.length > 260 && (
+                  <button onClick={() => setBioOpen(v => !v)} className="text-sm font-semibold text-app-primary hover:underline">
+                    {bioOpen ? tr('Show less') : tr('Show more')}
+                  </button>
+                )}
+                {bio.source === 'wikipedia' && bio.url && (
+                  <a
+                    href={bio.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-app-secondary hover:text-app-primary hover:underline"
+                  >
+                    {tr('From Wikipedia')}
+                  </a>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Liked Songs by Artist */}
       {likedSongsByArtist.length > 0 && (

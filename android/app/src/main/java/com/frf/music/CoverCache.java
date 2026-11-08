@@ -59,6 +59,17 @@ final class CoverCache {
 
     /** Cached bitmap if present, otherwise fetch it (and cache it). Blocking. */
     static Bitmap load(Context context, String url) {
+        // A picture the user chose for a song is stored in the app as a data
+        // URL (data:image/jpeg;base64,...); decode it directly.
+        if (url != null && url.startsWith("data:image")) {
+            try {
+                int comma = url.indexOf(',');
+                byte[] bytes = android.util.Base64.decode(url.substring(comma + 1), android.util.Base64.DEFAULT);
+                return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            } catch (Exception e) {
+                return null;
+            }
+        }
         File file = ensureFile(context, url);
         if (file == null) return null;
         Bitmap bmp = BitmapFactory.decodeFile(file.getPath());

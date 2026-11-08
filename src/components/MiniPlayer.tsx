@@ -1,9 +1,11 @@
 import React, { useRef, useState } from 'react';
 import { t as tr } from '../i18n';
-import { Play, Pause, SkipForward, Loader2, X } from 'lucide-react';
+import { Play, Pause, SkipForward, Loader2, X, PanelRightOpen } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 
-export const MiniPlayer: React.FC = () => {
+// onShowPanel: on PC, when the side player is hidden this bar stands in for it,
+// with a button to bring the side player back.
+export const MiniPlayer: React.FC<{ onShowPanel?: () => void }> = ({ onShowPanel }) => {
   const {
     currentTrack,
     isPlaying,
@@ -96,6 +98,16 @@ export const MiniPlayer: React.FC = () => {
         <button onClick={nextTrack} className="p-1.5 text-app-primary" title={tr("Next")}>
           <SkipForward className="w-6 h-6 fill-current" />
         </button>
+
+        {onShowPanel && (
+          <button
+            onClick={onShowPanel}
+            className="p-1.5 text-app-secondary hover:text-app-primary transition-colors"
+            title={tr("Show the player panel")}
+          >
+            <PanelRightOpen className="w-5 h-5" />
+          </button>
+        )}
 
         {/* Take off / Close current song button */}
         <button

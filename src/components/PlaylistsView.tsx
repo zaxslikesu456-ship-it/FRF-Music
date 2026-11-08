@@ -112,7 +112,7 @@ export const PlaylistsView: React.FC = () => {
       <PlaylistDetailView
         title={title}
         subtitle={desc}
-        coverUrl={playlistTracks[0]?.coverUrl}
+        coverUrl={selectedPlaylist?.coverUrl || playlistTracks[0]?.coverUrl}
         tracks={playlistTracks}
         onBack={back}
         playlistId={isFavView ? undefined : selectedPlaylistId}

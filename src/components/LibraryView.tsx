@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
+import { usePlaylistMenu } from './PlaylistMenu';
 import { PlaylistDetailView } from './PlaylistDetailView';
 import { ArtistDetailView } from './ArtistDetailView';
 import { LikedMusicView } from './LikedMusicView';
@@ -53,6 +54,8 @@ const formatDuration = (secs: number) => {
 };
 
 export const LibraryView: React.FC = () => {
+  // Right-click (long press on phones) a playlist: open, play, shuffle, rename, delete.
+  const playlistMenu = usePlaylistMenu();
   const {
     tracks,
     playlists,
@@ -205,7 +208,7 @@ export const LibraryView: React.FC = () => {
         <PlaylistDetailView
           title={pl.name}
           subtitle={pl.description || 'Playlist'}
-          coverUrl={plTracks[0]?.coverUrl}
+          coverUrl={pl.coverUrl || plTracks[0]?.coverUrl}
           tracks={plTracks}
           onBack={back}
           playlistId={pl.id}
@@ -434,18 +437,20 @@ export const LibraryView: React.FC = () => {
 
           {playlists.length > 0 && (
             <div className="grid grid-cols-2 gap-x-6 gap-y-8 mt-10">
+              {playlistMenu.element}
               {playlists.map(pl => {
                 const first = tracks.find(t => pl.trackIds.includes(t.id));
                 return (
                   <button
                     key={pl.id}
                     onClick={() => setSubView({ kind: 'playlist', id: pl.id })}
+                    onContextMenu={e => playlistMenu.open(e, pl, () => setSubView({ kind: 'playlist', id: pl.id }))}
                     className="text-left"
                   >
                     <div className="aspect-square rounded-2xl bg-app-card overflow-hidden flex items-center justify-center">
-                      {first?.coverUrl ? (
+                      {pl.coverUrl || first?.coverUrl ? (
                         <img
-                          src={first.coverUrl}
+                          src={pl.coverUrl || first?.coverUrl}
                           alt={pl.name}
                           className="w-full h-full object-cover"
                         />

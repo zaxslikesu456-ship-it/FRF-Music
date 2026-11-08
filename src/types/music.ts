@@ -21,6 +21,8 @@ export interface Playlist {
   description?: string;
   trackIds: string[];
   createdAt: number;
+  /** A picture you chose for the playlist (data URL); otherwise its first song's cover. */
+  coverUrl?: string;
 }
 
 export interface CommunityPlaylist {

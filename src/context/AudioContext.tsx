@@ -260,6 +260,8 @@ interface AudioContextType {
   playTrack: (track: Track) => void;
   playQueue: (list: Track[], startIndex?: number) => void;
   playWithArtistTop: (track: Track, fallbackList?: Track[]) => void;
+  setTrackCover: (track: Track, cover: string | null) => void;
+  setPlaylistCover: (playlistId: string, cover: string | null) => void;
   setVideoCompanion: (on: boolean) => void;
   addToQueue: (track: Track, position?: 'next' | 'last') => void;
   reorderQueue: (from: number, to: number) => void;
@@ -3132,7 +3134,78 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     startOnline();
   };
 
-  const playTrack = (track: Track) => {
+  // Your own picture for a song (or back to the original). The picture is
+  // written onto the song everywhere it is kept, and the original remembered;
+  // songs arriving fresh from a search get it when they start playing.
+  const CUSTOM_COVERS_KEY = 'frf_custom_covers_v1';
+  const ORIGINAL_COVERS_KEY = 'frf_original_covers_v1';
+  const readCoverMap = (key: string): Record<string, string> => {
+    try {
+      return JSON.parse(localStorage.getItem(key) || '{}');
+    } catch {
+      return {};
+    }
+  };
+  const withCustomCover = (t: Track, map = readCoverMap(CUSTOM_COVERS_KEY)): Track =>
+    map[t.id] && t.coverUrl !== map[t.id] ? { ...t, coverUrl: map[t.id] } : t;
+
+  const setTrackCover = (track: Track, cover: string | null) => {
+    const id = track.id;
+    const custom = readCoverMap(CUSTOM_COVERS_KEY);
+    const originals = readCoverMap(ORIGINAL_COVERS_KEY);
+    if (cover) {
+      if (!(id in originals)) originals[id] = track.coverUrl || '';
+      custom[id] = cover;
+    } else {
+      delete custom[id];
+    }
+    const url = cover || originals[id] || track.coverUrl || '';
+    if (!cover) delete originals[id];
+    try {
+      localStorage.setItem(CUSTOM_COVERS_KEY, JSON.stringify(custom));
+      localStorage.setItem(ORIGINAL_COVERS_KEY, JSON.stringify(originals));
+    } catch {
+      showStatus('Not enough space to save this picture', 4000);
+      return;
+    }
+    const swap = (t: Track) => (t.id === id ? { ...t, coverUrl: url } : t);
+    const saveList = (key: string, list: Track[]) => {
+      try {
+        localStorage.setItem(key, JSON.stringify(list));
+      } catch {
+        // storage full: still shown this session
+      }
+    };
+    setTracks(prev => prev.map(swap));
+    setFavoriteTracks(prev => {
+      const u = prev.map(swap);
+      saveList('bw_music_favorite_objects_v1', u);
+      return u;
+    });
+    setDownloadedTracks(prev => {
+      const u = prev.map(swap);
+      saveList('bw_music_downloaded_objects_v11', u);
+      return u;
+    });
+    setRecentlyPlayed(prev => {
+      const u = prev.map(swap);
+      saveList('bw_music_recently_played_v2', u);
+      return u;
+    });
+    setTrackStore(prev => ({ ...prev, [id]: { ...(prev[id] || track), coverUrl: url } }));
+    setQueue(prev => prev.map(swap));
+    setCurrentTrack(prev => (prev && prev.id === id ? { ...prev, coverUrl: url } : prev));
+  };
+
+  // Your own picture for a playlist (null = back to its first song's cover).
+  const setPlaylistCover = (playlistId: string, cover: string | null) => {
+    setPlaylists(prev =>
+      prev.map(p => (p.id === playlistId ? { ...p, coverUrl: cover || undefined } : p))
+    );
+  };
+
+  const playTrack = (picked: Track) => {
+    const track = withCustomCover(picked);
     if (currentTrack?.id === track.id && !needsLoadRef.current) {
       togglePlay();
       return;
@@ -3216,8 +3289,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const playQueue = (list: Track[], startIndex = 0) => {
-    if (!list || list.length === 0) return;
+  const playQueue = (picked: Track[], startIndex = 0) => {
+    if (!picked || picked.length === 0) return;
+    const covers = readCoverMap(CUSTOM_COVERS_KEY);
+    const list = picked.map(t => withCustomCover(t, covers));
     setQueue(list);
     const safeIndex = Math.max(0, Math.min(startIndex, list.length - 1));
     playTrack(list[safeIndex]);
@@ -4287,6 +4362,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         playTrack,
         playQueue,
         playWithArtistTop,
+        setTrackCover,
+        setPlaylistCover,
         setVideoCompanion,
         addToQueue,
         reorderQueue,

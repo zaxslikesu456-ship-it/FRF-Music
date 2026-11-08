@@ -16,7 +16,10 @@ import {
   Timer,
   Info,
   ExternalLink,
+  ImagePlus,
+  ImageOff,
 } from 'lucide-react';
+import { pickImage } from '../utils/pickImage';
 import { useAudio } from '../context/AudioContext';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
 import type { Track } from '../types/music';
@@ -55,6 +58,14 @@ const MenuItem: React.FC<{
   </div>
 );
 
+const hasCustomCover = (trackId: string): boolean => {
+  try {
+    return Boolean(JSON.parse(localStorage.getItem('frf_custom_covers_v1') || '{}')[trackId]);
+  } catch {
+    return false;
+  }
+};
+
 export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
   track,
   onClose,
@@ -74,6 +85,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
     sleepTimerMinutes,
     sleepEndOfSong,
     setSleepTimer,
+    setTrackCover,
   } = useAudio();
 
   const [showPlaylistModal, setShowPlaylistModal] = useState(false);
@@ -371,6 +383,27 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
                   onClose();
                 }}
               />
+
+              {/* Your own picture for this song */}
+              <MenuItem
+                icon={<ImagePlus className="w-6 h-6" />}
+                label={tr('Change picture')}
+                onClick={async () => {
+                  const picture = await pickImage();
+                  if (picture) setTrackCover(track, picture);
+                  onClose();
+                }}
+              />
+              {hasCustomCover(track.id) && (
+                <MenuItem
+                  icon={<ImageOff className="w-6 h-6" />}
+                  label={tr('Use original picture')}
+                  onClick={() => {
+                    setTrackCover(track, null);
+                    onClose();
+                  }}
+                />
+              )}
 
               {/* Liked / Favorite Option */}
               <MenuItem
