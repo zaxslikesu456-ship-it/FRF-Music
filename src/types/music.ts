@@ -98,6 +98,7 @@ export interface SettingsState {
   autoPlayNext: boolean;
   eqRememberPerDevice?: boolean; // remember an equalizer preset for each headphone
   eqPerDevice?: Record<string, EqualizerSettings>;
+  eqCustomPresets?: { id: string; name: string; bands: number[]; bassBoost: number; surround: number }[];
   normalizeVolume?: boolean;
   albumArtColors?: boolean; // tint Now Playing / mini player / PC player with the cover's colour (default on)
   albumArtAccent?: boolean; // use the cover's colour as the app accent while a song plays (default off)

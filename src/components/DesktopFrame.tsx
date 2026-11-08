@@ -143,14 +143,14 @@ const DesktopNowPlaying: React.FC = () => {
         <div className="relative w-full max-w-[260px] mx-auto aspect-square rounded-full shadow-2xl border-4 border-app-card overflow-hidden">
           {/* The shadow and border stay still on the frame; only the picture turns,
               on its own layer. Rotating them all redrew the shadow every frame and
-              kept a third of a CPU core busy for as long as a song played. It turns
-              in 144 small steps (12 a second): the slow turn looks the same and
-              costs about a third as much. */}
+              kept a third of a CPU core busy for as long as a song played. The turn
+              itself is a plain smooth rotation on the graphics card (stepping it
+              made it look choppy). */}
           <img
             src={currentTrack.coverUrl}
             alt={currentTrack.title}
-            className={`w-full h-full object-cover rounded-full will-change-transform pause-when-hidden ${
-              isPlaying ? 'animate-[spin_12s_steps(144)_infinite]' : ''
+            className={`w-full h-full object-cover rounded-full will-change-transform backface-hidden pause-when-hidden ${
+              isPlaying ? 'animate-[spin_12s_linear_infinite]' : ''
             }`}
           />
           <div className="absolute inset-0 m-auto w-9 h-9 rounded-full bg-app-primary border-2 border-app-card" />

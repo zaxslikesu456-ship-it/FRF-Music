@@ -397,3 +397,5 @@ html.app-hidden .pause-when-hidden,
 html.app-hidden .pause-when-hidden * {
   animation-play-state: paused !important;
 }
+
+.backface-hidden { backface-visibility: hidden; transform: translateZ(0); }
