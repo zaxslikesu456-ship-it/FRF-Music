@@ -33,6 +33,7 @@ import { MiniPlayer } from './MiniPlayer';
 import { PcExtrasBridge } from './PcExtrasBridge';
 import { invokeTauri } from '../utils/miniPlayer';
 import { LyricsPanel } from './LyricsPanel';
+import { CastButton, CastingLabel } from './CastButton';
 import { usePlaylistMenu } from './PlaylistMenu';
 import { useAudio } from '../context/AudioContext';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
@@ -286,7 +287,9 @@ const DesktopNowPlaying: React.FC = () => {
         >
           <PictureInPicture2 className="w-4 h-4" />
         </button>
+        <CastButton className="text-app-secondary hover:text-app-primary shrink-0" iconClassName="w-4 h-4" />
       </div>
+      <CastingLabel className="pt-3" />
 
       {/* Same lyrics view as the phone: synced, Follow, timing nudge, Copy, Share */}
       {showLyrics && <LyricsPanel className="mt-3 min-h-0 flex-1" />}

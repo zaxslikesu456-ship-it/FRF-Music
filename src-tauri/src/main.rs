@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio_proxy;
+mod cast;
 mod pc_extras;
 mod po_token;
 
@@ -18,7 +19,14 @@ fn main() {
         .manage(po_token::PotState::default())
         .invoke_handler(tauri::generate_handler![po_token::mint_po_token,
             pc_extras::toggle_mini_player,
-            pc_extras::show_main_window
+            pc_extras::show_main_window,
+            cast::cast_lan_info,
+            cast::cast_udp_query,
+            cast::cast_open,
+            cast::cast_send,
+            cast::cast_recv,
+            cast::cast_close,
+            cast::cast_media_serve
         ])
         // YouTube audio served through the app so the equalizer can process it
         // (see audio_proxy.rs). The page reaches it at http://frfaudio.localhost/.

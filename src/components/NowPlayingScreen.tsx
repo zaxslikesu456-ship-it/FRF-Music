@@ -34,6 +34,7 @@ import {
 import { createPortal } from 'react-dom';
 import { Capacitor } from '@capacitor/core';
 import { LyricsPanel } from './LyricsPanel';
+import { CastButton, CastingLabel } from './CastButton';
 import { useAudio } from '../context/AudioContext';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
@@ -363,6 +364,8 @@ export const NowPlayingScreen: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1">
+            {/* Play on a TV */}
+            <CastButton className="p-2 text-app-secondary hover:text-app-primary hover:scale-105 active:scale-95 transition-all" />
             {/* Equalizer & Sound FX */}
             <button
               onClick={() => setIsEqualizerOpen(true)}
@@ -563,6 +566,7 @@ export const NowPlayingScreen: React.FC = () => {
             >
               {currentTrack.artist}
             </button>
+            <CastingLabel className="!justify-start mt-1" />
           </div>
 
           <div className="flex items-center gap-1 shrink-0">

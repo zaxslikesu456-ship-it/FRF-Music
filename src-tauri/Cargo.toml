@@ -13,7 +13,10 @@ tauri = { version = "2", features = ["tray-icon", "image-ico", "image-png"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
 serde_json = "1"
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["sync", "time", "net", "io-util", "fs"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+socket2 = { version = "0.6", features = ["all"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
 
 [profile.release]

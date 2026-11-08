@@ -45,6 +45,15 @@ import { normalizationGainDb } from '../utils/loudness';
 import { nativeCover } from '../utils/cover';
 import { getArtColors, type ArtColors } from '../utils/artColors';
 import { isTauriRuntime } from '../utils/http';
+import {
+  castContentType,
+  castSupported,
+  connectCastDevice,
+  mediaServe,
+  type CastDevice,
+  type CastSession,
+  type CastStatus,
+} from '../utils/cast';
 import { logPlayStart, logListened, flushListening, getListeningLog, replaceListeningLog } from '../utils/listening';
 import { mergeSync, type SyncData, type SyncLocal, type SyncSummary } from '../utils/deviceSync';
 import { Capacitor, registerPlugin } from '@capacitor/core';
@@ -166,6 +175,7 @@ const IS_ANDROID = Capacitor.isNativePlatform() && Capacitor.getPlatform() === '
 const IS_IOS = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios';
 // The Windows desktop app (Tauri).
 const IS_DESKTOP_APP = isTauriRuntime();
+const CAST_AVAILABLE = castSupported();
 
 // On the desktop app an online stream is played through the app's own
 // "frfaudio" scheme (src-tauri/src/audio_proxy.rs). Played directly, the browser
@@ -249,6 +259,12 @@ interface AudioContextType {
   /** Colours picked from the current song's cover (null when unknown or turned off). */
   artColors: ArtColors | null;
   outputDevice: OutputDevice | null;
+  /** The TV the music is playing on (null: playing on this device). */
+  castDevice: CastDevice | null;
+  /** Casting works in this build (Android and Windows apps). */
+  castAvailable: boolean;
+  startCasting: (device: CastDevice) => Promise<void>;
+  stopCasting: () => Promise<void>;
   sleepSecondsRemaining: number | null;
   settings: SettingsState;
   analyserNode: SpectrumSource | null;
@@ -870,6 +886,18 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Where the sound goes (Android): a named Bluetooth headset, wired, USB or the
   // speaker. Each can have its own equalizer preset.
   const [outputDevice, setOutputDevice] = useState<OutputDevice | null>(null);
+
+  // Casting to a TV. While a session is open every play/pause/seek goes to the
+  // TV and this device stays silent; the queue is still run from here.
+  const [castDevice, setCastDevice] = useState<CastDevice | null>(null);
+  const castSessionRef = useRef<CastSession | null>(null);
+  // Which song the TV has (null: nothing loaded yet), and a counter per load so
+  // an "ended" report acts once.
+  const castTrackIdRef = useRef<string | null>(null);
+  const castLoadIdRef = useRef(0);
+  const castHandledLoadRef = useRef(-1);
+  const castLoadingRef = useRef(0);
+  const castCommandAtRef = useRef(0);
   useEffect(() => {
     if (!BackgroundAudio || Capacitor.getPlatform() !== 'android') return;
     let alive = true;
@@ -1113,6 +1141,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const videoId = activeYoutubeIdRef.current || track.youtubeId;
         if (!videoId) return;
         if (nativeOwnerRef.current) return;
+        if (castSessionRef.current) return;
         if (handoverResolveInFlightRef.current) return;
         handoverResolveInFlightRef.current = true;
         void resolveAudioStreamUrl(videoId, true)
@@ -1141,6 +1170,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // service to seek again, which emits remoteSeek again — an endless
           // ping-pong between Java and JS.
           latestActionsRef.current?.applyPosition?.(data.position);
+          if (castSessionRef.current) {
+            castCommandAtRef.current = Date.now();
+            void castSessionRef.current.seek(data.position).catch(() => {});
+          }
         }
       }),
       (BackgroundAudio as any).addListener('visualizerFrame', (data: { bins?: string }) => {
@@ -2040,6 +2073,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // ExoPlayer pushes progress through playbackProgress events; polling the
       // WebView engines here would fight it with stale iframe positions.
       if (nativeOwnerRef.current) return;
+      // On a TV the time comes from the TV (see onCastStatusRef).
+      if (castSessionRef.current) return;
       // Don't fight the user while they're seeking
       if (Date.now() - lastSeekAtRef.current < 1200) return;
       const audioMode = isAudioMode(currentTrack);
@@ -2100,9 +2135,14 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCurrentTime(curr);
       webCrossfadeRef.current.maybeStart(audio);
     };
-    const handleLoadedMetadata = () => setDuration(audio.duration || 0);
-    const handleAudioEnded = () => latestActionsRef.current.handleEnded();
+    const handleLoadedMetadata = () => {
+      if (!castSessionRef.current) setDuration(audio.duration || 0);
+    };
+    const handleAudioEnded = () => {
+      if (!castSessionRef.current) latestActionsRef.current.handleEnded();
+    };
     const handleAudioError = () => {
+      if (castSessionRef.current) return;
       const track = currentTrackRef.current;
       if (
         track?.isYouTube &&
@@ -2155,6 +2195,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Pauses every engine for the sleep timer (fade already done). Native: pause and
   // rewind so Play starts the song again rather than sitting at its very end.
   const pauseForSleep = (rewindNative: boolean) => {
+    if (castSessionRef.current) {
+      castCommandAtRef.current = Date.now();
+      void castSessionRef.current.pause().catch(() => {});
+    }
     try {
       ytPlayerRef.current?.pauseVideo?.();
     } catch {
@@ -2571,6 +2615,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     url: string
   ): Promise<{ handedOver: boolean; hardFail: boolean; msg?: string }> => {
     if (!BackgroundAudio?.playUrl) return { handedOver: false, hardFail: true };
+    if (castSessionRef.current) return { handedOver: false, hardFail: false };
     const startAt = Math.max(0, getCurrentPosition());
     const res = await playNativeConfirmed(track, url, startAt);
     if (!res.ok) {
@@ -2635,6 +2680,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const resumeFromRemote = () => {
     const track = currentTrackRef.current;
     if (!track) return;
+    if (castSessionRef.current) {
+      if (!isPlayingRef.current) latestActionsRef.current.togglePlay();
+      return;
+    }
     if (nativeOwnerRef.current && BackgroundAudio?.resume) {
       void BackgroundAudio.resume().catch(() => {});
       setIsPlaying(true);
@@ -2674,6 +2723,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const pauseFromRemote = () => {
     const track = currentTrackRef.current;
     if (!track) return;
+    if (castSessionRef.current) {
+      if (isPlayingRef.current) latestActionsRef.current.togglePlay();
+      return;
+    }
     if (nativeOwnerRef.current && BackgroundAudio?.pause) {
       void BackgroundAudio.pause().catch(() => {});
       setIsPlaying(false);
@@ -2704,6 +2757,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const playAudioUrl = (track: Track, url: string, startTime = 0) => {
     const currentGen = playGenRef.current;
+    if (castSessionRef.current) return playOnTv(track, url, startTime, currentGen);
 
     // Stop YouTube iframe to ensure no dual playback
     const stopIframe = () => {
@@ -2888,6 +2942,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const stopTrack = () => {
+    if (castSessionRef.current) {
+      castTrackIdRef.current = null;
+      void castSessionRef.current.pause().catch(() => {});
+    }
     stopAllPlayback();
     setIsPlaying(false);
     setCurrentTrack(null);
@@ -3166,6 +3224,233 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     startOnline();
   };
 
+  // ---- Casting to a TV ----------------------------------------------------
+  // The TV plays one song at a time from the app's own little server (it cannot
+  // open YouTube's stream address itself). Everything else, the queue, repeat,
+  // shuffle, the sleep timer, keeps running here.
+
+  // Android: the notification and lock screen keep showing the song while the
+  // phone itself is silent.
+  const lastCastNotifyRef = useRef(0);
+  const syncCastNotification = (playing: boolean) => {
+    if (!IS_ANDROID || !castSessionRef.current) return;
+    lastCastNotifyRef.current = Date.now();
+    const t = currentTrackRef.current;
+    const api = BackgroundAudio as unknown as { update?: (o: Record<string, unknown>) => Promise<void> };
+    void api?.update?.({
+      title: t?.title || 'FRF Music',
+      artist: t?.artist || '',
+      coverUrl: t ? nativeCover(t.coverUrl) : undefined,
+      isPlaying: playing,
+      position: positionRef.current || 0,
+      duration: t?.duration || 0,
+    })?.catch(() => {});
+  };
+
+  const setNativeCastMode = (on: boolean, playing = false) => {
+    if (!IS_ANDROID) return Promise.resolve();
+    const t = currentTrackRef.current;
+    const api = BackgroundAudio as unknown as { setCastMode?: (o: Record<string, unknown>) => Promise<void> };
+    return (
+      api?.setCastMode?.({
+        on,
+        ...(on && t
+          ? {
+              title: t.title,
+              artist: t.artist,
+              coverUrl: nativeCover(t.coverUrl),
+              isPlaying: playing,
+              position: positionRef.current || 0,
+              duration: t.duration || 0,
+            }
+          : {}),
+      }) || Promise.resolve()
+    ).catch(() => {});
+  };
+
+  // Where the TV gets the song: a downloaded file on the phone, or the stream.
+  const castSourceFor = async (track: Track, url: string): Promise<{ src: string; type: string }> => {
+    let path = '';
+    if (IS_ANDROID) {
+      path = getOfflineRecord(track.id)?.path || '';
+      const local = /^https?:\/\/localhost\/_capacitor_file_(\/.*)$/.exec(url);
+      if (!path && local) path = decodeURIComponent(local[1]);
+      if (!path && url.startsWith('file://')) path = decodeURIComponent(url.slice(7));
+    }
+    if (path) {
+      const type = castContentType(path);
+      return { src: await mediaServe({ path, contentType: type }), type };
+    }
+    let stream = url;
+    const appOnly = /^https?:\/\/([a-z0-9.-]*\.)?localhost(:\d+)?\//i.test(stream);
+    if (!/^https?:\/\//i.test(stream) || appOnly) {
+      // A song saved inside the app (PC) or a blob: stream it from YouTube instead.
+      const vid = youtubePlaybackOverridesRef.current[track.id] || track.youtubeId;
+      if (!track.isYouTube || !vid) throw new Error('This song is only on this device and cannot play on the TV');
+      stream = await resolveAudioStreamUrl(vid);
+    }
+    const type = castContentType(stream);
+    return { src: await mediaServe({ url: stream, contentType: type }), type };
+  };
+
+  const castCoverFor = async (track: Track, kind: CastDevice['kind']): Promise<string | undefined> => {
+    const cover = nativeCover(track.coverUrl);
+    if (!cover || !/^https?:\/\//i.test(cover)) return undefined;
+    // Cast devices load pictures from the internet themselves; many DLNA TVs
+    // cannot open https, so they get the picture from the app.
+    if (kind === 'chromecast') return cover;
+    return mediaServe({ url: cover, contentType: 'image/jpeg' }).catch(() => undefined);
+  };
+
+  const playOnTv = async (track: Track, url: string, startTime: number, gen: number): Promise<void> => {
+    const tv = castSessionRef.current;
+    if (!tv) return;
+    nativeOwnerRef.current = false;
+    audioModeTrackIdRef.current = track.id;
+    try {
+      ytPlayerRef.current?.stopVideo?.();
+    } catch {
+      // ignore
+    }
+    audioRef.current?.pause();
+    castLoadingRef.current = gen;
+    castTrackIdRef.current = null;
+    try {
+      const { src, type } = await castSourceFor(track, url);
+      if (playGenRef.current !== gen || castSessionRef.current !== tv) return;
+      const coverUrl = await castCoverFor(track, tv.device.kind);
+      await tv.load({
+        url: src,
+        contentType: type,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        coverUrl,
+        duration: track.duration || undefined,
+        startTime,
+      });
+      if (playGenRef.current !== gen || castSessionRef.current !== tv) return;
+      castLoadIdRef.current += 1;
+      castTrackIdRef.current = track.id;
+      hasPlayedRef.current = true;
+      castCommandAtRef.current = Date.now();
+      setIsPlaying(true);
+      if (track.duration) setDuration(track.duration);
+      syncCastNotification(true);
+    } catch (e) {
+      if (playGenRef.current === gen && castSessionRef.current === tv) {
+        showStatus(String((e as Error)?.message || 'The TV could not play this song'), 5000);
+      }
+      throw e;
+    } finally {
+      if (castLoadingRef.current === gen) castLoadingRef.current = 0;
+    }
+  };
+
+  const endCasting = async (reason: string | null, resumeHere: boolean) => {
+    const tv = castSessionRef.current;
+    if (!tv) return;
+    const track = currentTrackRef.current;
+    const at = positionRef.current || 0;
+    const wasPlaying = isPlayingRef.current;
+    castSessionRef.current = null;
+    castTrackIdRef.current = null;
+    castLoadingRef.current = 0;
+    playGenRef.current += 1; // drops a song still on its way to the TV
+    setCastDevice(null);
+    await tv.stop().catch(() => {});
+    await setNativeCastMode(false);
+    if (reason) showStatus(reason, 4000);
+    if (track && resumeHere && wasPlaying) {
+      startTrack(track, at);
+    } else {
+      setIsPlaying(false);
+      positionRef.current = at;
+      if (track) needsLoadRef.current = true;
+    }
+  };
+
+  const startCasting = async (device: CastDevice) => {
+    if (castSessionRef.current?.device.id === device.id) return;
+    if (castSessionRef.current) await endCasting(null, false);
+    const session = await connectCastDevice(device); // errors go to the device picker
+    const track = currentTrackRef.current;
+    const resumeAt = positionRef.current || 0;
+    const wasPlaying = isPlayingRef.current;
+    cancelWebCrossfade();
+    stopAllPlayback();
+    castSessionRef.current = session;
+    castTrackIdRef.current = null;
+    castHandledLoadRef.current = -1;
+    castVolumeRef.current = volumeRef.current;
+    setCastDevice(device);
+    await setNativeCastMode(true, wasPlaying);
+    showStatus(`Playing on ${device.name}`, 3000);
+    if (track && (wasPlaying || needsLoadRef.current)) {
+      needsLoadRef.current = false;
+      if (wasPlaying) startTrack(track, resumeAt);
+      else positionRef.current = resumeAt || LAST_SESSION.position || 0;
+    } else {
+      setIsPlaying(false);
+      positionRef.current = resumeAt;
+    }
+  };
+
+  const stopCasting = () => endCasting(null, true);
+
+  // What the TV reports, about once a second.
+  const onCastStatusRef = useRef<(st: CastStatus) => void>(() => {});
+  onCastStatusRef.current = (st: CastStatus) => {
+    if (!castSessionRef.current) return;
+    if (st.state === 'disconnected') {
+      void endCasting('The TV stopped playing from FRF Music', false);
+      return;
+    }
+    if (castLoadingRef.current || !castTrackIdRef.current) return;
+    const loadId = castLoadIdRef.current;
+    if (st.state === 'ended' || st.state === 'error') {
+      if (castHandledLoadRef.current === loadId) return;
+      castHandledLoadRef.current = loadId;
+      castTrackIdRef.current = null;
+      if (st.state === 'ended') {
+        unplayableStreakRef.current = 0;
+        latestActionsRef.current.handleEnded();
+      } else {
+        showStatus(st.error || 'The TV could not play this song', 5000);
+        skipUnplayable();
+      }
+      return;
+    }
+    // Right after a button press the TV may still report the old state.
+    if (Date.now() - castCommandAtRef.current > 2500) {
+      if (st.state === 'playing' && !isPlayingRef.current) setIsPlaying(true);
+      else if ((st.state === 'paused' || st.state === 'idle') && isPlayingRef.current) setIsPlaying(false);
+      positionRef.current = st.position;
+      setCurrentTime(st.position);
+    }
+    if (st.duration > 0) setDuration(st.duration);
+    if (IS_ANDROID && Date.now() - lastCastNotifyRef.current > 5000) {
+      syncCastNotification(st.state === 'playing' || st.state === 'buffering');
+    }
+  };
+
+  useEffect(() => {
+    if (!castDevice) return;
+    let busy = false;
+    const timer = window.setInterval(() => {
+      const tv = castSessionRef.current;
+      if (!tv || busy) return;
+      busy = true;
+      tv.status()
+        .then(st => onCastStatusRef.current(st))
+        .catch(() => {})
+        .finally(() => {
+          busy = false;
+        });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [castDevice]);
+
   // Your own picture for a song (or back to the original). The picture is
   // written onto the song everywhere it is kept, and the original remembered;
   // songs arriving fresh from a search get it when they start playing.
@@ -3274,6 +3559,26 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (needsLoadRef.current) {
       needsLoadRef.current = false;
       startTrack(currentTrack, positionRef.current || LAST_SESSION.position || 0);
+      return;
+    }
+
+    // Playing on a TV.
+    if (castSessionRef.current) {
+      const tv = castSessionRef.current;
+      if (castTrackIdRef.current !== currentTrack.id) {
+        // The TV has nothing (or another song): send it this one.
+        if (!castLoadingRef.current) startTrack(currentTrack, positionRef.current || 0);
+        return;
+      }
+      castCommandAtRef.current = Date.now();
+      if (isPlaying) {
+        void tv.pause().catch(() => {});
+        setIsPlaying(false);
+      } else {
+        void tv.play().catch(() => {});
+        setIsPlaying(true);
+      }
+      syncCastNotification(!isPlaying);
       return;
     }
 
@@ -3439,6 +3744,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
     if (repeatMode === 'one' && currentTrack) {
+      if (castSessionRef.current) {
+        startTrack(currentTrack, 0);
+        return;
+      }
       if (nativeOwnerRef.current && BackgroundAudio) {
         void BackgroundAudio.seek({ position: 0 }).catch(() => {});
         void BackgroundAudio.resume().catch(() => {});
@@ -3699,6 +4008,13 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     pendingSeekRef.current = time;
     positionRef.current = time;
 
+    if (castSessionRef.current) {
+      castCommandAtRef.current = Date.now();
+      setCurrentTime(time);
+      void castSessionRef.current.seek(time).catch(() => {});
+      return;
+    }
+
     if (nativeOwnerRef.current && BackgroundAudio?.seek) {
       setCurrentTime(time);
       void BackgroundAudio.seek({ position: time }).catch(() => {});
@@ -3715,6 +4031,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  const castVolumeRef = useRef(1);
+  const castVolumeTimerRef = useRef(0);
   const setVolume = (vol: number) => {
     const clamped = Math.max(0, Math.min(1, vol));
     setVolumeState(clamped);
@@ -3729,6 +4047,16 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     // ExoPlayer keeps its own output level; the Web Audio graph never sees it.
     BackgroundAudio?.setVolume?.({ volume: clamped }).catch(() => {});
+    // On a TV the slider is the TV's volume (sent at most every 300 ms).
+    if (castSessionRef.current) {
+      castVolumeRef.current = clamped;
+      if (!castVolumeTimerRef.current) {
+        castVolumeTimerRef.current = window.setTimeout(() => {
+          castVolumeTimerRef.current = 0;
+          void castSessionRef.current?.setVolume(castVolumeRef.current).catch(() => {});
+        }, 300);
+      }
+    }
   };
 
   const toggleRepeatMode = () => {
@@ -4379,6 +4707,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         playCounts,
         mostPlayed,
         outputDevice,
+        castDevice,
+        castAvailable: CAST_AVAILABLE,
+        startCasting,
+        stopCasting,
         artColors,
         sleepSecondsRemaining,
         settings,

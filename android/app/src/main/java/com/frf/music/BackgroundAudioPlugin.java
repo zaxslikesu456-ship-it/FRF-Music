@@ -171,6 +171,18 @@ public class BackgroundAudioPlugin extends Plugin {
         launchService(intent, call);
     }
 
+    /** The song moved to a TV (castOn) or came back to the phone. */
+    @PluginMethod
+    public void setCastMode(PluginCall call) {
+        PlaybackService.bridgeRef = getBridge();
+        Intent intent = createIntentWithExtras(call, PlaybackService.ACTION_CAST_MODE);
+        intent.putExtra(PlaybackService.EXTRA_CAST_ON, Boolean.TRUE.equals(call.getBoolean("on", false)));
+        if (!Boolean.TRUE.equals(call.getBoolean("on", false))) {
+            PlaybackService.castMode = false;
+        }
+        launchService(intent, call);
+    }
+
     @PluginMethod
     public void setVolume(PluginCall call) {
         Float level = call.getFloat("volume", 1f);

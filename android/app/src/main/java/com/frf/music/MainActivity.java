@@ -24,6 +24,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BackgroundAudioPlugin.class);
         registerPlugin(AlarmPlugin.class);
+        registerPlugin(CastPlugin.class);
         super.onCreate(savedInstanceState);
         if (savedInstanceState == null) handleAlarmIntent(getIntent());
 

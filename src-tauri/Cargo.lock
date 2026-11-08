@@ -920,12 +920,15 @@ name = "frf-music"
 version = "1.0.0"
 dependencies = [
  "reqwest 0.12.28",
+ "rustls",
  "serde_json",
+ "socket2",
  "tauri",
  "tauri-build",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-http",
  "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]

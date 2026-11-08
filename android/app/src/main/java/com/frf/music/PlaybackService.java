@@ -64,6 +64,14 @@ public class PlaybackService extends Service {
     public static final String ACTION_PREV = "com.frf.music.action.PREV";
     public static final String ACTION_STOP = "com.frf.music.action.STOP";
     public static final String ACTION_TAKE_OVER = "com.frf.music.action.TAKE_OVER";
+    public static final String ACTION_CAST_MODE = "com.frf.music.action.CAST_MODE";
+    public static final String EXTRA_CAST_ON = "castOn";
+
+    // While the song plays on a TV the phone stays silent: the notification and
+    // lock screen keep showing it, and their buttons only tell the web layer,
+    // which controls the TV. The service stays in the foreground so Android
+    // keeps the app (and the server the TV streams from) running.
+    static volatile boolean castMode = false;
 
     public static final String EXTRA_TITLE = "title";
     public static final String EXTRA_ARTIST = "artist";
@@ -543,8 +551,12 @@ public class PlaybackService extends Service {
             } else if (ACTION_PREV.equals(action)) {
                 handlePrevCommand();
             } else if (ACTION_STOP.equals(action)) {
+                // On a TV the service has nothing to stop and must stay up.
+                if (castMode) return START_STICKY;
                 stopPlaybackKeepForeground();
                 return START_NOT_STICKY;
+            } else if (ACTION_CAST_MODE.equals(action)) {
+                handleCastModeCommand(intent);
             } else if (ACTION_TAKE_OVER.equals(action)) {
                 handleTakeOverCommand(intent);
             } else if (ACTION_UPDATE.equals(action)) {
@@ -607,6 +619,7 @@ public class PlaybackService extends Service {
             mainHandler.post(this::takeOver);
             return;
         }
+        if (castMode) return;
         if (!playing && !webAudible) {
             Log.d(TAG, "takeOver skipped: nothing audible to take over");
             return;
@@ -627,6 +640,32 @@ public class PlaybackService extends Service {
 
         Log.d(TAG, "takeOver executing for " + src + " at position " + position);
         startNative(src, position);
+    }
+
+    private void handleCastModeCommand(Intent intent) {
+        castMode = intent.getBooleanExtra(EXTRA_CAST_ON, false);
+        if (castMode) {
+            cancelCrossfade();
+            stopProgressTicker();
+            mainHandler.removeCallbacks(handoverWatchdog);
+            mainHandler.removeCallbacks(delayedShutdown);
+            if (exoPlayer != null) {
+                try {
+                    exoPlayer.stop();
+                    exoPlayer.release();
+                } catch (Exception ignored) {}
+                exoPlayer = null;
+            }
+            streamUrl = null;
+            filePath = null;
+        }
+        applyMetadataFromIntent(intent);
+        if (castMode) {
+            streamUrl = null;
+            filePath = null;
+        }
+        refreshNotification();
+        updateMediaSessionMetadata();
     }
 
     private void handleTakeOverCommand(Intent intent) {
@@ -871,6 +910,12 @@ public class PlaybackService extends Service {
     }
 
     public void resumePlayback() {
+        if (castMode) {
+            playing = true;
+            refreshNotification();
+            refreshPlaybackState();
+            return;
+        }
         if (exoPlayer != null) {
             try {
                 exoPlayer.play();
