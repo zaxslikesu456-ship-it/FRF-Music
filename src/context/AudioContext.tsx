@@ -1266,7 +1266,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             void startIframe(track, positionRef.current || 0);
             return;
           }
-          showStatus('This song could not start. Please try another upload.', 5000);
+          // Audio only: no video fallback. Move on to the next song.
+          skipUnplayable();
           return;
         }
         streamRetryCountRef.current.set(track.id, retryCount + 1);
@@ -1983,8 +1984,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // the app itself and the YouTube player is only a fallback, and loading it up
   // front kept a whole YouTube page (about 70 MB) in memory for nothing. It is
   // loaded the first time a song needs it (startIframe waits for it).
+  // Android plays audio only, so it does not load it up front either; it is
+  // loaded when the Video tab is opened.
   useEffect(() => {
-    if (IS_DESKTOP_APP) return;
+    if (IS_DESKTOP_APP || IS_ANDROID) return;
     void loadYtApi();
   }, []);
 
@@ -2117,7 +2120,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             void startIframe(track, positionRef.current || 0);
             return;
           }
-          showStatus('This song could not start. Please try another upload.', 5000);
+          // Audio only: no video fallback. Move on to the next song.
+          skipUnplayable();
           return;
         }
         streamRetryCountRef.current.set(track.id, retryCount + 1);
@@ -2833,6 +2837,20 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   };
 
+  // A song with no playable audio moves on to the next one. Several in a row
+  // (offline, or YouTube refusing everything) stop playback instead of
+  // skipping through the whole queue.
+  const unplayableStreakRef = useRef(0);
+  const skipUnplayable = () => {
+    unplayableStreakRef.current += 1;
+    setIsPlaying(false);
+    if (!navigator.onLine || unplayableStreakRef.current >= 3) {
+      unplayableStreakRef.current = 0;
+      return;
+    }
+    latestActionsRef.current.nextTrack();
+  };
+
   const stopAllPlayback = () => {
     // A song the user picked (not the crossfade's own advance) ends the fade-out.
     if (webFadeRef.current && !webFadeRef.current.advancing) cancelWebCrossfade();
@@ -3023,8 +3041,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Android: resolve the direct stream first and play it on ExoPlayer from
       // the start. Starting the YouTube iframe to cover the resolve and then
       // handing over to ExoPlayer meant every song played, cut out while the
-      // native player buffered, and restarted. The iframe is only the fallback
-      // for a stream that cannot be resolved in time.
+      // native player buffered, and restarted.
+      // Audio only: the YouTube video player is never used as a fallback here
+      // (it streamed the whole video, hidden, and stopped with the screen off).
+      // A failed lookup is retried once with a fresh one; a song that still has
+      // no audio is skipped.
       // The desktop app does the same with its own audio element, which is what
       // the equalizer and volume normalization work on; the YouTube player cannot
       // be processed at all.
@@ -3036,29 +3057,40 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // treated the new track as superseded and dropped it.
         const stale = () => playGenRef.current !== currentGen;
         setIsResolvingStream(true);
-        const resolved = Promise.race([
-          streamUrlCacheRef.current.get(targetId)
-            ? Promise.resolve(streamUrlCacheRef.current.get(targetId)!)
-            : resolveAudioStreamUrl(targetId),
-          new Promise<string>((_, reject) =>
-            window.setTimeout(() => reject(new Error('stream resolve timeout')), 12000)
-          ),
-        ]);
-        void resolved
-          .then(async url => {
+        const playAudioOnce = async (fresh: boolean) => {
+          const cached = fresh ? undefined : streamUrlCacheRef.current.get(targetId);
+          const url = await Promise.race([
+            cached ? Promise.resolve(cached) : resolveAudioStreamUrl(targetId, fresh),
+            new Promise<string>((_, reject) =>
+              window.setTimeout(() => reject(new Error('stream resolve timeout')), 25000)
+            ),
+          ]);
+          if (stale()) return;
+          streamUrlCacheRef.current.set(targetId, url);
+          setCachedStreamUrl(targetId, url);
+          await playAudioUrl(nativeTrack, url, startTime);
+        };
+        void (async () => {
+          try {
+            await playAudioOnce(false);
+            if (!stale()) unplayableStreakRef.current = 0;
+          } catch (err) {
             if (stale()) return;
-            streamUrlCacheRef.current.set(targetId, url);
-            setCachedStreamUrl(targetId, url);
-            await playAudioUrl(nativeTrack, url, startTime);
-          })
-          .catch((err: unknown) => {
-            if (stale()) return;
-            console.warn('Direct stream unavailable, using the YouTube player:', String((err as Error)?.message || err));
-            void startIframe(nativeTrack, startTime);
-          })
-          .finally(() => {
+            console.warn('Audio stream failed, trying a fresh lookup:', String((err as Error)?.message || err));
+            streamUrlCacheRef.current.delete(targetId);
+            dropCachedStreamUrl(targetId);
+            try {
+              await playAudioOnce(true);
+              if (!stale()) unplayableStreakRef.current = 0;
+            } catch (err2) {
+              if (stale()) return;
+              console.warn('No audio for this song, skipping it:', String((err2 as Error)?.message || err2));
+              skipUnplayable();
+            }
+          } finally {
             if (playGenRef.current === currentGen) setIsResolvingStream(false);
-          });
+          }
+        })();
         return;
       }
 
