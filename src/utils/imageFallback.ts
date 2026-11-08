@@ -19,6 +19,7 @@ const RETRY_DELAY_MS = 2500;
 function swapToSmallThumb(img: HTMLImageElement): boolean {
   const small = fallbackThumb(img.src);
   if (!small) return false;
+  img.dataset.noResize = '1';
   img.src = small;
   return true;
 }

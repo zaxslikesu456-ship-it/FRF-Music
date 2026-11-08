@@ -23,6 +23,28 @@ export function hiResCover(url: string | undefined | null): string {
   return url;
 }
 
+// Album art sizes YouTube serves; the smallest that covers the space is used.
+const ART_STEPS = [120, 226, 360, 544, 1200];
+
+/**
+ * The cover version for a picture shown `px` device pixels wide. The large
+ * versions cost a lot of memory once decoded (a 1280x720 thumbnail is 3.5 MB),
+ * so small spots (list rows, cards) get small pictures and only big views get
+ * the large ones. Stored covers stay large; this picks per picture on screen.
+ */
+export function sizedCover(url: string, px: number): string {
+  if (/(googleusercontent\.com|ggpht\.com)\//.test(url)) {
+    const step = ART_STEPS.find(s => s >= px) ?? ART_STEPS[ART_STEPS.length - 1];
+    if (/=w\d+-h\d+/.test(url)) return url.replace(/=w\d+-h\d+/, `=w${step}-h${step}`);
+    if (/=s\d+/.test(url)) return url.replace(/=s\d+/, `=s${step}`);
+    return url;
+  }
+  const m = url.match(YT_THUMB);
+  if (!m) return url;
+  // The 320x180 thumbnail fills a square up to about 200 px; above that, the large one.
+  return `https://i.ytimg.com/vi/${m[1]}/${px <= 200 ? 'mqdefault' : 'maxresdefault'}.jpg`;
+}
+
 /** The small video thumbnail that every video has (320x180, no black bars). */
 export function fallbackThumb(url: string): string | null {
   const m = url.match(YT_THUMB);

@@ -534,7 +534,7 @@ export const NowPlayingScreen: React.FC = () => {
                 src={currentTrack.coverUrl}
                 alt={currentTrack.title}
                 className={`w-full h-full object-cover transition-all duration-700 ${
-                  isPlaying ? 'cover-drift' : 'scale-95 opacity-90'
+                  isPlaying ? 'cover-drift pause-when-hidden' : 'scale-95 opacity-90'
                 }`}
               />
               <div className="absolute inset-0 ring-1 ring-inset ring-white/10 rounded-2xl pointer-events-none" />

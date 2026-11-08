@@ -20,13 +20,23 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
     const getSafeWidth = () => Math.max(320, window.innerWidth || document.documentElement.clientWidth || 360);
     const getSafeHeight = () => Math.max(480, window.innerHeight || document.documentElement.clientHeight || 640);
 
-    let width = (canvas.width = getSafeWidth());
-    let height = (canvas.height = getSafeHeight());
+    // Drawn at half resolution and stretched: the soft streaks and glows look the
+    // same, and there are four times fewer pixels to draw every frame.
+    const SCALE = 0.5;
+    let width = getSafeWidth();
+    let height = getSafeHeight();
+    const sizeCanvas = () => {
+      canvas.width = Math.round(width * SCALE);
+      canvas.height = Math.round(height * SCALE);
+      ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+    };
+    sizeCanvas();
 
     const handleResize = () => {
       if (!canvas) return;
-      width = canvas.width = getSafeWidth();
-      height = canvas.height = getSafeHeight();
+      width = getSafeWidth();
+      height = getSafeHeight();
+      sizeCanvas();
     };
     window.addEventListener('resize', handleResize);
 
@@ -147,25 +157,29 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
     let auroraStep = 0;
     let frameCount = 0;
 
-    // RENDER LOOP with Battery Saver Visibility Pause
-    const render = () => {
-      if (!isRunning || document.hidden) return;
+    // Reading the theme color forces a style check, so it is read once a second,
+    // not every frame.
+    let themeColor = getThemeColor();
+    let lastFrame = 0;
 
+    // One frame of motion, drawn on `c`: the real canvas, or a stand-in that
+    // draws nothing (the in-between frame at 30 fps).
+    const step = (c: CanvasRenderingContext2D) => {
       frameCount++;
-      ctx.clearRect(0, 0, width, height);
+      if (frameCount % 60 === 0) themeColor = getThemeColor();
+      c.clearRect(0, 0, width, height);
 
       if (type === 'meteors') {
-        const themeColor = getThemeColor();
 
         for (let i = 0; i < stars.length; i++) {
           const s = stars[i];
           s.alpha = s.baseAlpha + Math.sin(frameCount * s.twinkleSpeed) * 0.25;
           const clampedAlpha = Math.max(0.15, Math.min(1, s.alpha));
 
-          ctx.beginPath();
-          ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(255, 255, 255, ${clampedAlpha})`;
-          ctx.fill();
+          c.beginPath();
+          c.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
+          c.fillStyle = `rgba(255, 255, 255, ${clampedAlpha})`;
+          c.fill();
         }
 
         if (frameCount % 220 === 0 && Math.random() > 0.4) {
@@ -197,23 +211,23 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
           const tailX = m.x - m.length * 0.65;
           const tailY = m.y - m.length * 0.75;
 
-          const grad = ctx.createLinearGradient(m.x, m.y, tailX, tailY);
+          const grad = c.createLinearGradient(m.x, m.y, tailX, tailY);
           grad.addColorStop(0, '#ffffff');
           grad.addColorStop(0.3, themeColor);
           grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
-          ctx.beginPath();
-          ctx.strokeStyle = grad;
-          ctx.lineWidth = m.thickness;
-          ctx.lineCap = 'round';
-          ctx.moveTo(m.x, m.y);
-          ctx.lineTo(tailX, tailY);
-          ctx.stroke();
+          c.beginPath();
+          c.strokeStyle = grad;
+          c.lineWidth = m.thickness;
+          c.lineCap = 'round';
+          c.moveTo(m.x, m.y);
+          c.lineTo(tailX, tailY);
+          c.stroke();
 
-          ctx.beginPath();
-          ctx.arc(m.x, m.y, m.thickness * 1.1, 0, Math.PI * 2);
-          ctx.fillStyle = '#ffffff';
-          ctx.fill();
+          c.beginPath();
+          c.arc(m.x, m.y, m.thickness * 1.1, 0, Math.PI * 2);
+          c.fillStyle = '#ffffff';
+          c.fill();
 
           if (m.y > height + 80 || m.x > width * 1.3) {
             if (m.isFireball) {
@@ -236,12 +250,12 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
             continue;
           }
 
-          ctx.beginPath();
-          ctx.arc(sp.x, sp.y, sp.radius, 0, Math.PI * 2);
-          ctx.fillStyle = sp.color;
-          ctx.globalAlpha = sp.alpha * fade;
-          ctx.fill();
-          ctx.globalAlpha = 1.0;
+          c.beginPath();
+          c.arc(sp.x, sp.y, sp.radius, 0, Math.PI * 2);
+          c.fillStyle = sp.color;
+          c.globalAlpha = sp.alpha * fade;
+          c.fill();
+          c.globalAlpha = 1.0;
         }
       } else if (type === 'particles') {
         for (let i = 0; i < particles.length; i++) {
@@ -254,21 +268,21 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
           if (p.y < 0) p.y = height;
           if (p.y > height) p.y = 0;
 
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(255, 255, 255, ${p.alpha})`;
-          ctx.fill();
+          c.beginPath();
+          c.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+          c.fillStyle = `rgba(255, 255, 255, ${p.alpha})`;
+          c.fill();
         }
       } else if (type === 'matrix') {
-        ctx.fillStyle = 'rgba(52, 211, 153, 0.7)';
-        ctx.font = '14px monospace';
+        c.fillStyle = 'rgba(52, 211, 153, 0.7)';
+        c.font = '14px monospace';
 
         const chars = '0123456789ABCDEF';
         for (let i = 0; i < matrixDrops.length; i++) {
           const char = chars[Math.floor(Math.random() * chars.length)];
           const x = i * 24;
           const y = matrixDrops[i] * 24;
-          ctx.fillText(char, x, y);
+          c.fillText(char, x, y);
 
           if (y > height && Math.random() > 0.975) {
             matrixDrops[i] = 0;
@@ -276,9 +290,9 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
           matrixDrops[i]++;
         }
       } else if (type === 'rain') {
-        ctx.strokeStyle = 'rgba(186, 230, 253, 0.5)';
-        ctx.lineWidth = 1.2;
-        ctx.lineCap = 'round';
+        c.strokeStyle = 'rgba(186, 230, 253, 0.5)';
+        c.lineWidth = 1.2;
+        c.lineCap = 'round';
 
         for (let i = 0; i < rainDrops.length; i++) {
           const r = rainDrops[i];
@@ -289,14 +303,14 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
             r.x = Math.random() * width;
           }
 
-          ctx.beginPath();
-          ctx.moveTo(r.x, r.y);
-          ctx.lineTo(r.x, r.y + r.length);
-          ctx.stroke();
+          c.beginPath();
+          c.moveTo(r.x, r.y);
+          c.lineTo(r.x, r.y + r.length);
+          c.stroke();
         }
       } else if (type === 'aurora') {
         auroraStep += 0.008;
-        const grad1 = ctx.createRadialGradient(
+        const grad1 = c.createRadialGradient(
           width * 0.3 + Math.sin(auroraStep) * 80,
           height * 0.4 + Math.cos(auroraStep) * 60,
           20,
@@ -307,7 +321,7 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
         grad1.addColorStop(0, 'rgba(192, 132, 252, 0.3)');
         grad1.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
-        const grad2 = ctx.createRadialGradient(
+        const grad2 = c.createRadialGradient(
           width * 0.7 - Math.cos(auroraStep) * 100,
           height * 0.6 - Math.sin(auroraStep) * 80,
           20,
@@ -318,12 +332,36 @@ export const AnimatedBackground: React.FC<AnimatedBackgroundProps> = ({ type }) 
         grad2.addColorStop(0, 'rgba(56, 189, 248, 0.3)');
         grad2.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
-        ctx.fillStyle = grad1;
-        ctx.fillRect(0, 0, width, height);
-        ctx.fillStyle = grad2;
-        ctx.fillRect(0, 0, width, height);
+        c.fillStyle = grad1;
+        c.fillRect(0, 0, width, height);
+        c.fillStyle = grad2;
+        c.fillRect(0, 0, width, height);
       }
 
+    };
+
+    const noGradient = { addColorStop() {} } as unknown as CanvasGradient;
+    const skipDraw = new Proxy({} as CanvasRenderingContext2D, {
+      get: (_t, prop) =>
+        prop === 'createLinearGradient' || prop === 'createRadialGradient'
+          ? () => noGradient
+          : () => {},
+      set: () => true,
+    });
+
+    // RENDER LOOP with Battery Saver Visibility Pause. Draws 30 times a second
+    // (it filled the whole window up to 144 times a second, about half a CPU
+    // core), moving everything by two frames' worth each time.
+    const render = () => {
+      if (!isRunning || document.hidden) return;
+      const now = performance.now();
+      if (now - lastFrame < 30) {
+        animationFrameId = requestAnimationFrame(render);
+        return;
+      }
+      lastFrame = now;
+      step(skipDraw);
+      step(ctx);
       animationFrameId = requestAnimationFrame(render);
     };
 

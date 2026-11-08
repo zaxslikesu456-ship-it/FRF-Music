@@ -390,3 +390,10 @@ body.pc-resizing {
 body.pc-resizing iframe {
   pointer-events: none !important;
 }
+
+/* Endless decorative animations stop while the window is minimized or hidden
+   (the class on <html> is set in main.tsx). */
+html.app-hidden .pause-when-hidden,
+html.app-hidden .pause-when-hidden * {
+  animation-play-state: paused !important;
+}

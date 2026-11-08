@@ -12,6 +12,12 @@ finishPendingWipe()
   .catch(() => {})
   .then(start)
 
+// Endless decorative animations (marked .pause-when-hidden) stop while the
+// window is minimized or hidden; the music keeps playing.
+const markHidden = () => document.documentElement.classList.toggle('app-hidden', document.hidden)
+document.addEventListener('visibilitychange', markHidden)
+markHidden()
+
 function start() {
   upgradeStoredCovers()
 
@@ -24,9 +30,10 @@ function start() {
       },
     )
   } else {
-    Promise.all([import('./App.tsx'), import('./utils/imageFallback')]).then(
-      ([{ default: App }, { installImageFallback }]) => {
+    Promise.all([import('./App.tsx'), import('./utils/imageFallback'), import('./utils/imageSizing')]).then(
+      ([{ default: App }, { installImageFallback }, { installImageSizing }]) => {
         installImageFallback()
+        installImageSizing()
         root.render(
           <StrictMode>
             <App />
