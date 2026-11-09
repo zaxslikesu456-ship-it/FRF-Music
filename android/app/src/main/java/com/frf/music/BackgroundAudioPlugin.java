@@ -1,5 +1,6 @@
 package com.frf.music;
 
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -967,6 +968,38 @@ public class BackgroundAudioPlugin extends Plugin {
                         + fallbackError.getClass().getSimpleName() + ")",
                         "AUDIO_SERVICE_START_FAILED");
             }
+        }
+    }
+
+    /**
+     * "Open in YouTube": starts the YouTube app on the link. Without that app, the
+     * phone's browser opens it. Either way the link leaves this app, so it is never
+     * shown in a browser window inside the app.
+     */
+    @PluginMethod
+    public void openYouTube(PluginCall call) {
+        String url = call.getString("url", "");
+        if (url == null || !(url.startsWith("https://www.youtube.com/") || url.startsWith("https://youtube.com/"))) {
+            call.reject("Only YouTube links can be opened");
+            return;
+        }
+        Intent app = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        app.setPackage("com.google.android.youtube");
+        app.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            getContext().startActivity(app);
+            call.resolve();
+            return;
+        } catch (ActivityNotFoundException e) {
+            // The YouTube app is not installed (or is switched off): use the browser.
+        }
+        Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        browser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            getContext().startActivity(browser);
+            call.resolve();
+        } catch (ActivityNotFoundException e) {
+            call.reject("No app on this phone can open the link");
         }
     }
 }

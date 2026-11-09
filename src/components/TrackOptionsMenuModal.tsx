@@ -23,6 +23,7 @@ import { pickImage } from '../utils/pickImage';
 import { useAudio } from '../context/AudioContext';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
 import type { Track } from '../types/music';
+import { OPENS_YOUTUBE_APP, openYouTubeApp } from '../utils/openExternal';
 
 const YoutubeIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg className={className} viewBox="0 0 24 24" fill="currentColor">
@@ -104,14 +105,10 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const handleOpenExternal = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    const ytUrl = track.youtubeId
-      ? `https://www.youtube.com/watch?v=${track.youtubeId}`
-      : `https://www.youtube.com/results?search_query=${encodeURIComponent(`${track.artist} ${track.title}`)}`;
-
+  // Opens a link the way a plain new-tab link does (desktop, and the Web Browser button).
+  const openLinkInTab = (url: string) => {
     const a = document.createElement('a');
-    a.href = ytUrl;
+    a.href = url;
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
     document.body.appendChild(a);
@@ -121,6 +118,32 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
         document.body.removeChild(a);
       }
     }, 100);
+  };
+
+  const youtubeLink = () =>
+    track.youtubeId
+      ? `https://www.youtube.com/watch?v=${track.youtubeId}`
+      : `https://www.youtube.com/results?search_query=${encodeURIComponent(`${track.artist} ${track.title}`)}`;
+
+  // "Open in YouTube". On the Android app, the YouTube app opens the video: a plain
+  // link there would show the page in a browser window inside the app.
+  const handleOpenExternal = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const ytUrl = youtubeLink();
+    if (OPENS_YOUTUBE_APP) {
+      void openYouTubeApp(ytUrl).then(opened => {
+        if (!opened) openLinkInTab(ytUrl);
+      });
+    } else {
+      openLinkInTab(ytUrl);
+    }
+    onClose();
+  };
+
+  // "Open in Web Browser": the link as it always was.
+  const handleOpenWeb = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    openLinkInTab(youtubeLink());
     onClose();
   };
 
@@ -357,7 +380,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
                       <YoutubeIcon className="w-5 h-5 fill-current text-white" />
                     </button>
                     <button
-                      onClick={handleOpenExternal}
+                      onClick={handleOpenWeb}
                       className="p-1.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white transition-colors"
                       title={tr("Open in Web Browser")}
                     >
