@@ -348,5 +348,16 @@ const ja: Record<string, string> = {
   "From Wikipedia": "Wikipedia より",
   "More from {artist}": "{artist} の他の曲",
   "Like \"{song}\"": "「{song}」に似た曲",
+  "Importing": "インポート中",
+  "Imported": "インポート済み",
+  "could not import": "インポート失敗",
+  "song": "曲",
+  "songs": "曲",
+  "Import songs": "曲をインポート",
+  "not audio, skipped": "音声ではないためスキップ",
+  "One picture for all": "すべてに同じ画像",
+  "None of these files are songs.": "曲のファイルがありません。",
+  "Choose picture": "画像を選択",
+  "Add 1 song": "1曲を追加",
 };
 export default ja;

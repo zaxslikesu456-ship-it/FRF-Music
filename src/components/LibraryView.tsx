@@ -22,6 +22,7 @@ import { LikedMusicView } from './LikedMusicView';
 import { DownloadsView } from './DownloadsView';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
 import { ImportPlaylistModal } from './ImportPlaylistModal';
+import { ImportSongsModal } from './ImportSongsModal';
 import type { Track } from '../types/music';
 
 type LibTab = 'songs' | 'playlists' | 'albums' | 'artists' | 'discover';
@@ -66,7 +67,6 @@ export const LibraryView: React.FC = () => {
     isPlaying,
     playQueue,
     createPlaylist,
-    addLocalTracks,
     downloadPlaylist,
     setActiveTab,
     favoriteTracks,
@@ -98,6 +98,7 @@ export const LibraryView: React.FC = () => {
   const [sortAsc, setSortAsc] = useState(true);
   const [selectedTrackForMenu, setSelectedTrackForMenu] = useState<Track | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importFiles, setImportFiles] = useState<File[] | null>(null);
 
   const [discoverTracks, setDiscoverTracks] = useState<Track[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(false);
@@ -174,8 +175,10 @@ export const LibraryView: React.FC = () => {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      addLocalTracks(e.target.files);
+      setImportFiles(Array.from(e.target.files));
     }
+    // Choosing the same files again must fire the change event again.
+    e.target.value = '';
   };
 
   // ---------- DETAIL SUBVIEWS ----------
@@ -269,13 +272,14 @@ export const LibraryView: React.FC = () => {
       <input
         ref={fileInputRef}
         type="file"
-        accept="audio/*,.mp3,.wav,.ogg,.flac"
+        accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.opus,.flac"
         multiple
         onChange={handleFileChange}
         className="hidden"
       />
 
       <ImportPlaylistModal isOpen={showImport} onClose={() => setShowImport(false)} />
+      {importFiles && <ImportSongsModal files={importFiles} onClose={() => setImportFiles(null)} />}
 
       {/* Header */}
       <div className="flex items-center justify-between px-5 safe-top pb-4">

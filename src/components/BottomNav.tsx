@@ -5,7 +5,7 @@ import { useAudio } from '../context/AudioContext';
 import type { NavTab } from '../types/music';
 
 export const BottomNav: React.FC = () => {
-  const { activeTab, setActiveTab } = useAudio();
+  const { activeTab, setActiveTab, closeArtistProfile } = useAudio();
 
   const navItems: { id: NavTab; label: string; icon: React.ElementType }[] = [
     { id: 'home', label: tr("Home"), icon: Home },
@@ -22,7 +22,10 @@ export const BottomNav: React.FC = () => {
         return (
           <button
             key={item.id}
-            onClick={() => setActiveTab(item.id)}
+            onClick={() => {
+              closeArtistProfile();
+              setActiveTab(item.id);
+            }}
             className="flex flex-col items-center gap-1.5 shrink-0"
           >
             <span

@@ -348,5 +348,16 @@ const nl: Record<string, string> = {
   "From Wikipedia": "Van Wikipedia",
   "More from {artist}": "Meer van {artist}",
   "Like \"{song}\"": "Zoals \"{song}\"",
+  "Importing": "Importeren",
+  "Imported": "Geïmporteerd",
+  "could not import": "niet geïmporteerd",
+  "song": "nummer",
+  "songs": "nummers",
+  "Import songs": "Nummers importeren",
+  "not audio, skipped": "geen audio, overgeslagen",
+  "One picture for all": "Eén afbeelding voor alle",
+  "None of these files are songs.": "Geen van deze bestanden is een nummer.",
+  "Choose picture": "Afbeelding kiezen",
+  "Add 1 song": "1 nummer toevoegen",
 };
 export default nl;

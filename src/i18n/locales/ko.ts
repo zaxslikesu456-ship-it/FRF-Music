@@ -348,5 +348,16 @@ const ko: Record<string, string> = {
   "From Wikipedia": "위키백과 출처",
   "More from {artist}": "{artist}의 다른 곡",
   "Like \"{song}\"": "\"{song}\"와 비슷한 곡",
+  "Importing": "가져오는 중",
+  "Imported": "가져옴",
+  "could not import": "가져오지 못함",
+  "song": "곡",
+  "songs": "곡",
+  "Import songs": "곡 가져오기",
+  "not audio, skipped": "오디오 아님, 건너뜀",
+  "One picture for all": "모두에 같은 사진",
+  "None of these files are songs.": "노래 파일이 없습니다.",
+  "Choose picture": "사진 선택",
+  "Add 1 song": "1곡 추가",
 };
 export default ko;

@@ -348,5 +348,16 @@ const hi: Record<string, string> = {
   "From Wikipedia": "विकिपीडिया से",
   "More from {artist}": "{artist} के और गाने",
   "Like \"{song}\"": "\"{song}\" जैसा",
+  "Importing": "आयात हो रहा है",
+  "Imported": "आयात किए",
+  "could not import": "आयात नहीं हो सके",
+  "song": "गाना",
+  "songs": "गाने",
+  "Import songs": "गाने आयात करें",
+  "not audio, skipped": "ऑडियो नहीं, छोड़े गए",
+  "One picture for all": "सभी के लिए एक तस्वीर",
+  "None of these files are songs.": "इनमें से कोई फ़ाइल गाना नहीं है।",
+  "Choose picture": "तस्वीर चुनें",
+  "Add 1 song": "1 गाना जोड़ें",
 };
 export default hi;

@@ -348,5 +348,16 @@ const tr: Record<string, string> = {
   "From Wikipedia": "Wikipedia'dan",
   "More from {artist}": "{artist} sanatçısından daha fazlası",
   "Like \"{song}\"": "\"{song}\" gibi",
+  "Importing": "İçe aktarılıyor",
+  "Imported": "İçe aktarıldı",
+  "could not import": "içe aktarılamadı",
+  "song": "şarkı",
+  "songs": "şarkı",
+  "Import songs": "Şarkı içe aktar",
+  "not audio, skipped": "ses değil, atlandı",
+  "One picture for all": "Hepsine tek resim",
+  "None of these files are songs.": "Bu dosyaların hiçbiri şarkı değil.",
+  "Choose picture": "Resim seç",
+  "Add 1 song": "1 şarkı ekle",
 };
 export default tr;

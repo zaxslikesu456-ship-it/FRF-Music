@@ -49,6 +49,17 @@ export const AndroidFrame: React.FC = () => {
           {activeTab === 'library' && <LibraryView />}
           {activeTab === 'settings' && <SettingsView />}
         </div>
+        {/* Artist profile: over the page, but above the mini player and tabs so
+            the music stays in reach (it used to cover them). */}
+        {artistProfileName && (
+          <div className="absolute inset-0 z-20 bg-app-primary flex flex-col anim-fade">
+            <ArtistDetailView
+              artistName={artistProfileName}
+              localTracks={[]}
+              onBack={closeArtistProfile}
+            />
+          </div>
+        )}
       </main>
 
       {/* Mini Player */}
@@ -64,16 +75,6 @@ export const AndroidFrame: React.FC = () => {
       {/* Bottom Navigation */}
       <BottomNav />
 
-      {/* Artist Profile Overlay */}
-      {artistProfileName && (
-        <div className="fixed inset-0 z-40 bg-app-primary flex flex-col anim-fade">
-          <ArtistDetailView
-            artistName={artistProfileName}
-            localTracks={[]}
-            onBack={closeArtistProfile}
-          />
-        </div>
-      )}
 
       {/* Full Screen Player Modal */}
       <NowPlayingScreen />

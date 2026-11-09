@@ -1649,3 +1649,40 @@ export async function fetchDirectAudioStreamUrl(youtubeId: string): Promise<stri
   return null;
 }
 
+
+// An age-restricted music video cannot be played without signing in to
+// YouTube, but the same song's YouTube Music audio track ("song" result)
+// almost never carries that gate. Finds that track: best matches first.
+export async function findSongVersionIds(
+  title: string,
+  artist: string,
+  exclude: Iterable<string>
+): Promise<string[]> {
+  const skip = new Set(exclude);
+  let wantedArtist = (artist || '')
+    .replace(/\s*-\s*Topic$/i, '')
+    .replace(/\s*VEVO$/i, '')
+    .trim();
+  let wantedTitle = title || '';
+  // Video titles are often "Artist - Song (Official Video)".
+  const dash = wantedTitle.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  if (dash) {
+    const before = normalizedSearchTokens(dash[1]);
+    const artistTokens = normalizedSearchTokens(wantedArtist);
+    if (!wantedArtist || tokenCoverage(artistTokens, before) >= 0.5 || tokenCoverage(before, artistTokens) >= 0.5) {
+      wantedArtist = wantedArtist || dash[1].trim();
+      wantedTitle = dash[2];
+    }
+  }
+  wantedTitle = cleanTrackTitle(wantedTitle);
+  if (!wantedTitle) return [];
+  const results = await searchYouTubeMusic(`${wantedArtist} ${wantedTitle}`.trim()).catch(() => [] as Track[]);
+  // The video's length includes intros and skits, so it is not compared.
+  return results
+    .filter(t => t.youtubeId && !skip.has(t.youtubeId))
+    .map(t => ({ id: t.youtubeId as string, score: alternateRelevance(t, wantedTitle, wantedArtist) }))
+    .filter(c => Number.isFinite(c.score) && c.score >= 0.35)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map(c => c.id);
+}

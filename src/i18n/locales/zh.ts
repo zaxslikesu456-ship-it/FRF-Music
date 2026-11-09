@@ -348,5 +348,16 @@ const zh: Record<string, string> = {
   "From Wikipedia": "来自维基百科",
   "More from {artist}": "更多 {artist} 的歌曲",
   "Like \"{song}\"": "类似“{song}”",
+  "Importing": "正在导入",
+  "Imported": "已导入",
+  "could not import": "无法导入",
+  "song": "首歌曲",
+  "songs": "首歌曲",
+  "Import songs": "导入歌曲",
+  "not audio, skipped": "非音频，已跳过",
+  "One picture for all": "所有歌曲用同一图片",
+  "None of these files are songs.": "这些文件都不是歌曲。",
+  "Choose picture": "选择图片",
+  "Add 1 song": "添加 1 首歌曲",
 };
 export default zh;

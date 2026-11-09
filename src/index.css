@@ -302,7 +302,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .safe-area-player-top {
-  padding-top: calc(max(env(safe-area-inset-top, 48px), 54px) + 16px);
+  padding-top: max(env(safe-area-inset-top), 48px);
 }
 
 /* Double-tap-to-like heart burst on the Now Playing artwork */

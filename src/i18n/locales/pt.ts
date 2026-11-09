@@ -348,5 +348,16 @@ const pt: Record<string, string> = {
   "From Wikipedia": "Da Wikipédia",
   "More from {artist}": "Mais de {artist}",
   "Like \"{song}\"": "Parecida com \"{song}\"",
+  "Importing": "Importando",
+  "Imported": "Importadas",
+  "could not import": "não importadas",
+  "song": "música",
+  "songs": "músicas",
+  "Import songs": "Importar músicas",
+  "not audio, skipped": "não são áudio, ignorados",
+  "One picture for all": "Uma imagem para todas",
+  "None of these files are songs.": "Nenhum destes arquivos é uma música.",
+  "Choose picture": "Escolher imagem",
+  "Add 1 song": "Adicionar 1 música",
 };
 export default pt;

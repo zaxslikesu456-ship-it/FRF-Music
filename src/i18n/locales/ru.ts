@@ -348,5 +348,16 @@ const ru: Record<string, string> = {
   "From Wikipedia": "Из Википедии",
   "More from {artist}": "Ещё от {artist}",
   "Like \"{song}\"": "Похоже на «{song}»",
+  "Importing": "Импорт",
+  "Imported": "Импортировано",
+  "could not import": "не удалось импортировать",
+  "song": "песня",
+  "songs": "песен",
+  "Import songs": "Импорт песен",
+  "not audio, skipped": "не аудио, пропущено",
+  "One picture for all": "Одна картинка для всех",
+  "None of these files are songs.": "Среди файлов нет песен.",
+  "Choose picture": "Выбрать картинку",
+  "Add 1 song": "Добавить 1 песню",
 };
 export default ru;

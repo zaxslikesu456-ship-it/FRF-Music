@@ -16,7 +16,6 @@ import {
   List,
   ListPlus,
   MoreVertical,
-  Mic,
   ArrowUp,
   ArrowDown,
   Loader2,
@@ -104,6 +103,8 @@ export const NowPlayingScreen: React.FC = () => {
 
   // Double-tap the artwork to like the track, with a heart pop animation.
   const [heartPop, setHeartPop] = useState(false);
+  // Tapping a long title shows all of it (two lines are shown otherwise).
+  const [fullTitleId, setFullTitleId] = useState<string | null>(null);
   const lastArtworkTap = useRef(0);
   const handleArtworkTap = () => {
     const now = Date.now();
@@ -251,7 +252,6 @@ export const NowPlayingScreen: React.FC = () => {
 
   if (!isPlayerOpen || !currentTrack) return null;
 
-  const isFav = favorites.includes(currentTrack.id);
   const upNextTracks = queue.length > 0 ? queue : tracks;
   const shownTime = dragTime ?? currentTime;
 
@@ -335,10 +335,39 @@ export const NowPlayingScreen: React.FC = () => {
             <ChevronDown className="w-7 h-7" />
           </button>
 
-          <div className="text-center min-w-0 px-2">
-            <p className="text-xs text-app-secondary truncate font-medium tracking-wider uppercase">
-              {queue.length > 0 ? 'Playing from Queue' : 'Now Playing'}
-            </p>
+          <div className="text-center min-w-0 flex-1 px-2">
+            {/* Song actions, in the middle of the top bar. */}
+            <div className="flex items-center justify-center gap-1 text-app-secondary">
+              <CastButton className="p-2 hover:text-app-primary active:scale-95 transition-all" />
+              <button
+                onClick={() => setShowAddToPlaylist(true)}
+                className="p-2 hover:text-app-primary active:scale-95 transition-all"
+                title={tr("Add to playlist")}
+              >
+                <ListPlus className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => setIsEqualizerOpen(true)}
+                className="p-2 hover:text-app-primary active:scale-95 transition-all"
+                title={tr("Studio Equalizer")}
+              >
+                <Sliders className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => setShowQueueOverlay(v => !v)}
+                className={`p-2 active:scale-95 transition-all ${showQueueOverlay ? 'text-app-primary' : 'hover:text-app-primary'}`}
+                title={tr("Queue Sheet")}
+              >
+                <List className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => setShowOptions(true)}
+                className="p-2 hover:text-app-primary active:scale-95 transition-all"
+                title={tr("More options")}
+              >
+                <MoreVertical className="w-5 h-5" />
+              </button>
+            </div>
             {sleepEndOfSong ? (
               <button
                 onClick={() => setSleepTimer(null)}
@@ -363,47 +392,13 @@ export const NowPlayingScreen: React.FC = () => {
             )}
           </div>
 
-          <div className="flex items-center gap-1">
-            {/* Play on a TV */}
-            <CastButton className="p-2 text-app-secondary hover:text-app-primary hover:scale-105 active:scale-95 transition-all" />
-            {/* Equalizer & Sound FX */}
-            <button
-              onClick={() => setIsEqualizerOpen(true)}
-              className="p-2 text-app-secondary hover:text-app-primary hover:scale-105 active:scale-95 transition-all"
-              title={tr("Studio Equalizer")}
-            >
-              <Sliders className="w-5 h-5" />
-            </button>
-
-            {/* 3 Lines Icon (Up Next Queue) */}
-            <button
-              onClick={() => setShowQueueOverlay(v => !v)}
-              className={`p-2 transition-colors ${
-                showQueueOverlay ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
-              }`}
-              title={tr("Queue Sheet")}
-            >
-              <List className="w-6 h-6" />
-            </button>
-
-            {/* 3 Dots Options */}
-            <button
-              onClick={() => setShowOptions(true)}
-              className="p-2 text-app-secondary hover:text-app-primary transition-colors"
-              title={tr("Track Options")}
-            >
-              <MoreVertical className="w-6 h-6" />
-            </button>
-
-            {/* Stop & Close Song */}
-            <button
-              onClick={stopTrack}
-              className="p-2 text-app-secondary hover:text-red-400 transition-colors"
-              title={tr("Stop & Close Song")}
-            >
-              <X className="w-6 h-6" />
-            </button>
-          </div>
+          <button
+            onClick={stopTrack}
+            className="p-2.5 text-app-secondary hover:text-red-400 transition-colors"
+            title={tr("Stop & Close Song")}
+          >
+            <X className="w-6 h-6" />
+          </button>
         </div>
 
         {/* 3-View Mode Dots Indicator (Artwork • Lyrics • Video) */}
@@ -525,12 +520,15 @@ export const NowPlayingScreen: React.FC = () => {
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0 animate-in fade-in duration-200">
-            <div className="relative w-full max-w-[320px] flex items-center justify-center">
+            {/* The cover shrinks to the height that is left, so on short phones it
+                no longer slides up under the header. */}
+            <div className="w-full flex-1 min-h-0 flex items-center justify-center" style={{ containerType: 'size' }}>
+            <div className="relative" style={{ width: 'min(320px, 100cqw, 100cqh)' }}>
             <AudioVisualizer variant="ring" />
             <div
               ref={artRef}
               onClick={handleArtworkTap}
-              className="relative w-full max-w-[320px] aspect-square rounded-2xl overflow-hidden shadow-2xl border border-white/10 group cursor-pointer active:scale-[0.99] transition-transform"
+              className="relative w-full aspect-square rounded-2xl overflow-hidden shadow-2xl border border-white/10 group cursor-pointer active:scale-[0.99] transition-transform"
               style={artColors ? { boxShadow: `0 24px 60px -12px ${artColors.accent}55` } : undefined}
             >
               <img
@@ -548,15 +546,21 @@ export const NowPlayingScreen: React.FC = () => {
               )}
             </div>
             </div>
-            <AudioVisualizer className="max-w-[320px] mt-3" height={44} />
-            <p className="text-[11px] text-app-secondary/50 mt-3">{tr("Double-tap artwork to like")}</p>
+            </div>
+            <AudioVisualizer className="max-w-[320px] mt-3 shrink-0" height={44} />
           </div>
         )}
 
         {/* Track Title + Favorite & Lyrics Controls */}
         <div className="flex items-center justify-between gap-4 pt-3">
           <div className="min-w-0 flex-1">
-            <h2 className="text-2xl font-bold text-app-primary truncate tracking-tight">
+            <h2
+              onClick={() => setFullTitleId(id => (id === currentTrack.id ? null : currentTrack.id))}
+              className={`${currentTrack.title.length > 30 ? 'text-xl' : 'text-2xl'} font-bold text-app-primary tracking-tight leading-tight break-words cursor-pointer ${
+                fullTitleId === currentTrack.id ? '' : 'line-clamp-2'
+              }`}
+              title={currentTrack.title}
+            >
               {currentTrack.title}
             </h2>
             <button
@@ -568,58 +572,17 @@ export const NowPlayingScreen: React.FC = () => {
             </button>
             <CastingLabel className="!justify-start mt-1" />
           </div>
-
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              onClick={() => toggleFavorite(currentTrack.id, currentTrack)}
-              className="p-2 active:scale-95 transition-transform"
-              title={tr("Like")}
-            >
-              <Heart
-                className={`w-6 h-6 transition-colors ${
-                  isFav ? 'text-app-accent fill-current' : 'text-app-secondary hover:text-app-primary'
-                }`}
-              />
-            </button>
-
-            <button
-              onClick={() => setShowAddToPlaylist(true)}
-              className="p-2 text-app-secondary hover:text-app-primary active:scale-95 transition-transform"
-              title={tr("Add to playlist")}
-            >
-              <ListPlus className="w-6 h-6" />
-            </button>
-
-            {/* Lyrics Button */}
-            <button
-              onClick={() => setCenterMode(m => (m === 'lyrics' ? 'artwork' : 'lyrics'))}
-              className={`p-2 transition-transform active:scale-95 ${
-                centerMode === 'lyrics' ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
+          <button
+            onClick={() => toggleFavorite(currentTrack.id, currentTrack)}
+            className="p-2 -mr-2 shrink-0 active:scale-95 transition-transform"
+            title={tr("Like")}
+          >
+            <Heart
+              className={`w-7 h-7 transition-colors ${
+                favorites.includes(currentTrack.id) ? 'text-app-accent fill-current' : 'text-app-secondary hover:text-app-primary'
               }`}
-              title={tr("Toggle Lyrics")}
-            >
-              <Mic className="w-6 h-6" />
-            </button>
-
-            {/* Video Button */}
-            <button
-              onClick={() => setCenterMode(m => (m === 'video' ? 'artwork' : 'video'))}
-              className={`p-2 transition-transform active:scale-95 ${
-                centerMode === 'video' ? 'text-app-primary font-bold scale-110' : 'text-app-secondary hover:text-app-primary'
-              }`}
-              title={tr("Toggle Video")}
-            >
-              <VideoIcon className="w-6 h-6" />
-            </button>
-
-            <button
-              onClick={() => setShowOptions(true)}
-              className="p-2 text-app-secondary hover:text-app-primary active:scale-95 transition-transform"
-              title={tr("More options")}
-            >
-              <MoreVertical className="w-6 h-6" />
-            </button>
-          </div>
+            />
+          </button>
         </div>
 
         {/* Audio Progress Slider Bar */}
@@ -743,6 +706,7 @@ export const NowPlayingScreen: React.FC = () => {
             {Math.round(volume * 100)}%
           </span>
         </div>
+
       </div>
 
       {/* ========================================================================= */}

@@ -12,7 +12,7 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
-function shrink(dataUrl: string): Promise<string> {
+export function shrinkImage(dataUrl: string): Promise<string> {
   return new Promise(resolve => {
     const img = new Image();
     img.onload = () => {
@@ -54,7 +54,7 @@ export function pickImage(): Promise<string | null> {
       const file = input.files?.[0];
       if (!file) return finish(null);
       try {
-        finish(await shrink(await readAsDataUrl(file)));
+        finish(await shrinkImage(await readAsDataUrl(file)));
       } catch {
         finish(null);
       }

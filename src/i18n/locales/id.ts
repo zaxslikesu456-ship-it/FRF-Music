@@ -348,5 +348,16 @@ const id: Record<string, string> = {
   "From Wikipedia": "Dari Wikipedia",
   "More from {artist}": "Lainnya dari {artist}",
   "Like \"{song}\"": "Mirip \"{song}\"",
+  "Importing": "Mengimpor",
+  "Imported": "Diimpor",
+  "could not import": "gagal diimpor",
+  "song": "lagu",
+  "songs": "lagu",
+  "Import songs": "Impor lagu",
+  "not audio, skipped": "bukan audio, dilewati",
+  "One picture for all": "Satu gambar untuk semua",
+  "None of these files are songs.": "Tidak ada file yang berupa lagu.",
+  "Choose picture": "Pilih gambar",
+  "Add 1 song": "Tambah 1 lagu",
 };
 export default id;

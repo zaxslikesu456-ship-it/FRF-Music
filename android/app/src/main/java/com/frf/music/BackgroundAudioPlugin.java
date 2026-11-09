@@ -806,6 +806,39 @@ public class BackgroundAudioPlugin extends Plugin {
         }, "frf-cover-cache").start();
     }
 
+    // A song you imported from your own files: the web layer sends it in base64
+    // chunks (first with append=false, then appended). Stored in the offline
+    // folder like a download, so ExoPlayer can play it in the background and it
+    // survives restarts. Returns the absolute path and the size so far.
+    @PluginMethod
+    public void saveImportedFile(PluginCall call) {
+        String fileName = call.getString("fileName", "import.mp3");
+        String base64 = call.getString("base64", "");
+        boolean append = Boolean.TRUE.equals(call.getBoolean("append", false));
+        final String safeName = (fileName == null ? "import.mp3" : fileName).replaceAll("[^A-Za-z0-9._-]", "_");
+        final String data = base64 == null ? "" : base64;
+        new Thread(() -> {
+            try {
+                File dir = new File(getContext().getFilesDir(), "offline");
+                if (!dir.exists() && !dir.mkdirs()) {
+                    call.reject("Could not create offline directory");
+                    return;
+                }
+                File out = new File(dir, safeName);
+                byte[] bytes = android.util.Base64.decode(data, android.util.Base64.DEFAULT);
+                try (FileOutputStream fos = new FileOutputStream(out, append)) {
+                    fos.write(bytes);
+                }
+                JSObject ret = new JSObject();
+                ret.put("path", out.getAbsolutePath());
+                ret.put("size", out.length());
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("Could not save the song: " + e.getMessage());
+            }
+        }, "frf-import").start();
+    }
+
     // "Clear all data": everything the app keeps natively — downloaded songs,
     // cached covers, the cache dir, alarms — plus the WebView's own storage and
     // cookies. Files the user chose to keep in the phone's Music folder are not

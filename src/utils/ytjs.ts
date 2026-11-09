@@ -3,6 +3,7 @@ import type { Types } from 'youtubei.js/web';
 import { timed } from './streamHealth';
 import { recordLoudness } from './loudness';
 import { getPlatformFetch } from './http';
+import { isAgeGateReason, noteAgeGated } from './ageGate';
 
 // googlevideo serves only the first ~1 MiB of IOS / ANDROID / ANDROID_VR /
 // WEB_REMIX streams unless the URL carries a GVS poToken that it accepts, so
@@ -92,7 +93,13 @@ async function resolveWithClient(
   const yt = await getInnertube(po);
   const info = await yt.getBasicInfo(youtubeId, { client, ...(po ? { po_token: po.contentPot } : {}) });
   const status = info.playability_status?.status;
-  if (status && status !== 'OK') throw new Error(`${client} ${status}`);
+  if (status && status !== 'OK') {
+    const reason = String(info.playability_status?.reason || '');
+    if (isAgeGateReason(status, reason)) {
+      noteAgeGated(youtubeId, info.basic_info?.title, info.basic_info?.author);
+    }
+    throw new Error(`${client} ${status}${reason ? `: ${reason}` : ''}`);
+  }
   const audio = (info.streaming_data?.adaptive_formats || []).filter(f => f.has_audio && !f.has_video);
   if (audio.length === 0) throw new Error(`${client}: no audio formats`);
   const format =

@@ -14,6 +14,7 @@ import {
   setCachedStreamUrl,
   dropCachedStreamUrl,
   cacheCoverArt,
+  saveImportedSong,
   restoreDownloadsFromMusic,
   syncMusicCopies,
   resolveAudioStreamUrl,
@@ -43,6 +44,9 @@ import {
 } from '../utils/smartDownloadsStore';
 import { normalizationGainDb } from '../utils/loudness';
 import { nativeCover } from '../utils/cover';
+import { generatedCover } from '../utils/audioMeta';
+import { hintTrack } from '../utils/ageGate';
+import { t as tr } from '../i18n';
 import { getArtColors, type ArtColors } from '../utils/artColors';
 import { isTauriRuntime } from '../utils/http';
 import {
@@ -155,6 +159,16 @@ interface BackgroundAudioPlugin {
     position?: number;
     duration?: number;
   }): Promise<void>;
+}
+
+/** One song file to import, with the details chosen in the import dialog. */
+export interface ImportSongItem {
+  file: File;
+  title: string;
+  artist: string;
+  album?: string;
+  coverUrl?: string;
+  duration?: number;
 }
 
 export interface OutputDevice {
@@ -306,7 +320,7 @@ interface AudioContextType {
   syncMusicFolderCopies: () => Promise<number>;
   importPlaylistToLibrary: (title: string, description: string, playlistTracks: Track[]) => void;
   removeDownload: (trackId: string) => void;
-  addLocalTracks: (files: FileList | File[]) => void;
+  importLocalSongs: (items: ImportSongItem[]) => Promise<number>;
   addTrackToLibrary: (track: Track) => void;
   removeTrackFromLibrary: (trackId: string) => void;
   searchYTMusic: (query: string) => Promise<Track[]>;
@@ -682,7 +696,11 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const downloadStatus: string | null = null;
 
   const openArtistProfile = (name: string) => {
-    if (name) setArtistProfileName(name);
+    if (!name) return;
+    // The full player sits on top of everything: opened from there, the profile
+    // used to appear behind it until the player was minimized.
+    setIsPlayerOpen(false);
+    setArtistProfileName(name);
   };
   const closeArtistProfile = () => setArtistProfileName(null);
   const showStatus = (msg: string, _ms?: number) => {
@@ -3023,6 +3041,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ? youtubePlaybackOverridesRef.current[track.id]
       : undefined;
     activeYoutubeIdRef.current = savedYoutubeId || track.youtubeId || null;
+    hintTrack(track.youtubeId, track.title, track.artist);
     registerTrack(track);
     recordPlay(track);
     setCurrentTrack(track);
@@ -3662,20 +3681,33 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // nothing is playing yet, the track simply starts.
   const addToQueue = (track: Track, position: 'next' | 'last' = 'last') => {
     registerTrack(track);
-    if (!currentTrackRef.current) {
+    const current = currentTrackRef.current;
+    if (!current) {
       playTrack(track);
       return;
     }
+    // "Play next" on the song that is playing has nothing to do.
+    if (track.id === current.id) return;
     setQueue(prev => {
-      const list = [...prev];
-      if (position === 'next') {
-        const curIdx = list.findIndex(t => t.id === currentTrackRef.current?.id);
-        list.splice(curIdx >= 0 ? curIdx + 1 : 0, 0, track);
-      } else {
-        list.push(track);
+      // Work on the list the player actually moves through (with no queue, the
+      // library). Starting from an empty queue used to leave only this one song
+      // in it, which then repeated forever.
+      const base = prev.length > 0 ? prev : tracks;
+      // Each song once: a second copy made the player find the first copy when
+      // looking for "where am I", so it jumped back and played songs again.
+      const list = base.filter(t => t.id !== track.id);
+      let curIdx = list.findIndex(t => t.id === current.id);
+      if (curIdx === -1) {
+        list.unshift(current);
+        curIdx = 0;
       }
+      if (position === 'next') list.splice(curIdx + 1, 0, track);
+      else list.push(track);
       return list;
     });
+    // With shuffle on, the next song was already picked at random (and on
+    // Android lined up in the player): this one replaces that pick.
+    if (position === 'next' && isShuffle) nextShuffleRef.current = { forId: current.id, track };
     showStatus(
       position === 'next'
         ? `Playing "${track.title}" next`
@@ -4447,43 +4479,46 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return await searchYouTubeMusic(query);
   };
 
-  const addLocalTracks = (files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    const newTracks: Track[] = fileArray
-      .filter(file => file.type.startsWith('audio/') || file.name.endsWith('.mp3') || file.name.endsWith('.wav') || file.name.endsWith('.ogg') || file.name.endsWith('.flac'))
-      .map((file, idx) => {
-        const url = URL.createObjectURL(file);
-        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-        const parts = nameWithoutExt.split('-').map(p => p.trim());
-        const artist = parts.length > 1 ? parts[0] : 'Local Audio';
-        const title = parts.length > 1 ? parts.slice(1).join(' - ') : nameWithoutExt;
-
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
-          <rect width="400" height="400" fill="#050505"/>
-          <circle cx="200" cy="200" r="150" stroke="#ffffff" stroke-width="4" fill="none" stroke-dasharray="12 6"/>
-          <text x="200" y="210" font-family="sans-serif" font-weight="900" font-size="28" fill="#ffffff" text-anchor="middle">AUDIO FILE</text>
-        </svg>`;
-
-        return {
-          id: `local-${Date.now()}-${idx}`,
-          title: title || file.name,
-          artist: artist,
-          album: 'Local Storage',
-          duration: 0,
-          url: url,
-          coverUrl: `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`,
-          isLocal: true,
-          genre: 'Local',
-          addedAt: Date.now(),
-        };
-      });
-
-    if (newTracks.length > 0) {
-      setTracks(prev => [...newTracks, ...prev]);
-      if (!currentTrack) {
-        playTrack(newTracks[0]);
-      }
+  // Your own song files. Each is copied into the app's storage (like a
+  // download) so it still plays after a restart and in the background, then
+  // added to the library with the title, artist and picture you chose.
+  const importLocalSongs = async (items: ImportSongItem[]): Promise<number> => {
+    const stamp = Date.now();
+    const added: Track[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const title = it.title.trim() || it.file.name.replace(/\.[^/.]+$/, '');
+      const artist = it.artist.trim() || 'Unknown Artist';
+      const track: Track = {
+        id: `local-${stamp}-${i}`,
+        title,
+        artist,
+        album: it.album?.trim() || 'Local Storage',
+        duration: it.duration || 0,
+        url: '',
+        coverUrl: it.coverUrl || generatedCover(title, artist),
+        isLocal: true,
+        genre: 'Local',
+        addedAt: stamp - i,
+      };
+      showStatus(
+        items.length > 1 ? `${tr('Importing')} ${i + 1}/${items.length}: ${title}` : `${tr('Importing')} ${title}…`,
+        60000
+      );
+      if (await saveImportedSong(track, it.file)) added.push(track);
     }
+    if (added.length > 0) {
+      setTracks(prev => [...added, ...prev.filter(t => !added.some(a => a.id === t.id))]);
+      added.forEach(registerTrack);
+    }
+    const failed = items.length - added.length;
+    showStatus(
+      failed > 0
+        ? `${tr('Imported')} ${added.length}, ${tr('could not import')} ${failed}`
+        : `${tr('Imported')} ${added.length} ${added.length === 1 ? tr('song') : tr('songs')}`,
+      4000
+    );
+    return added.length;
   };
 
   const createPlaylist = (name: string, description?: string) => {
@@ -4750,7 +4785,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         syncMusicFolderCopies,
         importPlaylistToLibrary,
         removeDownload,
-        addLocalTracks,
+        importLocalSongs,
         addTrackToLibrary,
         removeTrackFromLibrary,
         searchYTMusic,

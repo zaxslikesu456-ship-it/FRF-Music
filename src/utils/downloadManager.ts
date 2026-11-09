@@ -3,6 +3,15 @@ import type { Track } from '../types/music';
 import { httpGetJson, httpPostJson, isTauriRuntime } from './http';
 import { getPoTokenMinter } from './poToken';
 import { recordSource } from './streamHealth';
+import {
+  isAgeGated,
+  noteAgeGated,
+  isAgeGateReason,
+  songDetailsFor,
+  hintTrack,
+  getAgeSubstitute,
+  setAgeSubstitute,
+} from './ageGate';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -55,6 +64,8 @@ interface StreamProbePlugin {
     }>;
   }>;
   restoreFromMusic?(options: { uri: string; fileName: string }): Promise<{ path?: string; size?: number }>;
+  // Writes (or appends) a base64 chunk of a song you imported into the offline folder.
+  saveImportedFile?(options: { fileName: string; base64: string; append: boolean }): Promise<{ path?: string; size?: number }>;
 }
 const StreamProbe = IS_NATIVE
   ? registerPlugin<StreamProbePlugin>('BackgroundAudio')
@@ -364,7 +375,13 @@ async function resolveFromInnerTubeClient(
   );
 
   const status = data?.playabilityStatus?.status;
-  if (status && status !== 'OK') throw new Error(`Status ${status}`);
+  if (status && status !== 'OK') {
+    const reason = String(data?.playabilityStatus?.reason || '');
+    if (isAgeGateReason(status, reason)) {
+      noteAgeGated(youtubeId, data?.videoDetails?.title, data?.videoDetails?.author);
+    }
+    throw new Error(`Status ${status}${reason ? `: ${reason.slice(0, 60)}` : ''}`);
+  }
 
   const url = pickAudioUrl([
     ...(data?.streamingData?.adaptiveFormats || []),
@@ -556,6 +573,9 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
       lastResolveNotes.push(`youtubei:${msg}`.slice(0, 60));
     }
   }
+  // Age-gated videos fail on every source below too: do not spend half a
+  // minute proving it. The caller plays the song version instead.
+  if (isAgeGated(youtubeId)) throw new Error('Age-restricted video');
   try {
     return await raceFirstUrl([
       // The poToken'd stream goes first: on bot-gated networks it is the only
@@ -573,6 +593,7 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
   } catch {
     // fall through to the retries below
   }
+  if (isAgeGated(youtubeId)) throw new Error('Age-restricted video');
 
   // Retry: InnerTube with a freshly minted poToken. Bot-flagged networks
   // (very common on cellular) reject anonymous requests with LOGIN_REQUIRED
@@ -600,6 +621,47 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
   );
 }
 
+// Plays an age-restricted video's song version instead. YouTube will not hand
+// any of the app's clients the video itself without a signed-in account, but
+// the same song's YouTube Music audio track is not gated. The swap is
+// remembered, so next time it goes straight to the song version.
+async function resolveWithAgeFallback(youtubeId: string): Promise<string> {
+  const known = getAgeSubstitute(youtubeId);
+  if (known) {
+    try {
+      return await resolveAudioStreamUrlUncached(known);
+    } catch {
+      // that track went away too: look for another one below
+    }
+  }
+  if (!known) {
+    try {
+      return await resolveAudioStreamUrlUncached(youtubeId);
+    } catch (e) {
+      if (!isAgeGated(youtubeId)) throw e;
+    }
+  }
+  const song = songDetailsFor(youtubeId);
+  if (!song) throw new Error('Age-restricted video');
+  const { findSongVersionIds } = await import('./ytMusicApi');
+  const started = Date.now();
+  const ids = await findSongVersionIds(song.title, song.artist, [youtubeId, ...(known ? [known] : [])]);
+  for (const id of ids) {
+    if (isAgeGated(id)) continue;
+    try {
+      const url = await resolveAudioStreamUrlUncached(id);
+      setAgeSubstitute(youtubeId, id);
+      recordSource('Age-restricted video: song version', true, Date.now() - started);
+      return url;
+    } catch {
+      // try the next match
+    }
+  }
+  if (known) setAgeSubstitute(youtubeId, null);
+  recordSource('Age-restricted video: song version', false, Date.now() - started, 'no playable song version found');
+  throw new Error('Age-restricted video, and no playable song version was found');
+}
+
 export async function resolveAudioStreamUrl(
   youtubeId: string,
   force = false
@@ -611,7 +673,7 @@ export async function resolveAudioStreamUrl(
     if (inflight) return inflight;
   }
 
-  const pending = resolveAudioStreamUrlUncached(youtubeId)
+  const pending = resolveWithAgeFallback(youtubeId)
     .then(url => {
       setCachedStreamUrl(youtubeId, url);
       return url;
@@ -1140,6 +1202,7 @@ export async function downloadTrackToFile(
   onProgress?: (p: { bytes: number; contentLength: number }) => void
 ): Promise<boolean> {
   if (!track || !track.id) return false;
+  hintTrack(track.youtubeId, track.title, track.artist);
   const downloadStartedAt = Date.now();
   lastDownloadError = '';
   activeDownloadsMap.set(track.id, {
@@ -1330,4 +1393,71 @@ export async function removeOfflineTrack(trackId: string): Promise<void> {
   } catch {
     // ignore
   }
+}
+
+// ---------------------------------------------------------------------------
+// Songs you import from your own files. They are kept like downloads, so they
+// still play after the app restarts (the old import only held a temporary
+// in-memory link that died with the app) and, on Android, in the background:
+// the file is copied into the app's offline folder; elsewhere it is stored in
+// IndexedDB.
+// ---------------------------------------------------------------------------
+
+const IMPORT_CHUNK = 768 * 1024;
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result);
+      resolve(s.slice(s.indexOf(',') + 1));
+    };
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+export async function saveImportedSong(
+  track: Track,
+  file: File,
+  onProgress?: (fraction: number) => void
+): Promise<boolean> {
+  let path = '';
+  let webUrl = '';
+  try {
+    if (IS_ANDROID_NATIVE && StreamProbe?.saveImportedFile) {
+      const ext = (file.name.match(/\.([a-z0-9]{2,5})$/i)?.[1] || 'mp3').toLowerCase();
+      const fileName = `${track.id}.${ext}`;
+      let res: { path?: string } = {};
+      for (let offset = 0; offset < file.size || offset === 0; offset += IMPORT_CHUNK) {
+        const base64 = await blobToBase64(file.slice(offset, offset + IMPORT_CHUNK));
+        res = await StreamProbe.saveImportedFile({ fileName, base64, append: offset > 0 });
+        onProgress?.(Math.min(1, (offset + IMPORT_CHUNK) / Math.max(1, file.size)));
+        if (file.size === 0) break;
+      }
+      if (!res.path) return false;
+      path = res.path;
+      webUrl = Capacitor.convertFileSrc(path);
+    } else {
+      await storeBlobOffline(track.id, file);
+      onProgress?.(1);
+    }
+  } catch (e) {
+    console.warn('[import] could not store', file.name, e);
+    return false;
+  }
+  const saved = localStorage.getItem(OFFLINE_KEY);
+  const records: OfflineFileRecord[] = saved ? JSON.parse(saved) : [];
+  const filtered = records.filter(r => r.trackId !== track.id);
+  filtered.push({
+    trackId: track.id,
+    path,
+    webUrl,
+    size: file.size,
+    downloadedAt: Date.now(),
+    title: track.title,
+    artist: track.artist,
+  });
+  localStorage.setItem(OFFLINE_KEY, JSON.stringify(filtered));
+  return true;
 }
