@@ -77,6 +77,8 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
     searchYTMusic,
     addTrackToPlaylist,
     addTrackToLibrary,
+    downloads,
+    downloadPlaylist,
   } = useAudio();
 
   const [selectedTrackForMenu, setSelectedTrackForMenu] = useState<Track | null>(null);
@@ -156,6 +158,30 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
   // Shares the whole playlist as a code that can be pasted in any chat and imported
   // from Library > Import playlist. The code is also copied, so it still works
   // when the phone has no share sheet.
+  // Download: which songs are already on this device, and which still need a file.
+  // (Your own uploads already live on the device, so they never need one.)
+  const downloadState = useMemo(() => {
+    const have = new Set(downloads);
+    const fetchable = allActiveTracks.filter(t => !t.isLocal && t.youtubeId);
+    const missing = fetchable.filter(t => !have.has(t.id));
+    return { total: fetchable.length, missing: missing.length };
+  }, [downloads, allActiveTracks]);
+  const alreadyDownloaded = downloadState.total > 0 && downloadState.missing === 0;
+
+  const handleDownload = () => {
+    setShowTopMenu(false);
+    if (allActiveTracks.length === 0) return;
+    if (alreadyDownloaded) {
+      setShareNote(tr('You already downloaded this playlist'));
+      window.setTimeout(() => setShareNote(''), 3500);
+      return;
+    }
+    if (onDownloadAll) onDownloadAll();
+    else void downloadPlaylist(title, allActiveTracks, playlistId);
+    setShareNote(tr('Downloading {count} songs', { count: downloadState.missing || allActiveTracks.length }));
+    window.setTimeout(() => setShareNote(''), 3500);
+  };
+
   const handleShare = async () => {
     const songs = processedTracks.filter(t => t.youtubeId || t.title).map(songFromTrack);
     if (songs.length === 0) return;
@@ -455,16 +481,21 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                   className="absolute right-0 mt-2 w-48 rounded-2xl bg-zinc-900/95 border border-white/10 p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-xl"
                   onClick={e => e.stopPropagation()}
                 >
-                  {onDownloadAll && (
+                  {allActiveTracks.length > 0 && (
                     <button
-                      onClick={() => {
-                        setShowTopMenu(false);
-                        onDownloadAll();
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-white/10 text-left text-xs font-semibold text-zinc-200"
+                      onClick={handleDownload}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-white/10 text-left text-xs font-semibold ${
+                        alreadyDownloaded ? 'text-emerald-400' : 'text-zinc-200'
+                      }`}
                     >
-                      <Download className="w-4 h-4" />
-                      <span>{tr("Download All")}</span>
+                      {alreadyDownloaded ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+                      <span>
+                        {alreadyDownloaded
+                          ? tr('Already downloaded')
+                          : downloadState.missing > 0 && downloadState.missing < downloadState.total
+                            ? tr('Download {count} missing', { count: downloadState.missing })
+                            : tr('Download playlist')}
+                      </span>
                     </button>
                   )}
 
@@ -589,13 +620,13 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
 
         {/* Right Side Controls */}
         <div className="flex items-center gap-3">
-          {onDownloadAll && (
+          {allActiveTracks.length > 0 && (
             <button
-              onClick={onDownloadAll}
-              className="p-1.5 hover:text-white transition-colors"
-              title={tr("Download All")}
+              onClick={handleDownload}
+              className={`p-1.5 transition-colors ${alreadyDownloaded ? 'text-emerald-400' : 'hover:text-white'}`}
+              title={alreadyDownloaded ? tr('Already downloaded') : tr('Download playlist')}
             >
-              <Download className="w-4 h-4" />
+              {alreadyDownloaded ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
             </button>
           )}
 
