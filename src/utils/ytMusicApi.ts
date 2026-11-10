@@ -896,6 +896,22 @@ export interface ArtistPage {
   monthlyAudience: string;
   subscribers: string;
   views: string;
+  /** The artist's own videos (YouTube Music's "Videos" shelf, not a search). */
+  videos: Track[];
+  /** Albums, then singles and EPs, newest first as YouTube lists them. */
+  albums: ArtistRelease[];
+  singles: ArtistRelease[];
+}
+
+/** One album, single or EP on an artist's page. */
+export interface ArtistRelease {
+  /** The release's page (MPREb_...) */
+  browseId: string;
+  params?: string;
+  title: string;
+  year: string;
+  kind: string;
+  coverUrl: string;
 }
 
 const artistPageCache = new Map<string, { page: ArtistPage | null; at: number }>();
@@ -903,6 +919,89 @@ const artistPageInflight = new Map<string, Promise<ArtistPage | null>>();
 const ARTIST_TOP_TTL_MS = 30 * 60 * 1000;
 
 const runsText = (x: any): string => (x?.runs || []).map((r: any) => r.text).join('').trim();
+
+// "Beyoncé" and "beyonce" and "Alex G." are the same name when matching artists.
+export function normalizeName(s: string): string {
+  return (s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\u0400-\u04ff\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+/g, ' ')
+    .trim();
+}
+
+/** True when the song's credited artists include this exact artist. */
+export function isByArtist(track: Track, artistName: string): boolean {
+  const want = normalizeName(artistName.split(/,|&| feat\.? | ft\.? /i)[0]);
+  if (!want) return false;
+  const credited = (track.artist || '').split(/,|&| feat\.? | ft\.? | x /i).map(normalizeName);
+  return credited.includes(want) || normalizeName(track.artist || '') === want;
+}
+
+function parseReleases(items: any[], defaultKind: string): ArtistRelease[] {
+  const out: ArtistRelease[] = [];
+  const seen = new Set<string>();
+  for (const it of items) {
+    const r = it?.musicTwoRowItemRenderer;
+    const ep = r?.navigationEndpoint?.browseEndpoint;
+    if (!r || !ep?.browseId || !String(ep.browseId).startsWith('MPRE')) continue;
+    if (seen.has(ep.browseId)) continue;
+    seen.add(ep.browseId);
+    const words = (r.subtitle?.runs || []).map((x: any) => String(x.text || '').trim()).filter((x: string) => x && x !== '•');
+    const year = words.find((w: string) => /^(19|20)\d{2}$/.test(w)) || '';
+    const kindWord = words.find((w: string) => /^(Album|Single|EP|Mixtape|Compilation|Live|Soundtrack)$/i.test(w));
+    const thumbs = r.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+    out.push({
+      browseId: ep.browseId,
+      params: ep.params,
+      title: runsText(r.title) || 'Unknown',
+      year,
+      kind: kindWord ? kindWord.charAt(0).toUpperCase() + kindWord.slice(1).toLowerCase() : defaultKind || 'Album',
+      coverUrl: hiResCover(thumbs.length ? thumbs[thumbs.length - 1].url : ''),
+    });
+  }
+  return out;
+}
+
+/** The songs on one album, single or EP. */
+export async function fetchReleaseTracks(release: ArtistRelease, artistName: string): Promise<Track[]> {
+  const data = await httpPostJson(
+    `${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`,
+    { ...buildClientContext(), browseId: release.browseId, ...(release.params ? { params: release.params } : {}) },
+    5000
+  );
+  const sections =
+    data?.contents?.twoColumnBrowseResultsRenderer?.secondaryContents?.sectionListRenderer?.contents ||
+    data?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents ||
+    [];
+  const shelf = sections.map((s: any) => s?.musicShelfRenderer || s?.musicPlaylistShelfRenderer).find(Boolean);
+  const tracks: Track[] = [];
+  for (const entry of shelf?.contents || []) {
+    const r = entry?.musicResponsiveListItemRenderer;
+    const videoId = r?.playlistItemData?.videoId;
+    if (!r || !videoId) continue;
+    const title = runsText(r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text) || 'Unknown Song';
+    const credited = (r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [])
+      .filter((x: any) => x?.navigationEndpoint?.browseEndpoint?.browseEndpointContextSupportedConfigs
+        ?.browseEndpointContextMusicConfig?.pageType === 'MUSIC_PAGE_TYPE_ARTIST')
+      .map((x: any) => x.text);
+    const time = runsText(r.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text).match(/(?:(\d+):)?(\d{1,2}):(\d{2})$/);
+    const duration = time ? (Number(time[1] || 0) * 3600 + Number(time[2]) * 60 + Number(time[3])) : 200;
+    tracks.push({
+      id: `yt-${videoId}`,
+      title,
+      artist: credited.join(', ') || artistName,
+      album: release.title,
+      duration,
+      url: '',
+      coverUrl: release.coverUrl,
+      isYouTube: true,
+      youtubeId: videoId,
+      addedAt: Date.now(),
+    });
+  }
+  return tracks;
+}
 
 export async function fetchArtistPage(artistName: string): Promise<ArtistPage | null> {
   // A track credits "A, B"; the first name is the one whose page we want.
@@ -917,13 +1016,16 @@ export async function fetchArtistPage(artistName: string): Promise<ArtistPage | 
   const pending = (async (): Promise<ArtistPage | null> => {
     try {
       const artists = await searchYouTubeMusicArtists(name);
+      // The artist with exactly this name; a near match (another artist whose
+      // name merely contains it) only when there is no exact one.
+      const nk = normalizeName(name);
       const hit =
-        artists.find(a => a.name.toLowerCase().trim() === key) ||
+        artists.find(a => a.id.startsWith('UC') && normalizeName(a.name) === nk) ||
         artists.find(a => {
-          const n = a.name.toLowerCase();
-          return n.includes(key) || key.includes(n);
+          const n = normalizeName(a.name);
+          return a.id.startsWith('UC') && (n.startsWith(nk) || nk.startsWith(n));
         });
-      if (!hit || !hit.id.startsWith('UC')) return null;
+      if (!hit) return null;
 
       const page = await httpPostJson(
         `${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`,
@@ -943,6 +1045,9 @@ export async function fetchArtistPage(artistName: string): Promise<ArtistPage | 
         monthlyAudience: runsText(header.monthlyListenerCount),
         subscribers: runsText(header.subscriptionButton?.subscribeButtonRenderer?.subscriberCountText),
         views: runsText(about?.subheader),
+        videos: [],
+        albums: [],
+        singles: [],
       };
 
       const shelf = sections
@@ -978,6 +1083,68 @@ export async function fetchArtistPage(artistName: string): Promise<ArtistPage | 
           )
           .slice(0, 30);
       }
+
+      // Videos and releases come from the page's own shelves.
+      const carousels: any[] = sections.map((s: any) => s?.musicCarouselShelfRenderer).filter(Boolean);
+      const carouselTitle = (c: any) =>
+        runsText(c?.header?.musicCarouselShelfBasicHeaderRenderer?.title).toLowerCase();
+      const videoShelf = carousels.find(c => carouselTitle(c) === 'videos');
+      if (videoShelf) {
+        const more = videoShelf.header?.musicCarouselShelfBasicHeaderRenderer?.moreContentButton?.buttonRenderer
+          ?.navigationEndpoint?.browseEndpoint;
+        let vEntries: any[] = videoShelf.contents || [];
+        if (more?.browseId) {
+          try {
+            const full = await httpPostJson(
+              `${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`,
+              { ...buildClientContext(), browseId: more.browseId, params: more.params },
+              4000
+            );
+            const fullSections =
+              full?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content
+                ?.sectionListRenderer?.contents || [];
+            const fullShelf = fullSections
+              .map((s: any) => s?.musicPlaylistShelfRenderer || s?.musicShelfRenderer)
+              .find((s: any) => s?.contents?.length);
+            if (fullShelf && fullShelf.contents.length > vEntries.length) vEntries = fullShelf.contents;
+          } catch {
+            // keep the short shelf
+          }
+        }
+        info.videos = parseShelfEntries(vEntries)
+          .map(t =>
+            !t.artist || t.artist === 'YouTube Artist' || t.artist === t.title ? { ...t, artist: hit.name } : t
+          )
+          .slice(0, 40);
+      }
+
+      // Every album, single and EP: the artist's full discography page, else
+      // whatever the page itself lists.
+      let releases: ArtistRelease[] = [];
+      try {
+        const disco = await httpPostJson(
+          `${getYtmBase()}/browse?alt=json&key=${YTM_API_KEY}`,
+          { ...buildClientContext(), browseId: `MPAD${hit.id}` },
+          4000
+        );
+        const dSections =
+          disco?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content
+            ?.sectionListRenderer?.contents || [];
+        const items = dSections.flatMap((s: any) => s?.gridRenderer?.items || []);
+        releases = parseReleases(items, '');
+      } catch {
+        // use the page's shelves
+      }
+      if (releases.length === 0) {
+        for (const c of carousels) {
+          const t = carouselTitle(c);
+          if (t === 'albums') releases.push(...parseReleases(c.contents || [], 'Album'));
+          else if (t.startsWith('singles')) releases.push(...parseReleases(c.contents || [], 'Single'));
+        }
+      }
+      info.albums = releases.filter(r => r.kind === 'Album');
+      info.singles = releases.filter(r => r.kind !== 'Album');
+
       artistPageCache.set(key, { page: info, at: Date.now() });
       return info;
     } catch {

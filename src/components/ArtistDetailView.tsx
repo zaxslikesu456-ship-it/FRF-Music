@@ -8,8 +8,12 @@ import {
   searchYouTubeMusicArtists,
   loadMoreSearchResults,
   fetchArtistPage,
+  fetchReleaseTracks,
+  isByArtist,
   type ArtistPage,
+  type ArtistRelease,
 } from '../utils/ytMusicApi';
+import { PlaylistDetailView } from './PlaylistDetailView';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
 import type { Track } from '../types/music';
 import { getArtistBio, type ArtistBio } from '../utils/artistBio';
@@ -61,6 +65,13 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
   const [bio, setBio] = useState<ArtistBio | null>(null);
   const [bioOpen, setBioOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  // The artist's own videos and releases, from their YouTube Music page.
+  const [pageVideos, setPageVideos] = useState<Track[] | null>(null);
+  const [albumList, setAlbumList] = useState<ArtistRelease[]>([]);
+  const [singleList, setSingleList] = useState<ArtistRelease[]>([]);
+  const [showAllPopular, setShowAllPopular] = useState(false);
+  const [showAllAlbums, setShowAllAlbums] = useState(false);
+  const [openRelease, setOpenRelease] = useState<{ release: ArtistRelease; tracks: Track[]; loading: boolean } | null>(null);
   const [menuTrack, setMenuTrack] = useState<Track | null>(null);
   // Header: the artist's photo, wide, fading and drifting as the page scrolls.
   const [photo, setPhoto] = useState('');
@@ -91,7 +102,8 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
     setNoMore(false);
     searchYouTubeMusic(artistName)
       .then(results => {
-        if (mounted) setExtraTracks(results || []);
+        // Search mixes in other artists with similar names; keep this artist's songs.
+        if (mounted) setExtraTracks((results || []).filter(t => isByArtist(t, artistName)));
       })
       .catch(() => {})
       .finally(() => {
@@ -101,19 +113,30 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
     setAbout(null);
     setBio(null);
     setBioOpen(false);
+    setPageVideos(null);
+    setAlbumList([]);
+    setSingleList([]);
+    setShowAllPopular(false);
+    setShowAllAlbums(false);
+    setOpenRelease(null);
+    setVideos([]);
     fetchArtistPage(artistName)
       .then(page => {
         if (!mounted || !page) return;
         setTopSongs(page.topSongs);
         setAbout(page);
+        setPageVideos(page.videos);
+        setAlbumList(page.albums);
+        setSingleList(page.singles);
         return getArtistBio(page.name, page.description).then(b => {
           if (mounted) setBio(b);
         });
       })
       .catch(() => {});
+    // Only used when the artist's page has no videos of its own.
     searchYouTubeMusicVideos(artistName)
       .then(results => {
-        if (mounted) setVideos(results || []);
+        if (mounted) setVideos((results || []).filter(t => isByArtist(t, artistName)));
       })
       .catch(() => {});
     return () => {
@@ -124,9 +147,10 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
   const allTracks = useMemo(() => {
     const map = new Map<string, Track>();
     localTracks.forEach(t => map.set(t.id, t));
+    topSongs.forEach(t => map.set(t.id, t));
     extraTracks.forEach(t => map.set(t.id, t));
     return Array.from(map.values());
-  }, [localTracks, extraTracks]);
+  }, [localTracks, topSongs, extraTracks]);
 
   const allTracksRef = useRef<Track[]>([]);
   allTracksRef.current = allTracks;
@@ -153,15 +177,19 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
 
   // YouTube Music's own most-popular order; the id hash is only a stand-in
   // while that list loads or when the artist has none.
-  const popular = useMemo(
+  const popularAll = useMemo(
     () =>
       topSongs.length > 0
-        ? topSongs.slice(0, 5)
+        ? topSongs
         : [...allTracks].sort((a, b) => popularity(b) - popularity(a)).slice(0, 5),
     [topSongs, allTracks]
   );
+  const popular = showAllPopular ? popularAll : popularAll.slice(0, 5);
 
-  const albums = useMemo(() => {
+  // The artist's own videos; a search is only a stand-in when their page has none.
+  const shownVideos = pageVideos && pageVideos.length > 0 ? pageVideos : pageVideos === null ? [] : videos;
+
+  const derivedAlbums = useMemo(() => {
     const map = new Map<string, Track[]>();
     allTracks.forEach(t => {
       const name = t.album && t.album !== 'YouTube Music' ? t.album : '';
@@ -181,16 +209,12 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
     loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      const norm = artistName.toLowerCase().trim();
       const page = await loadMoreSearchResults(artistName);
       if (page.length === 0) {
         setNoMore(true);
         return;
       }
-      const mine = page.filter(t => {
-        const a = (t.artist || '').toLowerCase();
-        return a.includes(norm) || (a.length > 0 && norm.includes(a));
-      });
+      const mine = page.filter(t => isByArtist(t, artistName));
       const shown = new Set(allTracksRef.current.map(t => t.id));
       const fresh = mine.filter(t => !shown.has(t.id));
       if (fresh.length) setExtraTracks(prev => [...prev, ...fresh.filter(t => !prev.some(p => p.id === t.id))]);
@@ -210,6 +234,13 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 600) void loadMore();
   };
 
+  const openReleasePage = (release: ArtistRelease) => {
+    setOpenRelease({ release, tracks: [], loading: true });
+    fetchReleaseTracks(release, artistName)
+      .then(tracks => setOpenRelease(cur => (cur && cur.release.browseId === release.browseId ? { release, tracks, loading: false } : cur)))
+      .catch(() => setOpenRelease(cur => (cur && cur.release.browseId === release.browseId ? { release, tracks: [], loading: false } : cur)));
+  };
+
   const handlePlayAll = () => {
     if (allTracks.length === 0) return;
     if (isShuffle) toggleShuffle();
@@ -221,6 +252,19 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
     if (!isShuffle) toggleShuffle();
     playQueue(allTracks, 0);
   };
+
+  if (openRelease) {
+    const r = openRelease.release;
+    return (
+      <PlaylistDetailView
+        title={r.title}
+        subtitle={[artistName, r.kind, r.year].filter(Boolean).join(' • ')}
+        coverUrl={r.coverUrl}
+        tracks={openRelease.tracks}
+        onBack={() => setOpenRelease(null)}
+      />
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto pb-28 bg-app-primary" onScroll={handleScroll}>
@@ -433,18 +477,26 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
               );
             })}
           </div>
+          {popularAll.length > 5 && (
+            <button
+              onClick={() => setShowAllPopular(v => !v)}
+              className="mx-2 mt-2 text-sm font-semibold text-app-secondary hover:text-app-primary"
+            >
+              {showAllPopular ? tr('Show less') : tr('Show all {count}', { count: popularAll.length })}
+            </button>
+          )}
         </div>
       )}
 
       {/* Videos */}
-      {videos.length > 0 && (
+      {shownVideos.length > 0 && (
         <div className="px-5 pt-8">
           <h2 className="text-xl font-bold text-app-primary pb-4">{tr("Videos")}</h2>
           <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
-            {videos.slice(0, 10).map((v, idx) => (
+            {shownVideos.map((v, idx) => (
               <button
                 key={`${v.id}-${idx}`}
-                onClick={() => playQueue(videos, idx)}
+                onClick={() => playQueue(shownVideos, idx)}
                 className="w-56 shrink-0 text-left"
               >
                 <div className="relative w-56 h-32 rounded-xl overflow-hidden bg-app-surface">
@@ -469,11 +521,53 @@ export const ArtistDetailView: React.FC<ArtistDetailViewProps> = ({
       )}
 
       {/* Records / Albums */}
-      {albums.length > 0 && (
+      {albumList.length > 0 && (
+        <div className="px-5 pt-8">
+          <div className="flex items-baseline justify-between pb-4">
+            <h2 className="text-xl font-bold text-app-primary">{tr('Albums')}</h2>
+            {albumList.length > 8 && (
+              <button onClick={() => setShowAllAlbums(v => !v)} className="text-sm font-semibold text-app-secondary hover:text-app-primary">
+                {showAllAlbums ? tr('Show less') : tr('Show all {count}', { count: albumList.length })}
+              </button>
+            )}
+          </div>
+          <div className={showAllAlbums ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4' : 'flex gap-4 overflow-x-auto pb-2 no-scrollbar'}>
+            {(showAllAlbums ? albumList : albumList.slice(0, 12)).map(r => (
+              <button key={r.browseId} onClick={() => openReleasePage(r)} className={showAllAlbums ? 'text-left' : 'w-36 shrink-0 text-left'}>
+                <div className={`${showAllAlbums ? 'w-full aspect-square' : 'w-36 h-36'} rounded-xl bg-app-card overflow-hidden flex items-center justify-center`}>
+                  {r.coverUrl ? <img src={r.coverUrl} alt={r.title} loading="lazy" className="w-full h-full object-cover" /> : <Disc3 className="w-10 h-10 text-app-primary" />}
+                </div>
+                <p className="text-sm font-semibold text-app-primary mt-2 truncate">{r.title}</p>
+                <p className="text-xs text-app-secondary truncate">{[r.year, r.kind].filter(Boolean).join(' • ')}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {singleList.length > 0 && (
+        <div className="px-5 pt-8">
+          <h2 className="text-xl font-bold text-app-primary pb-4">{tr('Singles & EPs')}</h2>
+          <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
+            {singleList.map(r => (
+              <button key={r.browseId} onClick={() => openReleasePage(r)} className="w-36 shrink-0 text-left">
+                <div className="w-36 h-36 rounded-xl bg-app-card overflow-hidden flex items-center justify-center">
+                  {r.coverUrl ? <img src={r.coverUrl} alt={r.title} loading="lazy" className="w-full h-full object-cover" /> : <Disc3 className="w-10 h-10 text-app-primary" />}
+                </div>
+                <p className="text-sm font-semibold text-app-primary mt-2 truncate">{r.title}</p>
+                <p className="text-xs text-app-secondary truncate">{[r.year, r.kind].filter(Boolean).join(' • ')}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Albums from the songs on hand (your own music, or when the page has none) */}
+      {albumList.length === 0 && singleList.length === 0 && derivedAlbums.length > 0 && (
         <div className="px-5 pt-8">
           <h2 className="text-xl font-bold text-app-primary pb-4">{tr("Records")}</h2>
           <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
-            {albums.map(([name, albumTracks]) => (
+            {derivedAlbums.map(([name, albumTracks]) => (
               <button
                 key={name}
                 onClick={() => onOpenAlbum?.(name)}
