@@ -14,10 +14,18 @@ import type { LyricCardInput } from '../utils/lyricCard';
  * in the middle, pauses while you scroll by hand), a per-song timing nudge,
  * Copy all and a shareable lyric card. Mount it only while it is visible.
  */
-export const LyricsPanel: React.FC<{ className?: string; fullscreen?: boolean }> = ({
-  className = '',
-  fullscreen = false,
-}) => {
+export const LyricsPanel: React.FC<{
+  className?: string;
+  fullscreen?: boolean;
+  /** Fullscreen only: how big the lines are (1 = normal). */
+  fontScale?: number;
+  /** Fullscreen only: hide the buttons above the lines. */
+  hideControls?: boolean;
+}> = ({ className = '', fullscreen = false, fontScale = 1, hideControls = false }) => {
+  // Fullscreen line sizes in pixels: big on a wide window, smaller on a phone.
+  const wideScreen = typeof window !== 'undefined' && window.innerWidth >= 768;
+  const fsActive = Math.round((wideScreen ? 46 : 30) * fontScale);
+  const fsOther = Math.round((wideScreen ? 36 : 24) * fontScale);
   const { currentTrack, currentTime, duration, seekTo, isPlaying } = useAudio();
   const [showFullscreen, setShowFullscreen] = useState(false);
 
@@ -331,13 +339,14 @@ export const LyricsPanel: React.FC<{ className?: string; fullscreen?: boolean }>
       <div
         ref={lyricsContainerRef}
         className={`overflow-y-auto w-full no-scrollbar animate-in fade-in duration-200 select-text ${
-          fullscreen ? 'py-[30vh] px-2 md:px-6 space-y-6 md:space-y-8' : 'py-4 px-2 space-y-5'
+          fullscreen ? 'py-[30vh] px-2 md:px-6 flex flex-col' : 'py-4 px-2 space-y-5'
         } ${fullscreen ? 'flex-1 min-h-0' : className}`}
         style={{
           userSelect: 'text',
           WebkitUserSelect: 'text',
           ...(fullscreen
             ? {
+                gap: Math.round(fsActive * 0.55),
                 maskImage: 'linear-gradient(to bottom, transparent 0, #000 18%, #000 82%, transparent 100%)',
                 WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 18%, #000 82%, transparent 100%)',
               }
@@ -368,13 +377,14 @@ export const LyricsPanel: React.FC<{ className?: string; fullscreen?: boolean }>
                   // Jumping to a line means "carry on from here".
                   if (followLyrics) resumeFollow();
                 }}
+                style={fullscreen ? { fontSize: isActive ? fsActive : fsOther } : undefined}
                 className={`${fullscreen ? 'text-left origin-left' : 'text-center'} transition-all duration-300 cursor-pointer select-text leading-relaxed ${
                   fullscreen
                     ? isActive
-                      ? 'font-extrabold text-3xl md:text-5xl scale-100'
+                      ? 'font-extrabold'
                       : idx < activeLyricIndex
-                        ? 'text-app-primary text-2xl md:text-4xl font-bold opacity-30 hover:opacity-70'
-                        : 'text-app-secondary text-2xl md:text-4xl font-bold opacity-40 hover:opacity-70'
+                        ? 'text-app-primary font-bold opacity-30 hover:opacity-70'
+                        : 'text-app-secondary font-bold opacity-40 hover:opacity-70'
                     : isActive
                       ? 'font-extrabold text-xl md:text-2xl scale-105'
                       : idx < activeLyricIndex
@@ -395,7 +405,7 @@ export const LyricsPanel: React.FC<{ className?: string; fullscreen?: boolean }>
               </p>
             );
           }).concat(
-            followLyrics && followPaused ? (
+            followLyrics && followPaused && !(fullscreen && hideControls) ? (
               <div key="lyrics-resume" className="sticky bottom-2 flex justify-center pointer-events-none">
                 <button
                   onClick={resumeFollow}
@@ -414,7 +424,8 @@ export const LyricsPanel: React.FC<{ className?: string; fullscreen?: boolean }>
             {rawLyrics.split('\n').map((line, idx) => (
               <p
                 key={`plain-lyric-${idx}`}
-                className={`${fullscreen ? 'text-left text-2xl md:text-4xl font-bold' : 'text-center text-base font-semibold'} text-app-primary leading-relaxed`}
+                style={fullscreen ? { fontSize: fsOther } : undefined}
+                className={`${fullscreen ? 'text-left font-bold' : 'text-center text-base font-semibold'} text-app-primary leading-relaxed`}
               >
                 {line}
               </p>
@@ -435,7 +446,7 @@ export const LyricsPanel: React.FC<{ className?: string; fullscreen?: boolean }>
       {fullscreen ? (
         // Fullscreen: the controls stay put above the scrolling lines.
         <div className={`flex flex-col min-h-0 ${className}`}>
-          <div className="shrink-0 pb-2">{toolbar}</div>
+          {!hideControls && <div className="shrink-0 pb-2">{toolbar}</div>}
           {scroller}
         </div>
       ) : (
