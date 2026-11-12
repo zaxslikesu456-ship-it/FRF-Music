@@ -20,9 +20,7 @@ import {
   MoreVertical,
   Mic,
   Loader2,
-  Video,
   User,
-  Tv,
   PictureInPicture2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -86,7 +84,6 @@ const DesktopNowPlaying: React.FC = () => {
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
-  const [showVideo, setShowVideo] = useState(false);
 
   if (!currentTrack) {
     return (
@@ -102,7 +99,6 @@ const DesktopNowPlaying: React.FC = () => {
 
   const isFav = favorites.includes(currentTrack.id);
   const shownTime = dragTime ?? currentTime;
-  const hasYtVideo = Boolean(currentTrack.youtubeId || currentTrack.isYouTube);
 
   const commitSeek = () => {
     if (dragTime !== null) {
@@ -129,34 +125,22 @@ const DesktopNowPlaying: React.FC = () => {
         onClose={() => setShowOptions(false)}
       />
 
-      {/* Media Display: YouTube Video Player or Spinning Vinyl */}
-      {showVideo && hasYtVideo && currentTrack.youtubeId ? (
-        <div className="relative w-full max-w-[260px] mx-auto aspect-video rounded-xl overflow-hidden shadow-2xl bg-black border border-app-theme">
-          <iframe
-            src={`https://www.youtube-nocookie.com/embed/${currentTrack.youtubeId}?autoplay=1&controls=1&enablejsapi=1&origin=${window.location.origin}`}
-            title={currentTrack.title}
-            className="w-full h-full border-0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          />
-        </div>
-      ) : (
-        <div className="relative w-full max-w-[260px] mx-auto aspect-square rounded-full shadow-2xl border-4 border-app-card overflow-hidden">
-          {/* The shadow and border stay still on the frame; only the picture turns,
-              on its own layer. Rotating them all redrew the shadow every frame and
-              kept a third of a CPU core busy for as long as a song played. The turn
-              itself is a plain smooth rotation on the graphics card (stepping it
-              made it look choppy). */}
-          <img
-            src={currentTrack.coverUrl}
-            alt={currentTrack.title}
-            className={`w-full h-full object-cover rounded-full will-change-transform backface-hidden pause-when-hidden ${
-              isPlaying ? 'animate-[spin_12s_linear_infinite]' : ''
-            }`}
-          />
-          <div className="absolute inset-0 m-auto w-9 h-9 rounded-full bg-app-primary border-2 border-app-card" />
-        </div>
-      )}
+      {/* Media Display: the spinning vinyl (the app plays audio only) */}
+      <div className="relative w-full max-w-[260px] mx-auto aspect-square rounded-full shadow-2xl border-4 border-app-card overflow-hidden">
+        {/* The shadow and border stay still on the frame; only the picture turns,
+            on its own layer. Rotating them all redrew the shadow every frame and
+            kept a third of a CPU core busy for as long as a song played. The turn
+            itself is a plain smooth rotation on the graphics card (stepping it
+            made it look choppy). */}
+        <img
+          src={currentTrack.coverUrl}
+          alt={currentTrack.title}
+          className={`w-full h-full object-cover rounded-full will-change-transform backface-hidden pause-when-hidden ${
+            isPlaying ? 'animate-[spin_12s_linear_infinite]' : ''
+          }`}
+        />
+        <div className="absolute inset-0 m-auto w-9 h-9 rounded-full bg-app-primary border-2 border-app-card" />
+      </div>
 
       <div className="flex items-center justify-between gap-3 pt-5">
         <div className="min-w-0 flex-1">
@@ -173,15 +157,6 @@ const DesktopNowPlaying: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {hasYtVideo && (
-            <button
-              onClick={() => setShowVideo(v => !v)}
-              className={`p-2 ${showVideo ? 'text-app-highlight' : 'text-app-secondary hover:text-app-primary'}`}
-              title={showVideo ? 'Switch to Vinyl' : 'Watch YouTube Video'}
-            >
-              <Video className="w-5 h-5" />
-            </button>
-          )}
           <button onClick={() => toggleFavorite(currentTrack.id, currentTrack)} className="p-2" title={tr("Like")}>
             <Heart className={`w-5 h-5 ${isFav ? 'text-app-accent fill-current' : 'text-app-secondary'}`} />
           </button>
@@ -296,27 +271,6 @@ const DesktopNowPlaying: React.FC = () => {
 
       {!showLyrics && (
         <div className="pt-5 min-h-0 flex-1 flex flex-col overflow-y-auto no-scrollbar">
-          {/* YouTube Video Player in UpNext Bottom Section */}
-          {hasYtVideo && currentTrack.youtubeId && !showVideo && (
-            <div className="mb-4 p-3 rounded-xl bg-app-surface border border-app-theme flex items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-lg bg-black flex items-center justify-center shrink-0">
-                  <Tv className="w-5 h-5 text-app-highlight" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-bold text-app-primary truncate">{tr("YouTube Music Video")}</p>
-                  <p className="text-[11px] text-app-secondary truncate">{tr("Play video player at the top")}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowVideo(true)}
-                className="px-3 py-1.5 rounded-lg bg-app-highlight text-app-inverse text-xs font-bold shrink-0 hover:scale-105 transition-transform cursor-pointer"
-              >
-                {tr("Watch")}
-              </button>
-            </div>
-          )}
-
           {/* Up Next List */}
           {queue.length > 0 && (
             <div className="flex-1 min-h-0">

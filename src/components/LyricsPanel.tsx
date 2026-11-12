@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, LocateFixed, Copy, Check, Share2 } from 'lucide-react';
+import { Loader2, LocateFixed, Copy, Check, Share2, Maximize2 } from 'lucide-react';
 import { t as tr } from '../i18n';
 import { useAudio } from '../context/AudioContext';
 import { parseLrc, lineProgress } from '../utils/lyricsSync';
 import { fetchLyrics } from '../utils/lyrics';
 import { LyricCardModal } from './LyricCardModal';
+import { LyricsFullscreen } from './LyricsFullscreen';
 import type { LyricCardInput } from '../utils/lyricCard';
 
 /**
@@ -13,8 +14,12 @@ import type { LyricCardInput } from '../utils/lyricCard';
  * in the middle, pauses while you scroll by hand), a per-song timing nudge,
  * Copy all and a shareable lyric card. Mount it only while it is visible.
  */
-export const LyricsPanel: React.FC<{ className?: string }> = ({ className = '' }) => {
-  const { currentTrack, currentTime, duration, seekTo } = useAudio();
+export const LyricsPanel: React.FC<{ className?: string; fullscreen?: boolean }> = ({
+  className = '',
+  fullscreen = false,
+}) => {
+  const { currentTrack, currentTime, duration, seekTo, isPlaying } = useAudio();
+  const [showFullscreen, setShowFullscreen] = useState(false);
 
   const [rawLyrics, setRawLyrics] = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
@@ -25,7 +30,8 @@ export const LyricsPanel: React.FC<{ className?: string }> = ({ className = '' }
   // Length of the recording being played, used to pick the lyrics version that
   // is in time with it. 0 until the player knows it; the lyrics are looked up
   // again once it does.
-  const songLength = duration > 1 ? Math.round(duration) : 0;
+  const songLength =
+    duration > 1 ? Math.round(duration) : currentTrack?.duration && currentTrack.duration > 1 ? Math.round(currentTrack.duration) : 0;
   const lyricsForTrackRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -85,7 +91,38 @@ export const LyricsPanel: React.FC<{ className?: string }> = ({ className = '' }
       return next;
     });
   };
-  const lyricTime = currentTime - lyricOffset;
+  // The player reports its position a few times a second (about once a second
+  // on a TV or the phone's background player), so a line would change up to a
+  // second late. Between reports the time is carried forward on this device's
+  // own clock, which makes each line change right when it is sung.
+  const clockBaseRef = useRef({ t: currentTime, at: performance.now() });
+  const clockShownRef = useRef(currentTime);
+  const [clock, setClock] = useState(currentTime);
+  useEffect(() => {
+    clockBaseRef.current = { t: currentTime, at: performance.now() };
+    if (!isPlaying) {
+      clockShownRef.current = currentTime;
+      setClock(currentTime);
+    }
+  }, [currentTime, isPlaying]);
+  useEffect(() => {
+    if (!isPlaying) return;
+    const id = window.setInterval(() => {
+      const b = clockBaseRef.current;
+      let v = b.t + Math.min(1.5, (performance.now() - b.at) / 1000);
+      // A report slightly behind the carried-forward time must not flick the
+      // line back; only a real jump (a seek) moves the clock backwards.
+      const shown = clockShownRef.current;
+      if (v < shown && shown - v < 0.7) v = shown;
+      clockShownRef.current = v;
+      setClock(v);
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [isPlaying]);
+  // Lines show a touch early, as other players do: the eye needs the next line a
+  // moment before it is sung.
+  const LYRIC_LEAD = 0.15;
+  const lyricTime = clock - lyricOffset + LYRIC_LEAD;
 
   // Determine currently active lyric line index based on playback currentTime
   const activeLyricIndex = useMemo(() => {
@@ -216,78 +253,100 @@ export const LyricsPanel: React.FC<{ className?: string }> = ({ className = '' }
     });
   };
 
-  return (
-    <>
-      <LyricCardModal input={lyricCard} onClose={() => setLyricCard(null)} />
+  const toolbar = (
+      <div className={`flex flex-wrap items-center gap-2 pb-1 ${fullscreen ? 'justify-start' : 'justify-center'}`}>
+        <p className="text-center text-xs text-app-secondary tracking-wide uppercase">
+          {syncedLyrics.length > 0 ? tr("Synced Lyrics") : tr("Lyrics")}
+        </p>
+        {!fullscreen && (
+          <button
+            onClick={() => setShowFullscreen(true)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
+            title={tr('Fullscreen lyrics')}
+          >
+            <Maximize2 className="w-3.5 h-3.5" /> {tr('Fullscreen')}
+          </button>
+        )}
+        {!lyricsLoading && syncedLyrics.length > 0 && (
+          <button
+            onClick={toggleFollowLyrics}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-semibold ${
+              followLyrics ? 'border-transparent' : 'bg-app-card border-app-theme text-app-secondary'
+            }`}
+            // On: inverted colours (readable in every theme).
+            style={followLyrics ? { background: 'var(--text-primary)', color: 'var(--bg-primary)' } : undefined}
+            title={followLyrics ? 'Stop following the lyrics' : 'Follow the lyrics as they play'}
+            aria-pressed={followLyrics}
+          >
+            <LocateFixed className="w-3.5 h-3.5" /> {tr("Follow")}
+          </button>
+        )}
+        {!lyricsLoading && syncedLyrics.length > 0 && (
+          <div
+            className="flex items-center rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
+            title={tr("Lyrics early or late? Nudge them for this song")}
+          >
+            <button
+              onClick={() => nudgeLyrics(-0.5)}
+              className="px-2.5 py-1"
+              aria-label={tr("Show lyrics earlier")}
+            >
+              −
+            </button>
+            <span className="min-w-[3.2rem] text-center tabular-nums text-app-secondary">
+              {lyricOffset === 0 ? tr("Timing") : `${lyricOffset > 0 ? '+' : ''}${lyricOffset.toFixed(1)}s`}
+            </span>
+            <button
+              onClick={() => nudgeLyrics(0.5)}
+              className="px-2.5 py-1"
+              aria-label={tr("Show lyrics later")}
+            >
+              +
+            </button>
+          </div>
+        )}
+        {!lyricsLoading && (syncedLyrics.length > 0 || rawLyrics) && (
+          <button
+            onClick={copyLyrics}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
+            title={tr("Copy all lyrics")}
+          >
+            {lyricsCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            {lyricsCopied ? tr("Copied") : tr("Copy")}
+          </button>
+        )}
+        {!lyricsLoading && (syncedLyrics.length > 0 || rawLyrics) && (
+          <button
+            onClick={shareLyric}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
+            title={tr("Share a lyric card")}
+          >
+            <Share2 className="w-3.5 h-3.5" /> {tr("Share")}
+          </button>
+        )}
+      </div>
+  );
+
+  const scroller = (
       <div
         ref={lyricsContainerRef}
-        className={`overflow-y-auto w-full py-4 no-scrollbar space-y-5 px-2 animate-in fade-in duration-200 select-text ${className}`}
-        style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+        className={`overflow-y-auto w-full no-scrollbar animate-in fade-in duration-200 select-text ${
+          fullscreen ? 'py-[30vh] px-2 md:px-6 space-y-6 md:space-y-8' : 'py-4 px-2 space-y-5'
+        } ${fullscreen ? 'flex-1 min-h-0' : className}`}
+        style={{
+          userSelect: 'text',
+          WebkitUserSelect: 'text',
+          ...(fullscreen
+            ? {
+                maskImage: 'linear-gradient(to bottom, transparent 0, #000 18%, #000 82%, transparent 100%)',
+                WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 18%, #000 82%, transparent 100%)',
+              }
+            : {}),
+        }}
         onTouchStart={pauseFollowForManualScroll}
         onWheel={pauseFollowForManualScroll}
       >
-        <div className="flex flex-wrap items-center justify-center gap-2 pb-1">
-          <p className="text-center text-xs text-app-secondary tracking-wide uppercase">
-            {syncedLyrics.length > 0 ? tr("Synced Lyrics") : tr("Lyrics")}
-          </p>
-          {!lyricsLoading && syncedLyrics.length > 0 && (
-            <button
-              onClick={toggleFollowLyrics}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-semibold ${
-                followLyrics ? 'border-transparent' : 'bg-app-card border-app-theme text-app-secondary'
-              }`}
-              // On: inverted colours (readable in every theme).
-              style={followLyrics ? { background: 'var(--text-primary)', color: 'var(--bg-primary)' } : undefined}
-              title={followLyrics ? 'Stop following the lyrics' : 'Follow the lyrics as they play'}
-              aria-pressed={followLyrics}
-            >
-              <LocateFixed className="w-3.5 h-3.5" /> {tr("Follow")}
-            </button>
-          )}
-          {!lyricsLoading && syncedLyrics.length > 0 && (
-            <div
-              className="flex items-center rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
-              title={tr("Lyrics early or late? Nudge them for this song")}
-            >
-              <button
-                onClick={() => nudgeLyrics(-0.5)}
-                className="px-2.5 py-1"
-                aria-label={tr("Show lyrics earlier")}
-              >
-                −
-              </button>
-              <span className="min-w-[3.2rem] text-center tabular-nums text-app-secondary">
-                {lyricOffset === 0 ? tr("Timing") : `${lyricOffset > 0 ? '+' : ''}${lyricOffset.toFixed(1)}s`}
-              </span>
-              <button
-                onClick={() => nudgeLyrics(0.5)}
-                className="px-2.5 py-1"
-                aria-label={tr("Show lyrics later")}
-              >
-                +
-              </button>
-            </div>
-          )}
-          {!lyricsLoading && (syncedLyrics.length > 0 || rawLyrics) && (
-            <button
-              onClick={copyLyrics}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
-              title={tr("Copy all lyrics")}
-            >
-              {lyricsCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {lyricsCopied ? tr("Copied") : tr("Copy")}
-            </button>
-          )}
-          {!lyricsLoading && (syncedLyrics.length > 0 || rawLyrics) && (
-            <button
-              onClick={shareLyric}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-app-card border border-app-theme text-xs font-semibold text-app-primary"
-              title={tr("Share a lyric card")}
-            >
-              <Share2 className="w-3.5 h-3.5" /> {tr("Share")}
-            </button>
-          )}
-        </div>
+        {!fullscreen && toolbar}
 
         {lyricsLoading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
@@ -309,12 +368,18 @@ export const LyricsPanel: React.FC<{ className?: string }> = ({ className = '' }
                   // Jumping to a line means "carry on from here".
                   if (followLyrics) resumeFollow();
                 }}
-                className={`text-center transition-all duration-300 cursor-pointer select-text leading-relaxed ${
-                  isActive
-                    ? 'font-extrabold text-xl md:text-2xl scale-105'
-                    : idx < activeLyricIndex
-                      ? 'text-app-primary text-base opacity-50 hover:opacity-80'
-                      : 'text-app-secondary text-base opacity-40 hover:opacity-80 hover:scale-100'
+                className={`${fullscreen ? 'text-left origin-left' : 'text-center'} transition-all duration-300 cursor-pointer select-text leading-relaxed ${
+                  fullscreen
+                    ? isActive
+                      ? 'font-extrabold text-3xl md:text-5xl scale-100'
+                      : idx < activeLyricIndex
+                        ? 'text-app-primary text-2xl md:text-4xl font-bold opacity-30 hover:opacity-70'
+                        : 'text-app-secondary text-2xl md:text-4xl font-bold opacity-40 hover:opacity-70'
+                    : isActive
+                      ? 'font-extrabold text-xl md:text-2xl scale-105'
+                      : idx < activeLyricIndex
+                        ? 'text-app-primary text-base opacity-50 hover:opacity-80'
+                        : 'text-app-secondary text-base opacity-40 hover:opacity-80 hover:scale-100'
                 }`}
               >
                 {isActive ? (
@@ -349,7 +414,7 @@ export const LyricsPanel: React.FC<{ className?: string }> = ({ className = '' }
             {rawLyrics.split('\n').map((line, idx) => (
               <p
                 key={`plain-lyric-${idx}`}
-                className="text-center text-base font-semibold text-app-primary leading-relaxed"
+                className={`${fullscreen ? 'text-left text-2xl md:text-4xl font-bold' : 'text-center text-base font-semibold'} text-app-primary leading-relaxed`}
               >
                 {line}
               </p>
@@ -361,6 +426,21 @@ export const LyricsPanel: React.FC<{ className?: string }> = ({ className = '' }
           </div>
         )}
       </div>
+  );
+
+  return (
+    <>
+      <LyricCardModal input={lyricCard} onClose={() => setLyricCard(null)} />
+      {showFullscreen && <LyricsFullscreen onClose={() => setShowFullscreen(false)} />}
+      {fullscreen ? (
+        // Fullscreen: the controls stay put above the scrolling lines.
+        <div className={`flex flex-col min-h-0 ${className}`}>
+          <div className="shrink-0 pb-2">{toolbar}</div>
+          {scroller}
+        </div>
+      ) : (
+        scroller
+      )}
     </>
   );
 };
