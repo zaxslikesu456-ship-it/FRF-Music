@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { httpGetJson } from './http';
 
 const cache = new Map<string, string | null>();
@@ -147,6 +148,80 @@ function pick(candidates: Candidate[]): { synced: Candidate | null; plain: strin
   return { synced: timed || null, plain };
 }
 
+// ---- Word-by-word timing ---------------------------------------------------
+// NetEase Cloud Music keeps, for many songs, the start and length of every
+// single word (its "yrc" lyrics), not just of each line. With those the lyrics
+// view fills each word exactly as it is sung instead of guessing. The words are
+// passed on as "enhanced LRC" (<mm:ss.xxx>word ...), with one last tag for when
+// the line ends; parseLrc() reads that.
+
+const NETEASE_BASE =
+  import.meta.env.DEV && !Capacitor.isNativePlatform() ? '/api/netease' : 'https://music.163.com';
+const NETEASE_HEADERS = { Origin: 'https://music.163.com', Referer: 'https://music.163.com/' };
+// A different recording that would share the title.
+const OTHER_VERSION = /\b(live|remix|instrumental|acoustic|sped ?up|slowed|karaoke|cover|demo|remaster(ed)?|version|edit|mix)\b/i;
+
+const lrcTime = (ms: number): string => {
+  const total = Math.max(0, ms) / 1000;
+  const m = Math.floor(total / 60);
+  const s = total - m * 60;
+  return `${String(m).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`;
+};
+
+/** NetEase yrc lines "[start,len](wordStart,wordLen,0)word..." as enhanced LRC. */
+function yrcToLrc(yrc: string): string | null {
+  const out: string[] = [];
+  for (const raw of yrc.split(/\r?\n/)) {
+    const head = /^\[(\d+),(\d+)\]/.exec(raw);
+    if (!head) continue;
+    const start = Number(head[1]);
+    const len = Number(head[2]);
+    const parts = raw.slice(head[0].length).split(/\((\d+),(\d+),\d+\)/);
+    let body = '';
+    for (let i = 1; i + 2 < parts.length + 1; i += 3) {
+      const text = (parts[i + 2] || '').replace(/[<>]/g, '');
+      if (!text) continue;
+      body += `<${lrcTime(Number(parts[i]))}>${text}`;
+    }
+    const plain = body.replace(/<[^>]*>/g, '').trim();
+    // Credits ("作词 : ...") are not lyrics.
+    if (!plain || /^(作词|作曲|编曲|制作人|词|曲|混音|录音|監製|编辑)\s*[:：]/.test(plain)) continue;
+    out.push(`[${lrcTime(start)}]${body}<${lrcTime(start + len)}>`);
+  }
+  return out.length >= 3 ? out.join('\n') : null;
+}
+
+async function neteaseWordLyrics(title: string, artist: string, durationSec: number): Promise<Candidate | null> {
+  const firstArtist = artist.split(/,|&| feat\.? | ft\.? /i)[0].trim();
+  const search = await httpGetJson(
+    `${NETEASE_BASE}/api/search/get?s=${encodeURIComponent(`${title} ${firstArtist}`.trim())}&type=1&limit=12`,
+    5000,
+    NETEASE_HEADERS
+  );
+  const songs: any[] = search?.result?.songs || [];
+  const wantsOther = OTHER_VERSION.test(title);
+  const matches = songs
+    .filter(s => {
+      const name = String(s?.name || '');
+      const artists = (s?.artists || s?.ar || []).map((a: any) => a?.name).filter(Boolean).join(', ');
+      return sameTitle(name, title) && sameArtist(artists, artist) && (wantsOther || !OTHER_VERSION.test(name));
+    })
+    .map(s => ({ id: s.id, ...toCandidate({ duration: Number(s.duration || s.dt) / 1000 }, durationSec) }))
+    .filter(c => !c.lengthKnown || c.gap <= MAX_LENGTH_GAP)
+    .sort((a, b) => a.gap - b.gap)
+    .slice(0, 3);
+  for (const m of matches) {
+    try {
+      const data = await httpGetJson(`${NETEASE_BASE}/api/song/lyric/v1?id=${m.id}&lv=-1&yv=-1`, 5000, NETEASE_HEADERS);
+      const words = data?.yrc?.lyric ? yrcToLrc(String(data.yrc.lyric)) : null;
+      if (words) return { synced: words, plain: null, gap: m.gap, lengthKnown: m.lengthKnown };
+    } catch {
+      // try the next match
+    }
+  }
+  return null;
+}
+
 async function fetchFromLyrist(title: string, artist: string): Promise<string | null> {
   try {
     const query = artist ? `${title}/${artist}` : title;
@@ -202,6 +277,8 @@ export async function fetchLyrics(
   // lookup is tried for a timed version before settling for plain text. The
   // first lookup is exact; the others widen the net but only keep real matches.
   const firstArtist = effectiveArtist.split(/,|&| feat\.? | ft\.? /i)[0].trim();
+  // Word-by-word timing is looked up at the same time.
+  const wordTimed = neteaseWordLyrics(cleanTitle, effectiveArtist, durationSec).catch(() => null);
   const lookups: Array<() => Promise<Candidate[]>> = [
     () => lrclibGet(cleanTitle, firstArtist, durationSec),
     () => lrclibSearch('', cleanTitle, effectiveArtist, durationSec, true),
@@ -216,6 +293,16 @@ export async function fetchLyrics(
     if (r.synced && (!best || r.synced.gap < best.gap)) best = r.synced;
     // Close enough in length: no need to keep looking.
     if (best && (!best.lengthKnown || best.gap <= GOOD_LENGTH_GAP)) break;
+  }
+  // Word timing wins when it is the right version of the song: about the same
+  // length as the recording (or at least as close as the best line-timed one).
+  const words = await wordTimed;
+  if (
+    words?.synced &&
+    // (length unknown: NetEase's top match is the original recording, so take it)
+    (words.lengthKnown ? words.gap <= GOOD_LENGTH_GAP || !best || words.gap <= best.gap : true)
+  ) {
+    return done(words.synced);
   }
   if (best?.synced) return done(best.synced);
   if (plain) return done(plain);

@@ -341,6 +341,13 @@ input[type="range"]::-moz-range-thumb {
   filter: drop-shadow(0 0 14px rgba(0, 0, 0, 0.35));
 }
 
+/* Real word timings: the fill keeps pace with the 0.1 s lyrics clock instead of
+   trailing half a second behind it. */
+.karaoke-word {
+  transition-duration: 0.1s;
+  filter: none;
+}
+
 /* A settings section opening as its own page (phones). */
 @keyframes settingsPageIn {
   from { opacity: 0; transform: translateX(24px); }

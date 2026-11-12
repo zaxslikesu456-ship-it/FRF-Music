@@ -38,6 +38,14 @@ export default defineConfig({
         },
         rewrite: (path) => path.replace(/^\/api\/ytmusic/, '/youtubei/v1'),
       },
+      // NetEase Cloud Music (word-timed lyrics) — browser-dev only; the apps go direct
+      '/api/netease': {
+        target: 'https://music.163.com',
+        changeOrigin: true,
+        secure: true,
+        headers: { Referer: 'https://music.163.com/' },
+        rewrite: (path) => path.replace(/^\/api\/netease/, ''),
+      },
       // Server-side proxy to Invidious API (community playlist search & track fetch)
       '/api/invidious': {
         target: 'https://y.com.sb',

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, LocateFixed, Copy, Check, Share2, Maximize2 } from 'lucide-react';
 import { t as tr } from '../i18n';
 import { useAudio } from '../context/AudioContext';
-import { parseLrc, lineProgress } from '../utils/lyricsSync';
+import { parseLrc, lineProgress, wordProgress } from '../utils/lyricsSync';
 import { fetchLyrics } from '../utils/lyrics';
 import { LyricCardModal } from './LyricCardModal';
 import { LyricsFullscreen } from './LyricsFullscreen';
@@ -39,7 +39,13 @@ export const LyricsPanel: React.FC<{
   // is in time with it. 0 until the player knows it; the lyrics are looked up
   // again once it does.
   const songLength =
-    duration > 1 ? Math.round(duration) : currentTrack?.duration && currentTrack.duration > 1 ? Math.round(currentTrack.duration) : 0;
+    duration > 1
+      ? Math.round(duration)
+      : // 200 is the stand-in length search results get when YouTube gives none;
+        // looking lyrics up with it would pick a version of the wrong length.
+        currentTrack?.duration && currentTrack.duration > 1 && currentTrack.duration !== 200
+        ? Math.round(currentTrack.duration)
+        : 0;
   const lyricsForTrackRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -131,6 +137,8 @@ export const LyricsPanel: React.FC<{
   // moment before it is sung.
   const LYRIC_LEAD = 0.15;
   const lyricTime = clock - lyricOffset + LYRIC_LEAD;
+  // Real word timings are filled on the dot (just a hair early, for the eye).
+  const wordTime = clock - lyricOffset + 0.05;
 
   // Determine currently active lyric line index based on playback currentTime
   const activeLyricIndex = useMemo(() => {
@@ -264,7 +272,11 @@ export const LyricsPanel: React.FC<{
   const toolbar = (
       <div className={`flex flex-wrap items-center gap-2 pb-1 ${fullscreen ? 'justify-start' : 'justify-center'}`}>
         <p className="text-center text-xs text-app-secondary tracking-wide uppercase">
-          {syncedLyrics.length > 0 ? tr("Synced Lyrics") : tr("Lyrics")}
+          {syncedLyrics.length > 0
+            ? syncedLyrics.some(l => l.words)
+              ? tr('Word-by-word lyrics')
+              : tr("Synced Lyrics")
+            : tr("Lyrics")}
         </p>
         {!fullscreen && (
           <button
@@ -367,7 +379,8 @@ export const LyricsPanel: React.FC<{
             const isActive = idx === activeLyricIndex;
             // Karaoke: the line that is being sung fills in with the accent
             // colour from left to right (the fill eases between progress ticks).
-            const fill = isActive ? lineProgress(line, syncedLyrics[idx + 1], lyricTime + 0.25) : 0;
+            const nextLine = syncedLyrics[idx + 1];
+            const fill = isActive && !line.words ? lineProgress(line, nextLine, lyricTime + 0.25) : 0;
             return (
               <p
                 key={`lyric-${idx}`}
@@ -392,7 +405,22 @@ export const LyricsPanel: React.FC<{
                         : 'text-app-secondary text-base opacity-40 hover:opacity-80 hover:scale-100'
                 }`}
               >
-                {isActive ? (
+                {isActive && line.words ? (
+                  // Word by word: each word fills as it is sung.
+                  <span>
+                    {line.words.map((w, wi) => (
+                      <span
+                        key={wi}
+                        className="karaoke-line karaoke-word"
+                        style={{
+                          backgroundSize: `${Math.round(wordProgress(line, wi, nextLine, wordTime) * 1000) / 10}% 100%, 100% 100%`,
+                        }}
+                      >
+                        {w.text}
+                      </span>
+                    ))}
+                  </span>
+                ) : isActive ? (
                   <span
                     className="karaoke-line"
                     style={{ backgroundSize: `${Math.round(fill * 1000) / 10}% 100%, 100% 100%` }}
