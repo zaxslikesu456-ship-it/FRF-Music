@@ -1,6 +1,7 @@
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import type { Track } from '../types/music';
 import { httpGetJson, httpPostJson, isTauriRuntime } from './http';
+import { nativeCover } from './cover';
 import { getPoTokenMinter } from './poToken';
 import { recordSource } from './streamHealth';
 import {
@@ -1326,6 +1327,8 @@ export async function downloadTrackToFile(
     });
     localStorage.setItem(OFFLINE_KEY, JSON.stringify(filtered));
     void cacheCoverArt(track.coverUrl);
+    // The notification shows the always-there small thumbnail of a video.
+    if (nativeCover(track.coverUrl) !== track.coverUrl) void cacheCoverArt(nativeCover(track.coverUrl));
     void exportToMusicFolder(track, filePath);
     recordSource('Download', true, Date.now() - downloadStartedAt);
 

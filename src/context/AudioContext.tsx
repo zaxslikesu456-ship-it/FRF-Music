@@ -46,6 +46,8 @@ import { normalizationGainDb } from '../utils/loudness';
 import { nativeCover } from '../utils/cover';
 import { generatedCover } from '../utils/audioMeta';
 import { hintTrack } from '../utils/ageGate';
+import { saveOfflineExtras } from '../utils/offlineExtras';
+import { fetchLyrics } from '../utils/lyrics';
 import { t as tr } from '../i18n';
 import { getArtColors, type ArtColors } from '../utils/artColors';
 import { isTauriRuntime } from '../utils/http';
@@ -536,11 +538,30 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Songs downloaded before covers were cached still need their picture saved
   // for the notification; top them up once per launch while online.
+  // The same for lyrics and pictures in the app (all platforms): songs downloaded
+  // before these were saved get them now, a few seconds after start.
+  useEffect(() => {
+    if (!navigator.onLine) return;
+    const list = downloadedTracks.filter(t => t.youtubeId || t.coverUrl);
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        for (const t of list) {
+          if (!navigator.onLine) return;
+          await saveOfflineExtras(t, fetchLyrics);
+        }
+      })();
+    }, 8000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!IS_ANDROID || !navigator.onLine) return;
     const urls = downloadedTracks
       .filter(t => getOfflineRecord(t.id) && t.coverUrl)
-      .map(t => t.coverUrl);
+      // the notification uses the always-there small thumbnail of a video
+      .flatMap(t => [t.coverUrl, nativeCover(t.coverUrl)])
+      .filter((u, i, a): u is string => !!u && a.indexOf(u) === i);
     void (async () => {
       for (const url of urls) await cacheCoverArt(url);
     })();
@@ -4190,6 +4211,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
 
     addTrackToLibrary(track);
+    // Its lyrics and picture too, so both show with no internet.
+    void saveOfflineExtras(track, fetchLyrics);
   };
 
   registerDownloadedTrackRef.current = registerDownloadedTrack;

@@ -3,6 +3,7 @@
 // so every song and artist still has a picture.
 
 import { fallbackThumb } from './cover';
+import { getOfflineCoverUrl } from './offlineExtras';
 
 const PLACEHOLDER =
   'data:image/svg+xml;utf8,' +
@@ -31,7 +32,26 @@ export function installImageFallback(): void {
       const img = event.target;
       if (!(img instanceof HTMLImageElement)) return;
       if (img.src === PLACEHOLDER || img.dataset.fallback === '1') return;
-      if (img.src.startsWith('data:')) return;
+      if (img.src.startsWith('data:') || img.src.startsWith('blob:')) return;
+
+      // A downloaded song's picture is kept on the device: use it (offline, or
+      // when this size of it is missing).
+      // (Remembered per address: the same element is reused for other songs.)
+      if (img.dataset.offlineTried !== img.src) {
+        const failed = img.src;
+        img.dataset.offlineTried = failed;
+        void getOfflineCoverUrl(failed).then(local => {
+          if (img.src !== failed) return; // something else changed it meanwhile
+          if (local) {
+            img.dataset.noResize = '1';
+            img.src = local;
+          } else {
+            img.dispatchEvent(new Event('error'));
+          }
+        });
+        return;
+      }
+
       if (swapToSmallThumb(img)) return;
 
       if (img.dataset.retried !== '1') {

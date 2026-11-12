@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { httpGetJson } from './http';
+import { getOfflineLyrics } from './offlineExtras';
 
 const cache = new Map<string, string | null>();
 
@@ -265,6 +266,12 @@ export async function fetchLyrics(
   const key = `${rawTitle}::${rawArtist}::${Math.round(durationSec || 0)}`.toLowerCase();
   if (cache.has(key)) return cache.get(key) || null;
 
+  // No internet: the copy saved when the song was downloaded (lookups would only
+  // time out). Not remembered, so the online version is looked up once back.
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return getOfflineLyrics(rawTitle, rawArtist);
+  }
+
   const { cleanTitle, cleanArtist } = cleanSongTitle(rawTitle);
   const effectiveArtist = rawArtist && rawArtist.toLowerCase() !== 'unknown artist' ? rawArtist : cleanArtist;
 
@@ -316,5 +323,8 @@ export async function fetchLyrics(
     const lyrics = await provider();
     if (lyrics) return done(lyrics);
   }
+  // Nothing reachable (connection dropped mid-lookup): the saved copy, if any.
+  const saved = await getOfflineLyrics(rawTitle, rawArtist);
+  if (saved) return saved;
   return done(null);
 }
