@@ -638,7 +638,10 @@ async function resolveWithAgeFallback(youtubeId: string): Promise<string> {
     try {
       return await resolveAudioStreamUrlUncached(youtubeId);
     } catch (e) {
-      if (!isAgeGated(youtubeId)) throw e;
+      // Age-restricted, removed or region-blocked uploads ("Video unavailable"):
+      // the same song is looked for in another upload below. Without the song's
+      // title there is nothing to look for.
+      if (!isAgeGated(youtubeId) && !songDetailsFor(youtubeId)) throw e;
     }
   }
   const song = songDetailsFor(youtubeId);

@@ -225,7 +225,24 @@ const YOUTUBE_ALTERNATE_ERROR_CODES = new Set([2, 100, 101, 150]);
 const MAX_ALTERNATE_UPLOADS = 15;
 const YOUTUBE_PLAYBACK_OVERRIDES_KEY = 'frf_youtube_playback_overrides_v1';
 
+// A song can be told to play a different YouTube upload of itself (when the
+// original would not play in the YouTube video player). The Android and desktop
+// apps no longer use that player: they take the audio straight from the song's
+// own upload. Old choices only did harm there: some pointed at a different song
+// altogether (a race in the old player saved the next song's video under the
+// current one), so the song played other music under its own title and lyrics.
+// They are dropped on those apps.
 function loadYouTubePlaybackOverrides(): Record<string, string> {
+  const audioOnlyApp =
+    (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') || isTauriRuntime();
+  if (audioOnlyApp) {
+    try {
+      localStorage.removeItem(YOUTUBE_PLAYBACK_OVERRIDES_KEY);
+    } catch {
+      // ignore
+    }
+    return {};
+  }
   try {
     const saved = JSON.parse(localStorage.getItem(YOUTUBE_PLAYBACK_OVERRIDES_KEY) || '{}');
     return saved && typeof saved === 'object' ? saved : {};
@@ -1722,7 +1739,15 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setIsPlaying(true);
         const playingTrack = currentTrackRef.current;
         const activeId = activeYoutubeIdRef.current;
-        if (playingTrack?.isYouTube && activeId && activeId !== playingTrack.youtubeId) {
+        // Only an upload found because the song's own one failed is remembered;
+        // anything else is a stale id from the previous song.
+        if (
+          playingTrack?.isYouTube &&
+          activeId &&
+          activeId !== playingTrack.youtubeId &&
+          playingTrack.youtubeId &&
+          failedYoutubeIdsRef.current.has(playingTrack.youtubeId)
+        ) {
           youtubePlaybackOverridesRef.current[playingTrack.id] = activeId;
           try {
             localStorage.setItem(
@@ -2927,6 +2952,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const skipUnplayable = () => {
     unplayableStreakRef.current += 1;
     setIsPlaying(false);
+    const gone = currentTrackRef.current;
+    if (gone) showStatus(`"${gone.title}" can't be played (no longer on YouTube) and was skipped`, 5000);
     if (!navigator.onLine || unplayableStreakRef.current >= 3) {
       unplayableStreakRef.current = 0;
       return;
@@ -3084,6 +3111,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ? youtubePlaybackOverridesRef.current[track.id]
       : undefined;
     activeYoutubeIdRef.current = savedYoutubeId || track.youtubeId || null;
+    // The song's own title and artist, for finding another upload of it if this
+    // one turns out to be unavailable.
+    hintTrack(track.youtubeId, track.title, track.artist);
     registerTrack(track);
     recordPlay(track);
 
