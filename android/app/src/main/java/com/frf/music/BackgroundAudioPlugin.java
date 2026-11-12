@@ -101,6 +101,7 @@ public class BackgroundAudioPlugin extends Plugin {
         // file wins over the new stream in PlaybackService.currentSource().
         intent.putExtra(PlaybackService.EXTRA_STREAM_URL, url);
         intent.putExtra(PlaybackService.EXTRA_FILE_PATH, filePath);
+        intent.putExtra(PlaybackService.EXTRA_TRACK_ID, call.getString("trackId", ""));
 
         intent.putExtra(PlaybackService.EXTRA_TITLE, call.getString("title", "FRF Music"));
         intent.putExtra(PlaybackService.EXTRA_ARTIST, call.getString("artist", ""));

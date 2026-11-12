@@ -1204,7 +1204,18 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           buf[i] = Number.isFinite(v) ? v : 0;
         }
       }),
-      (BackgroundAudio as any).addListener('playbackProgress', (data: { currentTime?: number; duration?: number }) => {
+      (BackgroundAudio as any).addListener('playbackProgress', (data: { currentTime?: number; duration?: number; trackId?: string }) => {
+        // The phone's player rolled into the queued next song but the "trackAdvanced"
+        // message never arrived (the app was asleep): the app still showed the
+        // previous song, and its lyrics, over the new one. Catch up now.
+        if (
+          data?.trackId &&
+          nativeOwnerRef.current &&
+          data.trackId !== currentTrackRef.current?.id &&
+          data.trackId === queuedNextIdRef.current
+        ) {
+          latestActionsRef.current?.adoptAdvancedTrack?.(data.trackId);
+        }
         if (!nativeOwnerRef.current) {
           // ExoPlayer is audibly playing but the WebView engine was never told
           // to stand down — a handover that timed out on a slow network, or a
@@ -3045,6 +3056,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     registerTrack(track);
     recordPlay(track);
     setCurrentTrack(track);
+    setDuration(0); // the previous song's length must not carry over
     audioModeTrackIdRef.current = track.id;
     nativeOwnerRef.current = true;
     hasPlayedRef.current = true;
@@ -3076,6 +3088,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     recordPlay(track);
 
     setCurrentTrack(track);
+    setDuration(0); // the previous song's length must not carry over
     audioModeTrackIdRef.current = null;
     hasPlayedRef.current = false;
     pendingSeekRef.current = startTime;

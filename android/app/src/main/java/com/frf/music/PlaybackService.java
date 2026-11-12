@@ -76,6 +76,7 @@ public class PlaybackService extends Service {
     public static final String EXTRA_TITLE = "title";
     public static final String EXTRA_ARTIST = "artist";
     public static final String EXTRA_PLAYING = "playing";
+    public static final String EXTRA_TRACK_ID = "trackId";
     public static final String EXTRA_COVER = "coverUrl";
     public static final String EXTRA_STREAM_URL = "streamUrl";
     public static final String EXTRA_FILE_PATH = "filePath";
@@ -254,6 +255,12 @@ public class PlaybackService extends Service {
     // when the current song ends, so the next song starts with no gap and without
     // waiting on the web layer, which Android throttles once the app is in the
     // background.
+    // The app's id for the song playing now. Every progress update carries it,
+    // so the app notices if it missed the "moved to the next song" message
+    // (sent while it was asleep) and would otherwise keep showing the previous
+    // song's title and lyrics over this one.
+    private String currentTrackId = "";
+
     private static final class NextMeta {
         String trackId = "";
         String title = "";
@@ -288,6 +295,7 @@ public class PlaybackService extends Service {
                         JSObject data = new JSObject();
                         data.put("currentTime", curSec);
                         data.put("duration", durSec);
+                        data.put("trackId", currentTrackId);
                         BackgroundAudioPlugin.sendEvent("playbackProgress", data);
                         maybeStartCrossfade(posMs, durMs);
                         refreshPlaybackState();
@@ -681,6 +689,10 @@ public class PlaybackService extends Service {
     }
 
     private void applyMetadataFromIntent(Intent intent) {
+        if (intent.hasExtra(EXTRA_TRACK_ID)) {
+            String id = intent.getStringExtra(EXTRA_TRACK_ID);
+            currentTrackId = id == null ? "" : id;
+        }
         if (intent.hasExtra(EXTRA_GAIN_DB)) {
             normGain = dbToGain(intent.getFloatExtra(EXTRA_GAIN_DB, 0f));
             if (exoPlayer != null) {
@@ -1034,6 +1046,7 @@ public class PlaybackService extends Service {
 
     private void onAdvancedToQueuedItem(NextMeta meta) {
         Log.d(TAG, "advanced to queued song " + meta.trackId);
+        currentTrackId = meta.trackId;
         title = meta.title;
         artist = meta.artist;
         streamUrl = meta.streamUrl;
