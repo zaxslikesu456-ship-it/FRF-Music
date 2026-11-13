@@ -41,6 +41,26 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let gainDb: Double
     }
     private var upcomingInfo: [ObjectIdentifier: UpcomingInfo] = [:]
+    // The loaders streaming each YouTube song in the queue (see GoogleVideoLoader).
+    // AVFoundation only holds them weakly.
+    private var streamLoaders: [ObjectIdentifier: GoogleVideoLoader] = [:]
+
+    /// A player item for a song: YouTube audio goes through GoogleVideoLoader,
+    /// files and other addresses straight to AVPlayer.
+    private func makeItem(for url: URL) -> AVPlayerItem {
+        if GoogleVideoLoader.isGoogleVideo(url), let made = GoogleVideoLoader.makeAsset(for: url) {
+            let item = AVPlayerItem(asset: made.asset)
+            streamLoaders[ObjectIdentifier(item)] = made.loader
+            return item
+        }
+        return AVPlayerItem(url: url)
+    }
+
+    /// Lets go of the loaders of songs no longer in the queue.
+    private func pruneStreamLoaders() {
+        let alive = Set((avPlayer?.items() ?? []).map { ObjectIdentifier($0) })
+        streamLoaders = streamLoaders.filter { alive.contains($0.key) }
+    }
 
     public override func load() {
         setupAudioSession()
@@ -173,10 +193,11 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         unwatchItem()
         upcomingInfo.removeAll()
 
-        let playerItem = AVPlayerItem(url: validUrl)
+        let playerItem = makeItem(for: validUrl)
         if let existing = avPlayer {
             existing.removeAllItems()
             existing.insert(playerItem, after: nil)
+            pruneStreamLoaders()
         } else {
             let created = AVQueuePlayer(playerItem: playerItem)
             avPlayer = created
@@ -289,6 +310,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         // Not replaceCurrentItem(with: nil): on a queue player that skips ahead to the
         // next song instead of stopping.
         avPlayer?.removeAllItems()
+        streamLoaders.removeAll()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         call.resolve()
     }
@@ -316,8 +338,11 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             }
             guard let url = target else { continue }
 
-            let item = AVPlayerItem(url: url)
-            guard player.canInsert(item, after: nil) else { continue }
+            let item = makeItem(for: url)
+            guard player.canInsert(item, after: nil) else {
+                streamLoaders.removeValue(forKey: ObjectIdentifier(item))
+                continue
+            }
             upcomingInfo[ObjectIdentifier(item)] = UpcomingInfo(
                 trackId: entry["trackId"] as? String ?? "",
                 title: entry["title"] as? String ?? "",
@@ -361,6 +386,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         for item in player.items().dropFirst() {
             player.remove(item)
             upcomingInfo.removeValue(forKey: ObjectIdentifier(item))
+            streamLoaders.removeValue(forKey: ObjectIdentifier(item))
         }
     }
 
@@ -418,6 +444,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         // Details of songs that were skipped over are no longer needed.
         let alive = Set(player.items().map { ObjectIdentifier($0) })
         upcomingInfo = upcomingInfo.filter { alive.contains($0.key) }
+        streamLoaders = streamLoaders.filter { alive.contains($0.key) }
 
         unwatchItem()
         watch(item: current)
@@ -485,5 +512,216 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
             }
         }
+    }
+}
+
+// Streams googlevideo audio (YouTube's audio servers) to AVPlayer.
+//
+// Handed a googlevideo URL directly, AVPlayer fetched it with CoreMedia's own
+// "AppleCoreMedia" User-Agent and one open-ended request. googlevideo answers that
+// with HTTP 403 (CoreMedia error -12660): a URL is issued to a particular YouTube
+// client (the "c" parameter: IOS, ANDROID, TVHTML5...) and only plays for a matching
+// User-Agent. It also slows a single long download to a trickle after the first
+// burst. So, as the Android app (GoogleVideoChunkedDataSource) and the Windows app
+// (audio_proxy.rs) already do, the audio is fetched here: in 1 MB pieces given as a
+// "range=start-end" query parameter, with the User-Agent of the client the URL was
+// made for. AVPlayer is given the same URL with the scheme "frfgv", which makes it
+// ask this loader for the bytes instead of going to the network itself.
+final class GoogleVideoLoader: NSObject, AVAssetResourceLoaderDelegate {
+    static let scheme = "frfgv"
+    private static let firstChunk: Int64 = 256 * 1024 // small first piece: starts sooner
+    private static let chunk: Int64 = 1024 * 1024
+
+    let queue = DispatchQueue(label: "com.frf.music.gvloader")
+    private let source: URL
+    private let userAgent: String
+    private var mime: String
+    private var totalLength: Int64 = -1
+    private let session: URLSession
+    // Loading requests AVPlayer cancelled; their remaining pieces are not fetched.
+    private var cancelled = Set<ObjectIdentifier>()
+    private var running: [ObjectIdentifier: URLSessionDataTask] = [:]
+
+    static func isGoogleVideo(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host.hasSuffix("googlevideo.com") && (url.scheme == "https" || url.scheme == "http")
+    }
+
+    /// The User-Agent googlevideo expects for the client a URL was issued to.
+    static func userAgent(for url: URL) -> String {
+        let client = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "c" })?.value?.uppercased() ?? ""
+        if client.hasPrefix("IOS") {
+            return "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_5 like Mac OS X; en_US)"
+        }
+        if client.hasPrefix("ANDROID_VR") {
+            return "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+        }
+        if client.hasPrefix("ANDROID_MUSIC") {
+            return "com.google.android.apps.youtube.music/6.40.52 (Linux; U; Android 14; en_US) gzip"
+        }
+        if client.hasPrefix("ANDROID") {
+            return "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip"
+        }
+        // Web, mobile web and TV clients: a browser, as on Android and Windows.
+        return "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1"
+    }
+
+    init(source: URL) {
+        // A local first: Swift does not allow reading self before super.init().
+        let agent = GoogleVideoLoader.userAgent(for: source)
+        self.source = source
+        self.userAgent = agent
+        let items = URLComponents(url: source, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        self.mime = items.first(where: { $0.name == "mime" })?.value ?? "audio/mp4"
+        if let clen = items.first(where: { $0.name == "clen" })?.value, let n = Int64(clen), n > 0 {
+            self.totalLength = n
+        }
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 20
+        config.httpAdditionalHeaders = ["User-Agent": agent]
+        self.session = URLSession(configuration: config)
+        super.init()
+    }
+
+    deinit {
+        session.invalidateAndCancel()
+    }
+
+    /// An asset that streams `url` through a new loader. Keep the loader alive as
+    /// long as the asset is used: the resource loader holds its delegate weakly.
+    static func makeAsset(for url: URL) -> (asset: AVURLAsset, loader: GoogleVideoLoader)? {
+        // The same address with this scheme, character for character, so AVPlayer
+        // asks this loader for the bytes.
+        let text = url.absoluteString
+        guard let colon = text.firstIndex(of: ":"),
+              let custom = URL(string: scheme + String(text[colon...])) else { return nil }
+        let loader = GoogleVideoLoader(source: url)
+        let asset = AVURLAsset(url: custom)
+        asset.resourceLoader.setDelegate(loader, queue: loader.queue)
+        return (asset, loader)
+    }
+
+    // Appended to the address as it is: rebuilding it would re-encode its signed
+    // parameters. (The resolver never adds a range of its own.)
+    private func pieceUrl(from: Int64, to: Int64) -> URL {
+        let base = source.absoluteString
+        let joiner = base.contains("?") ? "&" : "?"
+        return URL(string: base + joiner + "range=\(from)-\(to)") ?? source
+    }
+
+    private func uti(for mime: String) -> String {
+        let m = mime.lowercased()
+        if m.contains("webm") { return "org.webmproject.webm" }
+        if m.contains("mpeg") { return "public.mp3" }
+        return "com.apple.m4a-audio"
+    }
+
+    // MARK: AVAssetResourceLoaderDelegate
+
+    func resourceLoader(
+        _ resourceLoader: AVAssetResourceLoader,
+        shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest
+    ) -> Bool {
+        let id = ObjectIdentifier(loadingRequest)
+        cancelled.remove(id)
+        withTotalLength { [weak self] ok in
+            guard let self = self else { return }
+            guard ok, self.totalLength > 0 else {
+                loadingRequest.finishLoading(with: NSError(
+                    domain: "GoogleVideoLoader", code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Could not read the audio stream's size"]))
+                return
+            }
+            if let info = loadingRequest.contentInformationRequest {
+                info.contentType = self.uti(for: self.mime)
+                info.contentLength = self.totalLength
+                info.isByteRangeAccessSupported = true
+            }
+            guard let data = loadingRequest.dataRequest else {
+                loadingRequest.finishLoading()
+                return
+            }
+            let start = data.currentOffset != 0 ? data.currentOffset : data.requestedOffset
+            var end = self.totalLength - 1
+            if !data.requestsAllDataToEndOfResource {
+                end = min(end, data.requestedOffset + Int64(data.requestedLength) - 1)
+            }
+            if start > end {
+                loadingRequest.finishLoading()
+                return
+            }
+            self.fetch(loadingRequest, from: start, to: end, first: true)
+        }
+        return true
+    }
+
+    func resourceLoader(
+        _ resourceLoader: AVAssetResourceLoader,
+        didCancel loadingRequest: AVAssetResourceLoadingRequest
+    ) {
+        let id = ObjectIdentifier(loadingRequest)
+        cancelled.insert(id)
+        running.removeValue(forKey: id)?.cancel()
+    }
+
+    // MARK: Fetching
+
+    /// The stream's size, from the URL's "clen" or else a HEAD request. Runs `done` on the loader queue.
+    private func withTotalLength(_ done: @escaping (Bool) -> Void) {
+        if totalLength > 0 {
+            done(true)
+            return
+        }
+        var request = URLRequest(url: source)
+        request.httpMethod = "HEAD"
+        session.dataTask(with: request) { [weak self] _, response, _ in
+            guard let self = self else { return }
+            self.queue.async {
+                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    if http.expectedContentLength > 0 { self.totalLength = http.expectedContentLength }
+                    if let type = http.value(forHTTPHeaderField: "Content-Type"), !type.isEmpty { self.mime = type }
+                }
+                done(self.totalLength > 0)
+            }
+        }.resume()
+    }
+
+    /// Sends bytes from..to (inclusive) to the request, one piece at a time.
+    private func fetch(_ loadingRequest: AVAssetResourceLoadingRequest, from: Int64, to: Int64, first: Bool) {
+        let id = ObjectIdentifier(loadingRequest)
+        if cancelled.contains(id) || loadingRequest.isFinished || loadingRequest.isCancelled { return }
+        let size = first ? GoogleVideoLoader.firstChunk : GoogleVideoLoader.chunk
+        let pieceEnd = min(to, from + size - 1)
+        let task = session.dataTask(with: pieceUrl(from: from, to: pieceEnd)) { [weak self] body, response, error in
+            guard let self = self else { return }
+            self.queue.async {
+                self.running.removeValue(forKey: id)
+                if self.cancelled.contains(id) || loadingRequest.isFinished || loadingRequest.isCancelled { return }
+                if let error = error {
+                    loadingRequest.finishLoading(with: error)
+                    return
+                }
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard (200...299).contains(status), let body = body, !body.isEmpty else {
+                    loadingRequest.finishLoading(with: NSError(
+                        domain: "GoogleVideoLoader", code: status,
+                        userInfo: [NSLocalizedDescriptionKey: "googlevideo HTTP \(status)"]))
+                    return
+                }
+                // Never hand over more than was asked for.
+                let wanted = Int(pieceEnd - from + 1)
+                let piece = body.count > wanted ? body.subdata(in: 0..<wanted) : body
+                loadingRequest.dataRequest?.respond(with: piece)
+                let next = from + Int64(piece.count)
+                if next > to {
+                    loadingRequest.finishLoading()
+                } else {
+                    self.fetch(loadingRequest, from: next, to: to, first: false)
+                }
+            }
+        }
+        running[id] = task
+        task.resume()
     }
 }
