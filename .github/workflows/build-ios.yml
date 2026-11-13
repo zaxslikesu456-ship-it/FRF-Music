@@ -29,9 +29,12 @@ jobs:
       - name: Sync Capacitor iOS
         run: npx cap sync ios
 
-      - name: Select Xcode 16
+      - name: Select Xcode 26
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.0.app || sudo xcode-select -s /Applications/Xcode_16.1.app || sudo xcode-select -s /Applications/Xcode_16.2.app || sudo xcode-select -s /Applications/Xcode.app || true
+          # Capacitor 8.0.0's Capacitor.xcframework was built with Swift 6.2
+          # (Xcode 26); Xcode 16 drops Swift-6.2-gated members like
+          # CAPBridgeViewController.bridge when reading its .swiftinterface.
+          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app || sudo xcode-select -s /Applications/Xcode_26.1.1.app || sudo xcode-select -s /Applications/Xcode_26.0.1.app || sudo xcode-select -s /Applications/Xcode_26.app || sudo xcode-select -s /Applications/Xcode.app || true
           xcodebuild -version
 
       - name: Build Real Device iOS Archive (.ipa)
