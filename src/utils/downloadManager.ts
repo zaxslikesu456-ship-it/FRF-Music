@@ -107,18 +107,18 @@ export function cancelDownload(trackId: string) {
   notifyDownloadListeners();
 }
 
+// Removed (Nov 2026): iv.datura.network and api.piped.yt no longer exist (DNS
+// fails), inv.tux.pizza and iv.ggtyler.dev never answer (every request waited
+// out the full timeout).
 function getInvidiousBases() {
   return [
     'https://invidious.f5.si/api/v1',
     'https://inv.nadeko.net/api/v1',
     'https://invidious.nerdvpn.de/api/v1',
     'https://invidious.private.coffee/api/v1',
-    'https://iv.datura.network/api/v1',
     'https://yewtu.be/api/v1',
-    'https://inv.tux.pizza/api/v1',
     'https://invidious.protokolla.fi/api/v1',
-    'https://iv.ggtyler.dev/api/v1',
-  ];
+  ].filter(isMirrorUp);
 }
 
 function getPipedBases() {
@@ -127,8 +127,49 @@ function getPipedBases() {
     'https://pipedapi.adminforge.de',
     'https://api.piped.private.coffee',
     'https://pipedapi.reallyaweso.me',
-    'https://api.piped.yt',
-  ];
+  ].filter(isMirrorUp);
+}
+
+// A mirror that cannot be reached at all (its name does not resolve, or it
+// never answers) is skipped for a while instead of being asked again by every
+// pass and every retry of a song's start, each time waiting for the timeout.
+// Mirrors that answer, even with an error, are quick to fail and stay in.
+const MIRROR_DOWN_MS = 30 * 60 * 1000;
+const MIRRORS_DOWN_KEY = 'frf_mirrors_down_v1';
+let mirrorsDown: Record<string, number> | null = null;
+function downMap(): Record<string, number> {
+  if (!mirrorsDown) {
+    try {
+      mirrorsDown = JSON.parse(localStorage.getItem(MIRRORS_DOWN_KEY) || '{}') || {};
+    } catch {
+      mirrorsDown = {};
+    }
+  }
+  return mirrorsDown!;
+}
+function isMirrorUp(base: string): boolean {
+  const until = downMap()[base];
+  return !until || until < Date.now();
+}
+function noteMirrorFailure(base: string, err: unknown): void {
+  const msg = String((err as Error)?.message || err);
+  // "HTTP 403" and friends: it answered, so it is not unreachable.
+  if (/^HTTP \d/.test(msg)) return;
+  const map = downMap();
+  map[base] = Date.now() + MIRROR_DOWN_MS;
+  try {
+    localStorage.setItem(MIRRORS_DOWN_KEY, JSON.stringify(map));
+  } catch {
+    // kept for this run only
+  }
+}
+async function mirrorGetJson(base: string, path: string): Promise<any> {
+  try {
+    return await httpGetJson(`${base}${path}`, 4000);
+  } catch (e) {
+    noteMirrorFailure(base, e);
+    throw e;
+  }
 }
 
 function preferredItags(): number[] {
@@ -509,7 +550,7 @@ async function resolveFromInnerTube(
 }
 
 async function resolveFromPiped(base: string, youtubeId: string): Promise<string> {
-  const data = await httpGetJson(`${base}/streams/${youtubeId}`, 4000);
+  const data = await mirrorGetJson(base, `/streams/${youtubeId}`);
   const streams: any[] = data.audioStreams || [];
   const m4a = streams.find(
     (s: any) =>
@@ -530,7 +571,7 @@ async function resolveFromInvidious(
   local: boolean
 ): Promise<string> {
   const suffix = local ? '?local=true' : '';
-  const data = await httpGetJson(`${base}/videos/${youtubeId}${suffix}`, 4000);
+  const data = await mirrorGetJson(base, `/videos/${youtubeId}${suffix}`);
   const url = pickAudioUrl([
     ...(data.adaptiveFormats || []),
     ...(data.formatStreams || []),
