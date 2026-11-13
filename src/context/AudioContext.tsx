@@ -1387,12 +1387,27 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         audioModeTrackIdRef.current = null;
         streamUrlCacheRef.current.delete(streamYoutubeId);
         dropCachedStreamUrl(streamYoutubeId);
-        fallbackToStreamRef.current(
+        const retryGen = playGenRef.current;
+        void fallbackToStreamRef.current(
           streamYoutubeId === track.youtubeId
             ? track
             : { ...track, youtubeId: streamYoutubeId },
           true
-        );
+        ).then(started => {
+          // No fresh stream could be started (none found, or the player refused
+          // it): this used to be a dead end with the song frozen. Go straight to
+          // the last resort, as after the final retry.
+          if (started || playGenRef.current !== retryGen || currentTrackRef.current?.id !== track.id) return;
+          streamRetryCountRef.current.set(track.id, 2);
+          audioModeTrackIdRef.current = null;
+          setIsPlaying(false);
+          if (shouldUseYtBridge()) {
+            showStatus('Stream stopped working — switching to YouTube player', 6000);
+            void startIframe(track, positionRef.current || 0);
+            return;
+          }
+          skipUnplayable();
+        });
       }),
     ];
 
@@ -2550,6 +2565,22 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
         if (res.handedOver) return true;
         if (playGenRef.current !== gen) return false;
+      }
+
+      // iPhone: the fresh stream goes back to the native player, where the song was
+      // playing (the only one that keeps going in the background), from where it
+      // stopped. Retrying in the web view's <audio> failed there and returned false
+      // without anything else happening, so a stalled song stayed stuck. If the
+      // native player stalls again, its watchdog reports it and the next retry (or
+      // the last resort) follows.
+      if (IS_IOS && BackgroundAudio?.playUrl) {
+        const at = Math.max(0, positionRef.current || 0);
+        try {
+          await playAudioUrl(track, url, at);
+        } catch {
+          return false;
+        }
+        return playGenRef.current === gen && audioModeTrackIdRef.current === track.id;
       }
 
       let pos = 0;
