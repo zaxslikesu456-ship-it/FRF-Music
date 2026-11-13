@@ -31,6 +31,66 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private var isConfigured = false
     private var currentTrackId = ""
 
+    // Stall watchdog. A song that hangs while loading (stuck at 0:00) or stops
+    // mid-song while the player waits for data never fails as such: the item
+    // just sits there, so nothing reached the app, which could not retry or
+    // log it. Once a second: if the player is meant to be playing (playing or
+    // waiting, not paused) and the position has not moved for 20 s at the start
+    // or 15 s mid-song, the app gets a playbackError, once per song.
+    private var watchdog: Timer?
+    private var lastProgressTime: Double = -1
+    private var lastProgressAt = Date()
+    private var hasAdvanced = false
+    private var stallReported = false
+
+    private func startWatchdog() {
+        watchdog?.invalidate()
+        lastProgressTime = -1
+        lastProgressAt = Date()
+        hasAdvanced = false
+        stallReported = false
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.checkProgress()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        watchdog = timer
+    }
+
+    private func stopWatchdog() {
+        watchdog?.invalidate()
+        watchdog = nil
+    }
+
+    private func checkProgress() {
+        guard let player = avPlayer, player.currentItem != nil, !stallReported else { return }
+        // Paused by the user or the system (a call, another app): not a stall.
+        if player.timeControlStatus == .paused {
+            lastProgressAt = Date()
+            return
+        }
+        let now = CMTimeGetSeconds(player.currentTime())
+        if now.isFinite && abs(now - lastProgressTime) > 0.25 {
+            if lastProgressTime >= 0 { hasAdvanced = true }
+            lastProgressTime = now
+            lastProgressAt = Date()
+            return
+        }
+        let limit: TimeInterval = hasAdvanced ? 15 : 20
+        guard Date().timeIntervalSince(lastProgressAt) >= limit else { return }
+        stallReported = true
+        let at = now.isFinite ? Int(now) : 0
+        var message = hasAdvanced
+            ? "Native player stalled at \(at) s (no data for \(Int(limit)) s)"
+            : "Native player did not start (no audio after \(Int(limit)) s)"
+        if let reason = player.reasonForWaitingToPlay?.rawValue, !reason.isEmpty {
+            message += " [\(reason)]"
+        }
+        if let error = player.currentItem?.errorLog()?.events.last {
+            message += " (\(error.errorDomain) \(error.errorStatusCode))"
+        }
+        notifyListeners("playbackError", data: ["message": message, "stalled": true])
+    }
+
     // Details of the songs lined up behind the current one, keyed by player item.
     private struct UpcomingInfo {
         let trackId: String
@@ -228,6 +288,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         avPlayer?.play()
+        startWatchdog()
 
         updateNowPlaying(
             title: title,
@@ -303,6 +364,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             player.removeTimeObserver(token)
             timeObserverToken = nil
         }
+        stopWatchdog()
         unwatchItem()
         upcomingInfo.removeAll()
         currentTrackId = ""
@@ -448,6 +510,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
         unwatchItem()
         watch(item: current)
+        startWatchdog()
         currentTrackId = info.trackId
         applyGain(info.gainDb)
 

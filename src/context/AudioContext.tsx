@@ -1058,6 +1058,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const streamUrlCacheRef = useRef(new Map<string, string>());
   const currentTrackRef = useRef<Track | null>(null);
   const isPlayingRef = useRef(false);
+  // iPhone: the song whose native start was last logged as working.
+  const iosNativeLoggedRef = useRef('');
   const hasPlayedRef = useRef(false);
   const lastSeekAtRef = useRef(0);
   const positionRef = useRef(LAST_SESSION.position || 0);
@@ -1253,6 +1255,16 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           data.trackId === queuedNextIdRef.current
         ) {
           latestActionsRef.current?.adoptAdvancedTrack?.(data.trackId);
+        }
+        // iPhone: playUrl answers before the song has loaded, so its success is
+        // only known once the position moves. Logged once per song in Playback
+        // health (Android logs it when its start is confirmed).
+        if (IS_IOS && typeof data?.currentTime === 'number' && data.currentTime > 0.5) {
+          const id = currentTrackRef.current?.id || '';
+          if (id && iosNativeLoggedRef.current !== id) {
+            iosNativeLoggedRef.current = id;
+            recordSource('Native player', true, 0);
+          }
         }
         if (!nativeOwnerRef.current) {
           // ExoPlayer is audibly playing but the WebView engine was never told
