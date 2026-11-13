@@ -2916,6 +2916,63 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // screen controls, no YouTube ads) and only use the iframe bridge when no
   // playable stream can be resolved — the bridge plays restricted songs but
   // serves YouTube ads.
+  // iPhone: the web player is only a stopgap. iOS freezes the web view's media
+  // when the app goes to the background, so a song on it stops there, unlike the
+  // native player, which keeps going like any music app. While a song plays on
+  // the web player the direct stream is looked up again a few times, and right
+  // when the app is leaving the screen; once one is found the song moves to the
+  // native player at the same spot.
+  const iframeRescueRef = useRef<(() => void) | null>(null);
+  const scheduleNativeRescue = (track: Track, currentGen: number) => {
+    const onWebPlayer = () =>
+      playGenRef.current === currentGen &&
+      currentTrackRef.current?.id === track.id &&
+      audioModeTrackIdRef.current !== track.id &&
+      !nativeOwnerRef.current;
+    const delays = [6000, 20000, 60000, 180000];
+    let busy = false;
+    let timer = 0;
+    const attempt = async (next: number) => {
+      if (!onWebPlayer() || busy) return;
+      busy = true;
+      try {
+        const url = await resolveAudioStreamUrl(track.youtubeId || '', true);
+        if (!onWebPlayer()) return;
+        await playAudioUrl(track, url, Math.max(0, getCurrentPosition()));
+        if (playGenRef.current === currentGen && audioModeTrackIdRef.current === track.id) {
+          iframeRescueRef.current = null;
+          window.clearTimeout(timer);
+          showStatus('Switched to background audio', 3000);
+        }
+      } catch {
+        if (next < delays.length && onWebPlayer()) {
+          timer = window.setTimeout(() => void attempt(next + 1), delays[next]);
+        }
+      } finally {
+        busy = false;
+      }
+    };
+    timer = window.setTimeout(() => void attempt(1), delays[0]);
+    // Leaving the screen: try at once (iOS still runs the app for a moment).
+    iframeRescueRef.current = () => {
+      if (!onWebPlayer()) return;
+      window.clearTimeout(timer);
+      void attempt(1);
+    };
+  };
+  useEffect(() => {
+    if (!IS_IOS) return;
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') iframeRescueRef.current?.();
+    };
+    document.addEventListener('visibilitychange', onHidden);
+    window.addEventListener('pagehide', onHidden);
+    return () => {
+      document.removeEventListener('visibilitychange', onHidden);
+      window.removeEventListener('pagehide', onHidden);
+    };
+  }, []);
+
   const startStreamThenIframe = async (track: Track, startTime: number, currentGen: number) => {
     setIsResolvingStream(true);
     try {
@@ -2933,6 +2990,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         10000
       );
       void startIframe(track, startTime);
+      scheduleNativeRescue(track, currentGen);
     } finally {
       if (playGenRef.current === currentGen) setIsResolvingStream(false);
     }
