@@ -46,7 +46,7 @@ export const MiniPlayer: React.FC<{ onShowPanel?: () => void }> = ({ onShowPanel
 
   return (
     <div
-      className="w-full bg-app-primary z-30 anim-rise border-t border-app touch-none"
+      className="glass-bar w-full bg-app-primary z-30 anim-rise border-t border-app touch-none"
       style={{
         // Tinted with the cover's colour.
         background: tint ? `linear-gradient(to right, ${tint}, var(--bg-primary))` : undefined,

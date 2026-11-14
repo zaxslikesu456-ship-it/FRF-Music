@@ -185,4 +185,18 @@ export function applyThemeSettings(settings: SettingsState, artAccent?: string |
   // Menus and pop-ups stay opaque whatever the overlay transparency, so what is
   // behind them never shows through their text.
   root.style.setProperty('--bg-solid', hexToRgba(surface, 1));
+
+  // Liquid Glass: the pages turn see-through (LiquidGlassBackdrop shows behind
+  // them) and panels and cards become frosted glass (index.css, html.liquid-glass).
+  const glass = settings.liquidGlass === true;
+  root.classList.toggle('liquid-glass', glass);
+  if (glass) {
+    root.style.setProperty('--bg-primary', 'rgba(0, 0, 0, 0.18)');
+    root.style.setProperty('--bg-surface', 'rgba(255, 255, 255, 0.07)');
+    root.style.setProperty('--bg-card', 'rgba(255, 255, 255, 0.09)');
+    root.style.setProperty('--border-color', 'rgba(255, 255, 255, 0.16)');
+    root.style.setProperty('--bg-solid', 'rgba(28, 28, 32, 0.78)');
+    root.style.setProperty('--text-primary', '#ffffff');
+    root.style.setProperty('--text-secondary', 'rgba(255, 255, 255, 0.68)');
+  }
 }

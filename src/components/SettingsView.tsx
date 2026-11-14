@@ -62,8 +62,11 @@ const Switch: React.FC<{ on: boolean; onChange: () => void }> = ({ on, onChange 
   >
     <span
       className={`block w-5 h-5 rounded-full transition-transform ${
-        on ? 'translate-x-5 bg-app-primary' : 'translate-x-0 bg-app-highlight'
+        on ? 'translate-x-5' : 'translate-x-0 bg-app-highlight'
       }`}
+      // On: the colour that reads on the accent (the page colour is see-through
+      // with Liquid Glass, which made the knob vanish).
+      style={on ? { background: 'var(--text-inverse)' } : undefined}
     />
   </button>
 );
@@ -497,6 +500,15 @@ export const SettingsView: React.FC = () => {
                         <Switch
                           on={settings.albumArtAccent === true}
                           onChange={() => updateSettings({ albumArtAccent: !settings.albumArtAccent })}
+                        />
+                      </Row>
+                      <Row
+                        title={tr("Liquid Glass")}
+                        subtitle={tr("See-through frosted glass over the song's cover, like iPhone")}
+                      >
+                        <Switch
+                          on={settings.liquidGlass === true}
+                          onChange={() => updateSettings({ liquidGlass: !settings.liquidGlass })}
                         />
                       </Row>
                       <Row title={tr("Visualizer style")} subtitle={tr("Shown on Now Playing while music plays")}>

@@ -8,6 +8,7 @@ import { SettingsView } from './SettingsView';
 import { NowPlayingScreen } from './NowPlayingScreen';
 import { ArtistDetailView } from './ArtistDetailView';
 import { AnimatedBackground } from './AnimatedBackground';
+import { LiquidGlassBackdrop } from './LiquidGlassBackdrop';
 import { useAudio } from '../context/AudioContext';
 
 import { EqualizerModal } from './EqualizerModal';
@@ -31,6 +32,7 @@ export const AndroidFrame: React.FC = () => {
 
   return (
     <div className={`w-full h-screen flex flex-col relative isolate overflow-hidden select-none bg-app-primary text-app-primary transition-colors duration-500 ${getFontClass()}`}>
+      <LiquidGlassBackdrop />
       <AnimatedBackground type={settings.backgroundAnimation || 'off'} />
       {settings.backgroundImage && (
         <img

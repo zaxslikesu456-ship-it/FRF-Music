@@ -337,6 +337,7 @@ const DesktopNowPlaying: React.FC = () => {
 };
 
 import { AnimatedBackground } from './AnimatedBackground';
+import { LiquidGlassBackdrop } from './LiquidGlassBackdrop';
 
 export const DesktopFrame: React.FC = () => {
   const {
@@ -385,6 +386,7 @@ export const DesktopFrame: React.FC = () => {
   return (
     <div className="w-full h-screen flex bg-app-primary text-app-primary overflow-hidden select-none relative isolate">
       <PcExtrasBridge />
+      <LiquidGlassBackdrop />
       <AnimatedBackground type={settings.backgroundAnimation || 'off'} />
       {settings.backgroundImage && (
         <img

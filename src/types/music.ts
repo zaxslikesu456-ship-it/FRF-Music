@@ -102,6 +102,7 @@ export interface SettingsState {
   normalizeVolume?: boolean;
   albumArtColors?: boolean; // tint Now Playing / mini player / PC player with the cover's colour (default on)
   albumArtAccent?: boolean; // use the cover's colour as the app accent while a song plays (default off)
+  liquidGlass?: boolean; // see-through frosted panels over the song's blurred cover, like iPhone (default off)
   crossfadeSeconds?: number; // overlap between songs, 0 = off // turn loud songs down so songs play at a similar level
   sortBy: SortOrder;
   downloadQuality: 'high' | 'low';
