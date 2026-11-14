@@ -151,12 +151,18 @@ function isMirrorUp(base: string): boolean {
   const until = downMap()[base];
   return !until || until < Date.now();
 }
+// A mirror that answers but refuses (403 "Endpoint disabled", 5xx, a
+// Cloudflare tunnel error) is useless too, just quick about it: it is skipped
+// for 10 minutes. (In Nov 2026 every remaining mirror answered like this for
+// every song, so each song start and each song lined up next sent them all a
+// request for nothing.) 404 is about the one video, not the mirror.
+const MIRROR_REFUSING_MS = 10 * 60 * 1000;
 function noteMirrorFailure(base: string, err: unknown): void {
   const msg = String((err as Error)?.message || err);
-  // "HTTP 403" and friends: it answered, so it is not unreachable.
-  if (/^HTTP \d/.test(msg)) return;
+  const status = Number(/^HTTP (\d+)/.exec(msg)?.[1] || 0);
+  if (status && status < 500 && status !== 401 && status !== 403 && status !== 429) return;
   const map = downMap();
-  map[base] = Date.now() + MIRROR_DOWN_MS;
+  map[base] = Date.now() + (status ? MIRROR_REFUSING_MS : MIRROR_DOWN_MS);
   try {
     localStorage.setItem(MIRRORS_DOWN_KEY, JSON.stringify(map));
   } catch {

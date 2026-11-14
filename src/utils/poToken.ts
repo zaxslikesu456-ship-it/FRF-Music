@@ -93,6 +93,12 @@ export interface PoTokenMinter {
 
 let minterPromise: Promise<PoTokenMinter | null> | null = null;
 let minterExpiresAt = 0;
+// After a failed start the minter is not tried again for a while. On the
+// iPhone simulator YouTube refused every start ("No integrity token"), and it
+// was tried again for every song and every song lined up next, four requests
+// each time, for nothing.
+const MINTER_RETRY_MS = 5 * 60 * 1000;
+let minterFailedUntil = 0;
 
 export function getPoTokenMinter(forceRefresh = false): Promise<PoTokenMinter | null> {
   // The BotGuard VM needs a real browser environment, and the token requests
@@ -100,6 +106,7 @@ export function getPoTokenMinter(forceRefresh = false): Promise<PoTokenMinter | 
   // YouTube does not trust tokens from a non-youtube.com page; the desktop app
   // mints in a hidden youtube.com window instead, see src-tauri/src/po_token.rs.)
   if (!Capacitor.isNativePlatform()) return Promise.resolve(null);
+  if (Date.now() < minterFailedUntil) return Promise.resolve(null);
   if (!forceRefresh && minterPromise && Date.now() < minterExpiresAt) {
     return minterPromise;
   }
@@ -112,14 +119,18 @@ export function getPoTokenMinter(forceRefresh = false): Promise<PoTokenMinter | 
   }
   minterPromise = initMinter().then(
     minter => {
-      // A settled failure must be retried on the next call, not cached.
-      if (!minter) minterPromise = null;
+      // A settled failure must be retried, not cached (after a pause).
+      if (!minter) {
+        minterPromise = null;
+        minterFailedUntil = Date.now() + MINTER_RETRY_MS;
+      }
       return minter;
     },
     () => {
-      // A failed mint must not be cached as valid — force a retry next call.
+      // A failed mint must not be cached as valid — retry after a pause.
       minterExpiresAt = 0;
       minterPromise = null;
+      minterFailedUntil = Date.now() + MINTER_RETRY_MS;
       return null;
     }
   );
