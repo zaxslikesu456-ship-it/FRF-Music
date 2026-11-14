@@ -24,8 +24,8 @@ export const ListeningStatsModal: React.FC<{ isOpen: boolean; onClose: () => voi
   const maxArtist = Math.max(1, ...stats.topArtists.map(a => a.seconds));
 
   return createPortal(
-    <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center">
-      <div className="w-full max-w-lg bg-app-solid border border-app-theme rounded-t-3xl sm:rounded-3xl max-h-[88vh] flex flex-col overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center anim-fade">
+      <div className="w-full max-w-lg bg-app-solid border border-app-theme rounded-t-3xl sm:rounded-3xl max-h-[88vh] flex flex-col overflow-hidden shadow-2xl anim-sheet-up">
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-app-theme">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-app-card border border-app-theme text-app-primary">
@@ -71,11 +71,15 @@ export const ListeningStatsModal: React.FC<{ isOpen: boolean; onClose: () => voi
                   <Clock className="w-3.5 h-3.5" /> LAST 14 DAYS
                 </p>
                 <div className="flex items-end gap-1.5 h-24 p-3 rounded-2xl bg-app-card border border-app-theme">
-                  {stats.last14.map(d => (
+                  {stats.last14.map((d, i) => (
                     <div key={d.key} className="flex-1 flex flex-col items-center justify-end h-full gap-1">
                       <div
-                        className="w-full rounded-t bg-app-highlight min-h-[2px]"
-                        style={{ height: `${Math.max(3, (d.seconds / maxDay) * 100)}%`, opacity: d.seconds ? 1 : 0.25 }}
+                        className="w-full rounded-t bg-app-highlight min-h-[2px] anim-bar-grow-y"
+                        style={{
+                          height: `${Math.max(3, (d.seconds / maxDay) * 100)}%`,
+                          opacity: d.seconds ? 1 : 0.25,
+                          animationDelay: `${i * 25}ms`,
+                        }}
                         title={`${d.key}: ${formatDuration(d.seconds)}`}
                       />
                       <span className="text-[9px] text-app-secondary leading-none">{d.label}</span>
@@ -97,7 +101,7 @@ export const ListeningStatsModal: React.FC<{ isOpen: boolean; onClose: () => voi
                         </div>
                         <div className="h-1.5 rounded-full bg-app-surface mt-2 overflow-hidden">
                           <div
-                            className="h-full bg-app-highlight"
+                            className="h-full bg-app-highlight anim-bar-grow-x"
                             style={{ width: `${(a.seconds / maxArtist) * 100}%` }}
                           />
                         </div>

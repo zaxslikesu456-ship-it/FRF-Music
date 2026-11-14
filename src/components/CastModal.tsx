@@ -76,7 +76,7 @@ export function CastModal({ isOpen, onClose }: CastModalProps) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md bg-app-surface border border-app-theme rounded-t-3xl sm:rounded-3xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl"
+        className="w-full max-w-md bg-app-surface border border-app-theme rounded-t-3xl sm:rounded-3xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl anim-sheet-up"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-app-theme">

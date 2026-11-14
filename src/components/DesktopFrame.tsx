@@ -84,6 +84,8 @@ const DesktopNowPlaying: React.FC = () => {
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
+  const [playBounce, setPlayBounce] = useState(0);
+  const [heartAnimCount, setHeartAnimCount] = useState(0);
 
   if (!currentTrack) {
     return (
@@ -126,24 +128,34 @@ const DesktopNowPlaying: React.FC = () => {
       />
 
       {/* Media Display: the spinning vinyl (the app plays audio only) */}
-      <div className="relative w-full max-w-[260px] mx-auto aspect-square rounded-full shadow-2xl border-4 border-app-card overflow-hidden">
-        {/* The shadow and border stay still on the frame; only the picture turns,
-            on its own layer. Rotating them all redrew the shadow every frame and
-            kept a third of a CPU core busy for as long as a song played. The turn
-            itself is a plain smooth rotation on the graphics card (stepping it
-            made it look choppy). */}
-        <img
-          src={currentTrack.coverUrl}
-          alt={currentTrack.title}
-          className={`w-full h-full object-cover rounded-full will-change-transform backface-hidden pause-when-hidden ${
-            isPlaying ? 'animate-[spin_12s_linear_infinite]' : ''
-          }`}
-        />
-        <div className="absolute inset-0 m-auto w-9 h-9 rounded-full bg-app-primary border-2 border-app-card" />
+      <div className="relative w-full max-w-[260px] mx-auto aspect-square">
+        {isPlaying && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -inset-3 rounded-full blur-2xl anim-playing-halo pause-when-hidden"
+            style={{ background: artColors?.accent ? `${artColors.accent}55` : 'var(--accent-glow)' }}
+          />
+        )}
+        <div className="relative w-full h-full rounded-full shadow-2xl border-4 border-app-card overflow-hidden">
+          {/* The shadow and border stay still on the frame; only the picture turns,
+              on its own layer. Rotating them all redrew the shadow every frame and
+              kept a third of a CPU core busy for as long as a song played. The turn
+              itself is a plain smooth rotation on the graphics card (stepping it
+              made it look choppy). */}
+          <img
+            key={currentTrack.id}
+            src={currentTrack.coverUrl}
+            alt={currentTrack.title}
+            className={`w-full h-full object-cover rounded-full will-change-transform backface-hidden pause-when-hidden anim-art-swap ${
+              isPlaying ? 'animate-[spin_12s_linear_infinite]' : ''
+            }`}
+          />
+          <div className="absolute inset-0 m-auto w-9 h-9 rounded-full bg-app-primary border-2 border-app-card" />
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-3 pt-5">
-        <div className="min-w-0 flex-1">
+        <div key={currentTrack.id} className="min-w-0 flex-1 anim-track-meta">
           <h2 className="text-lg font-bold text-app-primary truncate">{currentTrack.title}</h2>
           <div className="flex items-center gap-2 mt-0.5">
             <button
@@ -157,8 +169,20 @@ const DesktopNowPlaying: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <button onClick={() => toggleFavorite(currentTrack.id, currentTrack)} className="p-2" title={tr("Like")}>
-            <Heart className={`w-5 h-5 ${isFav ? 'text-app-accent fill-current' : 'text-app-secondary'}`} />
+          <button
+            onClick={() => {
+              if (!isFav) setHeartAnimCount(c => c + 1);
+              toggleFavorite(currentTrack.id, currentTrack);
+            }}
+            className="p-2 active:scale-90 transition-transform"
+            title={tr("Like")}
+          >
+            <Heart
+              key={heartAnimCount}
+              className={`w-5 h-5 transition-colors ${
+                heartAnimCount > 0 && isFav ? 'anim-heart-pop ' : ''
+              }${isFav ? 'text-app-accent fill-current' : 'text-app-secondary'}`}
+            />
           </button>
           <button
             onClick={() => setShowAddToPlaylist(true)}
@@ -205,17 +229,23 @@ const DesktopNowPlaying: React.FC = () => {
       <div className="flex items-center justify-center gap-5 pt-3">
         <button
           onClick={toggleShuffle}
-          className={isShuffle ? 'text-app-primary' : 'text-app-secondary'}
+          className={`active:scale-90 transition-all ${isShuffle ? 'text-app-primary' : 'text-app-secondary hover:text-app-primary'}`}
           title={tr("Shuffle")}
         >
           <Shuffle className="w-4 h-4" />
         </button>
-        <button onClick={previousTrack} className="text-app-primary" title={tr("Previous")}>
+        <button onClick={previousTrack} className="text-app-primary hover:scale-110 active:scale-90 transition-transform" title={tr("Previous")}>
           <SkipBack className="w-6 h-6 fill-current" />
         </button>
         <button
-          onClick={togglePlay}
-          className="w-11 h-11 rounded-full bg-app-highlight text-app-inverse flex items-center justify-center hover:scale-105 transition-transform"
+          key={playBounce}
+          onClick={() => {
+            setPlayBounce(b => b + 1);
+            togglePlay();
+          }}
+          className={`w-11 h-11 rounded-full bg-app-highlight text-app-inverse flex items-center justify-center hover:scale-105 transition-transform shadow-md ${
+            playBounce > 0 ? 'play-bounce' : ''
+          }`}
           title={isPlaying ? 'Pause' : 'Play'}
         >
           {isResolvingStream && !isPlaying ? (
@@ -226,12 +256,12 @@ const DesktopNowPlaying: React.FC = () => {
             <Play className="w-5 h-5 fill-current ml-0.5" />
           )}
         </button>
-        <button onClick={nextTrack} className="text-app-primary" title={tr("Next")}>
+        <button onClick={nextTrack} className="text-app-primary hover:scale-110 active:scale-90 transition-transform" title={tr("Next")}>
           <SkipForward className="w-6 h-6 fill-current" />
         </button>
         <button
           onClick={toggleRepeatMode}
-          className={repeatMode !== 'off' ? 'text-app-primary' : 'text-app-secondary'}
+          className={`active:scale-90 transition-all ${repeatMode !== 'off' ? 'text-app-primary' : 'text-app-secondary hover:text-app-primary'}`}
           title={`Repeat: ${repeatMode}`}
         >
           {repeatMode === 'one' ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
@@ -292,6 +322,9 @@ const DesktopNowPlaying: React.FC = () => {
                       </p>
                       <p className="text-xs text-app-secondary truncate">{t.artist}</p>
                     </div>
+                    {isCurrent && isPlaying && (
+                      <span className="eq pause-when-hidden" aria-hidden="true"><span /><span /><span /></span>
+                    )}
                   </button>
                 );
               })}
@@ -484,14 +517,14 @@ export const DesktopFrame: React.FC = () => {
 
       {/* Main Content */}
       <main className="flex-1 min-w-0 flex flex-col overflow-hidden relative">
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
+        <div key={activeTab} className="flex-1 min-h-0 flex flex-col overflow-hidden relative anim-fade">
           {activeTab === 'home' && <HomeView />}
           {activeTab === 'search' && <SearchView />}
           {activeTab === 'library' && <LibraryView />}
           {activeTab === 'settings' && <SettingsView />}
 
           {downloadStatus && (
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[70] px-4 py-2.5 rounded-2xl bg-app-card border border-app-theme text-app-primary text-xs font-mono font-bold shadow-2xl max-w-[80%] text-center">
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[70] px-4 py-2.5 rounded-2xl bg-app-card border border-app-theme text-app-primary text-xs font-mono font-bold shadow-2xl max-w-[80%] text-center anim-toast">
               {downloadStatus}
             </div>
           )}
@@ -528,7 +561,7 @@ export const DesktopFrame: React.FC = () => {
 
       {/* Playlist Overlay (from sidebar) */}
       {sidebarPlaylistId && (
-        <div className="fixed inset-0 z-40 bg-app-primary flex flex-col anim-fade">
+        <div className="fixed inset-0 z-40 bg-app-primary flex flex-col anim-subview-in">
           {sidebarPlaylistId === 'favorites' ? (
             <PlaylistDetailView
               title={tr("Favorites")}
@@ -567,7 +600,7 @@ export const DesktopFrame: React.FC = () => {
 
       {/* Artist Profile Overlay */}
       {artistProfileName && (
-        <div className="fixed inset-0 z-40 bg-app-primary flex flex-col anim-fade">
+        <div className="fixed inset-0 z-40 bg-app-primary flex flex-col anim-subview-in">
           <ArtistDetailView
             artistName={artistProfileName}
             localTracks={[]}

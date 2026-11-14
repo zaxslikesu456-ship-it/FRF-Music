@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { t as tr } from '../i18n';
-import { Download, MoreVertical, Trash2, BarChart3 } from 'lucide-react';
+import { Download, MoreVertical, Trash2 } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
 import { PlaylistHero } from './PlaylistHero';
@@ -296,7 +296,7 @@ export const DownloadsView: React.FC<{ onBack?: () => void }> = ({ onBack }) => 
 
                 <div className="flex items-center gap-3 shrink-0">
                   {isCurrent && isPlaying && (
-                    <BarChart3 className="w-5 h-5 text-white fill-white/20 animate-pulse" />
+                    <span className="eq pause-when-hidden" aria-hidden="true"><span /><span /><span /></span>
                   )}
 
                   <span className="text-xs text-zinc-400 font-mono">{formatDuration(track.duration)}</span>

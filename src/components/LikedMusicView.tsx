@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { t as tr } from '../i18n';
-import { Heart, BarChart3 } from 'lucide-react';
+import { Heart } from 'lucide-react';
 import { useAudio } from '../context/AudioContext';
 import { PlaylistHero } from './PlaylistHero';
 import { TrackOptionsMenuModal } from './TrackOptionsMenuModal';
@@ -75,7 +75,7 @@ export const LikedMusicView: React.FC<{ onBack?: () => void }> = ({ onBack }) =>
               <div
                 key={track.id}
                 onClick={() => playQueue(likedTracks, index)}
-                className="w-full flex items-center gap-3.5 p-2 rounded-xl text-left hover:bg-white/5 cursor-pointer transition-colors group"
+                className="w-full flex items-center gap-3.5 p-2 rounded-xl text-left hover:bg-white/5 active:scale-[0.99] cursor-pointer transition-all group"
               >
                 <img
                   src={track.coverUrl}
@@ -92,7 +92,7 @@ export const LikedMusicView: React.FC<{ onBack?: () => void }> = ({ onBack }) =>
 
                 <div className="flex items-center gap-3 shrink-0">
                   {isCurrent && isPlaying && (
-                    <BarChart3 className="w-5 h-5 text-white fill-white/20 animate-pulse" />
+                    <span className="eq pause-when-hidden" aria-hidden="true"><span /><span /><span /></span>
                   )}
                   <span className="text-xs text-zinc-400 font-mono">{formatDuration(track.duration)}</span>
                   <span

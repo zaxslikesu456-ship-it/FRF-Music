@@ -6,7 +6,6 @@ import {
   Shuffle,
   Download,
   MoreVertical,
-  BarChart3,
   Edit3,
   Trash2,
   ArrowUp,
@@ -413,7 +412,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-y-auto pb-52 bg-transparent text-white relative">
+    <div className="flex-1 flex flex-col overflow-y-auto pb-52 bg-transparent text-white relative anim-subview-in">
       <TrackOptionsMenuModal
         track={selectedTrackForMenu}
         onClose={() => setSelectedTrackForMenu(null)}
@@ -658,7 +657,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
 
       {/* Search Input Bar (if open) */}
       {showSearch && (
-        <div className="px-6 py-2 bg-zinc-900/80 flex items-center gap-2 border-b border-white/10 animate-in fade-in duration-150">
+        <div className="px-6 py-2 bg-zinc-900/80 flex items-center gap-2 border-b border-white/10 anim-dropdown">
           <Search className="w-4 h-4 text-zinc-400" />
           <input
             type="text"
@@ -739,7 +738,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                   )}
 
                   {isCurrent && isPlaying && (
-                    <BarChart3 className="w-5 h-5 text-white fill-white/20 animate-pulse" />
+                    <span className="eq pause-when-hidden" aria-hidden="true"><span /><span /><span /></span>
                   )}
 
                   <span className="text-xs text-zinc-400 font-mono">{formatDuration(t.duration)}</span>

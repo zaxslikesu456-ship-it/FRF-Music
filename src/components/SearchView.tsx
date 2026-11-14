@@ -3,7 +3,6 @@ import { t as tr } from '../i18n';
 import {
   Search,
   ChevronLeft,
-  Pause,
   MoreVertical,
   FolderPlus,
   Check,
@@ -537,7 +536,7 @@ export const SearchView: React.FC = () => {
           if (track.isYouTube) playWithArtistTop(track, list);
           else playQueue(list, index);
         }}
-        className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
+        className="w-full flex items-center gap-4 p-2 rounded-xl text-left hover:bg-app-surface/70 active:scale-[0.99] transition-all"
       >
         <img src={track.coverUrl} alt={track.title} loading="lazy" className="w-14 h-14 rounded-lg object-cover shrink-0" />
         <div className="flex-1 min-w-0">
@@ -555,7 +554,7 @@ export const SearchView: React.FC = () => {
             Song, {track.artist}
           </span>
         </div>
-        {isCurrent && isPlaying && <Pause className="w-4 h-4 text-app-primary fill-current shrink-0" />}
+        {isCurrent && isPlaying && <span className="eq pause-when-hidden shrink-0" aria-hidden="true"><span /><span /><span /></span>}
         <span
           role="button"
           tabIndex={0}
@@ -639,7 +638,7 @@ export const SearchView: React.FC = () => {
             saveHistory(a.name);
             rememberItem({ kind: 'artist', name: a.name, thumbnail: a.thumbnail, at: Date.now() });
           }}
-          className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
+          className="w-full flex items-center gap-4 p-2 rounded-xl text-left hover:bg-app-surface/70 active:scale-[0.99] transition-all"
         >
           <img
             src={a.thumbnail}
@@ -827,7 +826,7 @@ export const SearchView: React.FC = () => {
               )}
 
               {showDropdown && (
-                <div className="absolute left-0 right-0 top-full mt-2 z-30 rounded-2xl bg-app-solid border border-app-theme overflow-hidden shadow-lg">
+                <div className="absolute left-0 right-0 top-full mt-2 z-30 rounded-2xl bg-app-solid border border-app-theme overflow-hidden shadow-lg anim-dropdown">
                   {historyMatches.map(q => (
                     <button
                       key={`h-${q}`}
@@ -954,7 +953,7 @@ export const SearchView: React.FC = () => {
                   <button
                     key={term}
                     onClick={() => submitSearch(term)}
-                    className="px-4 py-2 rounded-full bg-app-surface border border-app-theme text-sm text-app-primary hover:border-app-primary transition-colors"
+                    className="px-4 py-2 rounded-full bg-app-surface border border-app-theme text-sm text-app-primary hover:border-app-primary active:scale-95 transition-all"
                   >
                     {term}
                   </button>
@@ -966,7 +965,7 @@ export const SearchView: React.FC = () => {
 
           {/* RESULTS MODE */}
           {searchMode === 'results' && searchQuery && (
-            <div className="px-5 space-y-8">
+            <div className="px-5 space-y-8 anim-fade">
               {(libraryMatches.tracks.length > 0 || libraryMatches.playlists.length > 0) && (
                 <div>
                   <div className="flex items-center justify-between pb-2">

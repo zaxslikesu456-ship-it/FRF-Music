@@ -133,7 +133,7 @@ export const EqualizerModal: React.FC<EqualizerModalProps> = ({ isOpen, onClose 
   return createPortal(
     <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
       <div
-        className="w-full max-w-lg sm:max-w-xl bg-app-surface border border-app-theme rounded-t-3xl sm:rounded-3xl h-[92vh] sm:h-auto sm:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl"
+        className="w-full max-w-lg sm:max-w-xl bg-app-surface border border-app-theme rounded-t-3xl sm:rounded-3xl h-[92vh] sm:h-auto sm:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl anim-sheet-up"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}

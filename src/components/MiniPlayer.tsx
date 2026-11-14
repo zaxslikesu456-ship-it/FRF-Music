@@ -69,23 +69,31 @@ export const MiniPlayer: React.FC<{ onShowPanel?: () => void }> = ({ onShowPanel
       <div className="flex items-center gap-2 px-3 py-2">
         <button
           onClick={() => setIsPlayerOpen(true)}
-          className="flex items-center gap-3 flex-1 min-w-0 text-left"
+          className="flex items-center gap-3 flex-1 min-w-0 text-left group active:scale-[0.99] transition-transform"
         >
           <img
+            key={`img-${currentTrack.id}`}
             data-mini-cover
             src={currentTrack.coverUrl}
             alt={currentTrack.title}
-            className="w-11 h-11 rounded-lg object-cover shrink-0"
+            className="w-11 h-11 rounded-lg object-cover shrink-0 anim-art-swap shadow-sm group-hover:scale-105 transition-transform duration-300"
           />
-          <div className="min-w-0 flex-1">
-            <h4 className="text-base font-semibold text-app-primary truncate">
-              {currentTrack.title}
+          <div key={`meta-${currentTrack.id}`} className="min-w-0 flex-1 anim-track-meta">
+            <h4 className="text-base font-semibold text-app-primary truncate flex items-center gap-2">
+              <span className="truncate">{currentTrack.title}</span>
+              {isPlaying && (
+                <span className="eq pause-when-hidden" aria-hidden="true"><span /><span /><span /></span>
+              )}
             </h4>
             <p className="text-xs text-app-secondary truncate">{currentTrack.artist}</p>
           </div>
         </button>
 
-        <button onClick={togglePlay} className="p-1.5 text-app-primary" title={isPlaying ? 'Pause' : 'Play'}>
+        <button
+          onClick={togglePlay}
+          className="p-1.5 text-app-primary active:scale-90 transition-transform"
+          title={isPlaying ? 'Pause' : 'Play'}
+        >
           {isResolvingStream && !isPlaying ? (
             <Loader2 className="w-6 h-6 animate-spin" />
           ) : isPlaying ? (
@@ -95,14 +103,18 @@ export const MiniPlayer: React.FC<{ onShowPanel?: () => void }> = ({ onShowPanel
           )}
         </button>
 
-        <button onClick={nextTrack} className="p-1.5 text-app-primary" title={tr("Next")}>
+        <button
+          onClick={nextTrack}
+          className="p-1.5 text-app-primary active:scale-90 transition-transform"
+          title={tr("Next")}
+        >
           <SkipForward className="w-6 h-6 fill-current" />
         </button>
 
         {onShowPanel && (
           <button
             onClick={onShowPanel}
-            className="p-1.5 text-app-secondary hover:text-app-primary transition-colors"
+            className="p-1.5 text-app-secondary hover:text-app-primary active:scale-90 transition-all"
             title={tr("Show the player panel")}
           >
             <PanelRightOpen className="w-5 h-5" />
@@ -112,7 +124,7 @@ export const MiniPlayer: React.FC<{ onShowPanel?: () => void }> = ({ onShowPanel
         {/* Take off / Close current song button */}
         <button
           onClick={stopTrack}
-          className="p-1.5 text-app-secondary hover:text-app-primary transition-colors"
+          className="p-1.5 text-app-secondary hover:text-app-primary active:scale-90 transition-all"
           title={tr("Stop & Close Song")}
         >
           <X className="w-5 h-5" />

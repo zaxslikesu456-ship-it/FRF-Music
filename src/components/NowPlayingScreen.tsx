@@ -91,11 +91,29 @@ export const NowPlayingScreen: React.FC = () => {
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [centerMode, setCenterMode] = useState<PlayerCenterMode>('artwork');
+  const prevCenterModeRef = useRef<PlayerCenterMode>('artwork');
+  const [modeSlideClass, setModeSlideClass] = useState<'anim-mode-from-right' | 'anim-mode-from-left' | ''>('');
+  const [heartAnimCount, setHeartAnimCount] = useState(0);
+
+  const selectCenterMode = (next: PlayerCenterMode) => {
+    const order: Record<PlayerCenterMode, number> = { artwork: 0, lyrics: 1, video: 2 };
+    const prev = prevCenterModeRef.current;
+    if (next !== prev) {
+      setModeSlideClass(order[next] > order[prev] ? 'anim-mode-from-right' : 'anim-mode-from-left');
+      prevCenterModeRef.current = next;
+    }
+    setCenterMode(next);
+  };
+
   // This screen stays mounted while closed, so it used to reopen on whatever
   // view was last used (lyrics or video) for the next song. It now always opens
   // on the cover art; the view only changes when you pick one.
   useEffect(() => {
-    if (isPlayerOpen) setCenterMode('artwork');
+    if (isPlayerOpen) {
+      prevCenterModeRef.current = 'artwork';
+      setModeSlideClass('');
+      setCenterMode('artwork');
+    }
   }, [isPlayerOpen]);
   const [bounce, setBounce] = useState(0);
   const artRef = useRef<HTMLDivElement | null>(null);
@@ -315,12 +333,12 @@ export const NowPlayingScreen: React.FC = () => {
           if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.1) {
             if (dx < 0) {
               // Swipe Left: Advance from Artwork -> Lyrics -> Video
-              if (centerMode === 'artwork') setCenterMode('lyrics');
-              else if (centerMode === 'lyrics') setCenterMode('video');
+              if (centerMode === 'artwork') selectCenterMode('lyrics');
+              else if (centerMode === 'lyrics') selectCenterMode('video');
             } else {
               // Swipe Right: Return from Video -> Lyrics -> Artwork
-              if (centerMode === 'video') setCenterMode('lyrics');
-              else if (centerMode === 'lyrics') setCenterMode('artwork');
+              if (centerMode === 'video') selectCenterMode('lyrics');
+              else if (centerMode === 'lyrics') selectCenterMode('artwork');
             }
           }
         }}
@@ -404,21 +422,21 @@ export const NowPlayingScreen: React.FC = () => {
         {/* 3-View Mode Dots Indicator (Artwork • Lyrics • Video) */}
         <div className="flex items-center justify-center gap-2 py-1">
           <button
-            onClick={() => setCenterMode('artwork')}
+            onClick={() => selectCenterMode('artwork')}
             className={`h-1.5 rounded-full transition-all duration-300 ${
               centerMode === 'artwork' ? 'w-6 bg-app-highlight' : 'w-1.5 bg-white/20 hover:bg-white/50'
             }`}
             title={tr("Artwork")}
           />
           <button
-            onClick={() => setCenterMode('lyrics')}
+            onClick={() => selectCenterMode('lyrics')}
             className={`h-1.5 rounded-full transition-all duration-300 ${
               centerMode === 'lyrics' ? 'w-6 bg-app-highlight' : 'w-1.5 bg-white/20 hover:bg-white/50'
             }`}
             title={tr("Lyrics")}
           />
           <button
-            onClick={() => setCenterMode('video')}
+            onClick={() => selectCenterMode('video')}
             className={`h-1.5 rounded-full transition-all duration-300 ${
               centerMode === 'video' ? 'w-6 bg-app-highlight' : 'w-1.5 bg-white/20 hover:bg-white/50'
             }`}
@@ -428,9 +446,9 @@ export const NowPlayingScreen: React.FC = () => {
 
         {/* Main Center Section: Artwork | Synchronized Lyrics | Live YouTube Video */}
         {centerMode === 'lyrics' ? (
-          <LyricsPanel className="flex-1 min-h-0" />
+          <LyricsPanel key="mode-lyrics" className={`flex-1 min-h-0 ${modeSlideClass || 'anim-fade'}`} />
         ) : centerMode === 'video' ? (
-          <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0 animate-in fade-in duration-200">
+          <div key="mode-video" className={`flex-1 flex flex-col items-center justify-center py-4 min-h-0 ${modeSlideClass || 'anim-fade'}`}>
             <div
               ref={videoSlotRef}
               id="now-playing-video-slot"
@@ -519,22 +537,30 @@ export const NowPlayingScreen: React.FC = () => {
               )}
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center py-4 min-h-0 animate-in fade-in duration-200">
+          <div key="mode-artwork" className={`flex-1 flex flex-col items-center justify-center py-4 min-h-0 ${modeSlideClass || 'anim-fade'}`}>
             {/* The cover shrinks to the height that is left, so on short phones it
                 no longer slides up under the header. */}
             <div className="w-full flex-1 min-h-0 flex items-center justify-center" style={{ containerType: 'size' }}>
             <div className="relative" style={{ width: 'min(320px, 100cqw, 100cqh)' }}>
+            {isPlaying && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -inset-3 rounded-3xl blur-2xl anim-playing-halo pause-when-hidden"
+                style={{ background: artColors?.accent ? `${artColors.accent}66` : 'var(--accent-glow)' }}
+              />
+            )}
             <AudioVisualizer variant="ring" />
             <div
               ref={artRef}
               onClick={handleArtworkTap}
-              className="relative w-full aspect-square rounded-2xl overflow-hidden shadow-2xl border border-white/10 group cursor-pointer active:scale-[0.99] transition-transform"
+              className="relative w-full aspect-square rounded-2xl overflow-hidden shadow-2xl border border-white/10 group cursor-pointer active:scale-[0.985] transition-transform duration-200"
               style={artColors ? { boxShadow: `0 24px 60px -12px ${artColors.accent}55` } : undefined}
             >
               <img
+                key={currentTrack.id}
                 src={currentTrack.coverUrl}
                 alt={currentTrack.title}
-                className={`w-full h-full object-cover transition-all duration-700 ${
+                className={`w-full h-full object-cover anim-art-swap transition-all duration-700 ${
                   isPlaying ? 'cover-drift pause-when-hidden' : 'scale-95 opacity-90'
                 }`}
               />
@@ -553,7 +579,7 @@ export const NowPlayingScreen: React.FC = () => {
 
         {/* Track Title + Favorite & Lyrics Controls */}
         <div className="flex items-center justify-between gap-4 pt-3">
-          <div className="min-w-0 flex-1">
+          <div key={currentTrack.id} className="min-w-0 flex-1 anim-track-meta">
             <h2
               onClick={() => setFullTitleId(id => (id === currentTrack.id ? null : currentTrack.id))}
               className={`${currentTrack.title.length > 30 ? 'text-xl' : 'text-2xl'} font-bold text-app-primary tracking-tight leading-tight break-words cursor-pointer ${
@@ -573,12 +599,18 @@ export const NowPlayingScreen: React.FC = () => {
             <CastingLabel className="!justify-start mt-1" />
           </div>
           <button
-            onClick={() => toggleFavorite(currentTrack.id, currentTrack)}
-            className="p-2 -mr-2 shrink-0 active:scale-95 transition-transform"
+            onClick={() => {
+              if (!favorites.includes(currentTrack.id)) setHeartAnimCount(c => c + 1);
+              toggleFavorite(currentTrack.id, currentTrack);
+            }}
+            className="p-2 -mr-2 shrink-0 active:scale-90 transition-transform"
             title={tr("Like")}
           >
             <Heart
+              key={heartAnimCount}
               className={`w-7 h-7 transition-colors ${
+                heartAnimCount > 0 && favorites.includes(currentTrack.id) ? 'anim-heart-pop ' : ''
+              }${
                 favorites.includes(currentTrack.id) ? 'text-app-accent fill-current' : 'text-app-secondary hover:text-app-primary'
               }`}
             />
@@ -714,11 +746,11 @@ export const NowPlayingScreen: React.FC = () => {
       {/* ========================================================================= */}
       {showQueueOverlay && (
         <div
-          className="absolute inset-0 z-50 bg-black/75 backdrop-blur-md flex flex-col justify-end animate-in fade-in duration-200"
+          className="absolute inset-0 z-50 bg-black/75 backdrop-blur-md flex flex-col justify-end anim-fade"
           onClick={() => setShowQueueOverlay(false)}
         >
           <div
-            className="w-full max-h-[80vh] bg-app-surface border-t border-app-theme rounded-t-3xl p-5 flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-300"
+            className="w-full max-h-[80vh] bg-app-surface border-t border-app-theme rounded-t-3xl p-5 flex flex-col shadow-2xl anim-sheet-up"
             onClick={e => e.stopPropagation()}
           >
             {/* Sheet Handle & Header */}
@@ -731,14 +763,14 @@ export const NowPlayingScreen: React.FC = () => {
               </div>
               <button
                 onClick={() => setShowQueueOverlay(false)}
-                className="p-1.5 text-app-secondary hover:text-app-primary rounded-full"
+                className="p-1.5 text-app-secondary hover:text-app-primary rounded-full active:scale-90 transition-transform"
               >
                 <X className="w-6 h-6" />
               </button>
             </div>
 
             {/* Queue Songs Scroll Area */}
-            <div className="flex-1 overflow-y-auto py-3 space-y-1.5 no-scrollbar">
+            <div className="flex-1 overflow-y-auto py-3 space-y-1.5 no-scrollbar stagger">
               {upNextTracks.map((t, idx) => {
                 const isSelected = t.id === currentTrack.id;
                 return (
@@ -752,7 +784,7 @@ export const NowPlayingScreen: React.FC = () => {
                       }
                       setShowQueueOverlay(false);
                     }}
-                    className={`w-full flex items-center gap-3.5 p-2.5 rounded-2xl transition-colors cursor-pointer ${
+                    className={`w-full flex items-center gap-3.5 p-2.5 rounded-2xl transition-all active:scale-[0.99] cursor-pointer ${
                       isSelected ? 'bg-app-card border border-app-theme' : 'hover:bg-app-card/50'
                     }`}
                   >
@@ -768,6 +800,10 @@ export const NowPlayingScreen: React.FC = () => {
                       </p>
                       <p className="text-xs text-app-secondary truncate mt-0.5">{t.artist}</p>
                     </div>
+
+                    {isSelected && isPlaying && (
+                      <span className="eq mr-1 pause-when-hidden"><span /><span /><span /></span>
+                    )}
 
                     {queue.length > 0 && (
                       <div className="flex items-center gap-1 shrink-0">

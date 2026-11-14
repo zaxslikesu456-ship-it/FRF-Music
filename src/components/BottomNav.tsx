@@ -26,16 +26,23 @@ export const BottomNav: React.FC = () => {
               closeArtistProfile();
               setActiveTab(item.id);
             }}
-            className="flex flex-col items-center gap-1.5 shrink-0"
+            className="flex flex-col items-center gap-1.5 shrink-0 active:scale-95 transition-transform"
           >
             <span
-              className={`px-7 py-2 rounded-full transition-all duration-200 ${
-                isActive ? 'bg-app-card' : ''
+              className={`px-7 py-2 rounded-full transition-all duration-300 ${
+                isActive ? 'bg-app-card scale-100 shadow-sm' : 'scale-95 bg-transparent'
               }`}
             >
-              <Icon className={`w-6 h-6 ${isActive ? 'text-app-accent' : 'text-app-primary'}`} />
+              <Icon
+                key={isActive ? `${item.id}-active` : item.id}
+                className={`w-6 h-6 transition-colors duration-200 ${
+                  isActive ? 'text-app-accent anim-nav-pop' : 'text-app-primary'
+                }`}
+              />
             </span>
-            <span className="text-sm font-semibold text-app-primary">{item.label}</span>
+            <span className={`text-sm font-semibold transition-colors duration-200 ${isActive ? 'text-app-accent' : 'text-app-primary'}`}>
+              {item.label}
+            </span>
           </button>
         );
       })}

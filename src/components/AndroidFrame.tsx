@@ -52,7 +52,7 @@ export const AndroidFrame: React.FC = () => {
         {/* Artist profile: over the page, but above the mini player and tabs so
             the music stays in reach (it used to cover them). */}
         {artistProfileName && (
-          <div className="absolute inset-0 z-20 bg-app-primary flex flex-col anim-fade">
+          <div className="absolute inset-0 z-20 bg-app-primary flex flex-col anim-subview-in">
             <ArtistDetailView
               artistName={artistProfileName}
               localTracks={[]}
@@ -67,7 +67,7 @@ export const AndroidFrame: React.FC = () => {
 
       {/* Download Progress Toast */}
       {downloadStatus && (
-        <div className="fixed bottom-36 left-1/2 -translate-x-1/2 z-[70] px-4 py-2.5 rounded-2xl bg-app-card border border-app-theme text-app-primary text-xs font-mono font-bold shadow-2xl max-w-[90%] text-center">
+        <div className="fixed bottom-36 left-1/2 -translate-x-1/2 z-[70] px-4 py-2.5 rounded-2xl bg-app-card border border-app-theme text-app-primary text-xs font-mono font-bold shadow-2xl max-w-[90%] text-center anim-toast">
           {downloadStatus}
         </div>
       )}

@@ -182,7 +182,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
           onClick={() => setShowInfoModal(false)}
         >
           <div
-            className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl text-white space-y-4"
+            className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl text-white space-y-4 anim-modal-pop"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
@@ -222,7 +222,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
           onClick={() => setShowSleepTimerModal(false)}
         >
           <div
-            className="w-full max-w-md bg-zinc-900 border-t border-zinc-800 rounded-t-3xl p-6 pb-28 text-white space-y-3"
+            className="w-full max-w-md bg-zinc-900 border-t border-zinc-800 rounded-t-3xl p-6 pb-28 text-white space-y-3 anim-sheet-up"
             onClick={e => e.stopPropagation()}
           >
             <div className="w-10 h-1.5 rounded-full bg-zinc-700 mx-auto mb-2" />
@@ -273,7 +273,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
           onClick={onClose}
         >
           <div
-            className="w-full max-w-md bg-black border-t border-zinc-800/80 rounded-t-3xl px-6 pt-4 pb-28 shadow-2xl max-h-[88vh] overflow-y-auto no-scrollbar"
+            className="w-full max-w-md bg-black border-t border-zinc-800/80 rounded-t-3xl px-6 pt-4 pb-28 shadow-2xl max-h-[88vh] overflow-y-auto no-scrollbar anim-sheet-up"
             onClick={e => e.stopPropagation()}
           >
             {/* Top Drag Handle */}

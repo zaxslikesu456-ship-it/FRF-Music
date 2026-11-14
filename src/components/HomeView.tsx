@@ -42,6 +42,7 @@ export const HomeView: React.FC = () => {
     settings,
     setActiveTab,
     currentTrack,
+    isPlaying,
     playlists,
     importPlaylistToLibrary,
   } = useAudio();
@@ -407,22 +408,28 @@ export const HomeView: React.FC = () => {
             >
               {page.map((t, i) => {
                 const idx = p * 8 + i;
+                const isCurrent = currentTrack?.id === t.id;
                 return (
                   <button
                     key={`${t.id}-${idx}`}
                     onClick={() => playQueue(quickPicks, idx)}
-                    className="flex items-center gap-3 text-left min-w-0 hover:opacity-80 active:scale-[0.98] transition-all"
+                    className={`flex items-center gap-3 text-left min-w-0 group rounded-xl p-1 -m-1 transition-all duration-200 hover:bg-app-surface/60 active:scale-[0.98] ${
+                      isCurrent ? 'bg-app-surface/50' : ''
+                    }`}
                   >
                     <img
                       src={t.coverUrl}
                       alt={t.title}
                       loading="lazy"
-                      className={`${quickPickImgClass} object-cover shrink-0 shadow-sm`}
+                      className={`${quickPickImgClass} object-cover shrink-0 shadow-sm group-hover:scale-105 transition-transform duration-300`}
                     />
                     <div className="min-w-0 flex-1">
-                      <p className={quickPickTitleClass}>{t.title}</p>
+                      <p className={`${quickPickTitleClass} ${isCurrent ? 'text-app-accent' : ''}`}>{t.title}</p>
                       <p className={quickPickArtistClass}>{t.artist}</p>
                     </div>
+                    {isCurrent && isPlaying && (
+                      <span className="eq mr-1 pause-when-hidden" aria-hidden="true"><span /><span /><span /></span>
+                    )}
                   </button>
                 );
               })}
@@ -439,13 +446,13 @@ export const HomeView: React.FC = () => {
             {madeForYou.map(mix => {
               const saved = savedMixIds.has(mix.id);
               return (
-                <div key={mix.id} className={`${shelfCardClass} relative`}>
+                <div key={mix.id} className={`${shelfCardClass} relative group`}>
                   <button
                     onClick={() => playQueue(mix.tracks, 0)}
-                    className="w-full text-left hover:opacity-90 active:scale-[0.98] transition-all"
+                    className="w-full text-left active:scale-[0.98] transition-transform duration-200"
                   >
                     <div className={shelfImgContainerClass}>
-                      <div className="absolute inset-0 grid grid-cols-2 grid-rows-2">
+                      <div className="absolute inset-0 grid grid-cols-2 grid-rows-2 group-hover:scale-105 transition-transform duration-500 ease-out">
                         {[0, 1, 2, 3].map(i => (
                           <img
                             key={i}
@@ -484,25 +491,31 @@ export const HomeView: React.FC = () => {
             More like {suggestion.artist}
           </h2>
           <ScrollRow>
-            {suggestion.tracks.map((t, idx) => (
-              <button
-                key={`${t.id}-${idx}`}
-                onClick={() => playQueue(suggestion.tracks, idx)}
-                className={`${shelfCardClass} hover:opacity-90 active:scale-[0.98] transition-all`}
-              >
-                <div className={shelfImgContainerClass}>
-                  <img
-                    src={t.coverUrl}
-                    alt={t.title}
-                    loading="lazy"
-                    className="w-full h-full object-cover"
-                  />
-                  <PlayCircle className="absolute top-2 left-2 w-5 h-5 text-app-primary fill-black/40" />
-                </div>
-                <p className={shelfTitleClass}>{t.title}</p>
-                <p className={shelfArtistClass}>{t.artist}</p>
-              </button>
-            ))}
+            {suggestion.tracks.map((t, idx) => {
+              const isCurrent = currentTrack?.id === t.id;
+              return (
+                <button
+                  key={`${t.id}-${idx}`}
+                  onClick={() => playQueue(suggestion.tracks, idx)}
+                  className={`${shelfCardClass} group active:scale-[0.98] transition-transform duration-200`}
+                >
+                  <div className={shelfImgContainerClass}>
+                    <img
+                      src={t.coverUrl}
+                      alt={t.title}
+                      loading="lazy"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                    />
+                    <PlayCircle className="absolute top-2 left-2 w-5 h-5 text-app-primary fill-black/40 group-hover:scale-110 transition-transform duration-300" />
+                    {isCurrent && isPlaying && (
+                      <span className="eq absolute bottom-2 right-2 px-1.5 py-1 rounded-md bg-black/65 backdrop-blur-xs pause-when-hidden" aria-hidden="true"><span /><span /><span /></span>
+                    )}
+                  </div>
+                  <p className={`${shelfTitleClass} ${isCurrent ? 'text-app-accent' : ''}`}>{t.title}</p>
+                  <p className={shelfArtistClass}>{t.artist}</p>
+                </button>
+              );
+            })}
           </ScrollRow>
         </div>
       )}
@@ -517,25 +530,31 @@ export const HomeView: React.FC = () => {
             <h2 className={shelfSectionHeaderClass.replace(/px-5 pb-\S+/, '')}>{row.title}</h2>
           </div>
           <ScrollRow>
-            {row.tracks.map((t, idx) => (
-              <button
-                key={`${t.id}-${idx}`}
-                onClick={() => playQueue(row.tracks, idx)}
-                className={`${shelfCardClass} hover:opacity-90 active:scale-[0.98] transition-all`}
-              >
-                <div className={shelfImgContainerClass}>
-                  <img
-                    src={t.coverUrl}
-                    alt={t.title}
-                    loading="lazy"
-                    className="w-full h-full object-cover"
-                  />
-                  <PlayCircle className="absolute top-2 left-2 w-5 h-5 text-app-primary fill-black/40" />
-                </div>
-                <p className={shelfTitleClass}>{t.title}</p>
-                <p className={shelfArtistClass}>{t.artist}</p>
-              </button>
-            ))}
+            {row.tracks.map((t, idx) => {
+              const isCurrent = currentTrack?.id === t.id;
+              return (
+                <button
+                  key={`${t.id}-${idx}`}
+                  onClick={() => playQueue(row.tracks, idx)}
+                  className={`${shelfCardClass} group active:scale-[0.98] transition-transform duration-200`}
+                >
+                  <div className={shelfImgContainerClass}>
+                    <img
+                      src={t.coverUrl}
+                      alt={t.title}
+                      loading="lazy"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                    />
+                    <PlayCircle className="absolute top-2 left-2 w-5 h-5 text-app-primary fill-black/40 group-hover:scale-110 transition-transform duration-300" />
+                    {isCurrent && isPlaying && (
+                      <span className="eq absolute bottom-2 right-2 px-1.5 py-1 rounded-md bg-black/65 backdrop-blur-xs pause-when-hidden" aria-hidden="true"><span /><span /><span /></span>
+                    )}
+                  </div>
+                  <p className={`${shelfTitleClass} ${isCurrent ? 'text-app-accent' : ''}`}>{t.title}</p>
+                  <p className={shelfArtistClass}>{t.artist}</p>
+                </button>
+              );
+            })}
           </ScrollRow>
         </div>
       ))}

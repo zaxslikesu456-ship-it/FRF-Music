@@ -223,60 +223,68 @@ input[type="range"]::-moz-range-thumb {
 @keyframes eqBar {
   0%,
   100% {
-    height: 4px;
+    transform: scaleY(0.28);
   }
-  50% {
-    height: 14px;
+  45% {
+    transform: scaleY(1);
+  }
+  75% {
+    transform: scaleY(0.55);
   }
 }
 
 .anim-fade {
-  animation: fadeIn 0.3s ease both;
+  animation: fadeIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .anim-rise {
-  animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation: rise 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .anim-scale {
-  animation: scaleIn 0.25s ease both;
+  animation: scaleIn 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .stagger > * {
-  animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation: rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .stagger > *:nth-child(1) { animation-delay: 0.02s; }
-.stagger > *:nth-child(2) { animation-delay: 0.06s; }
-.stagger > *:nth-child(3) { animation-delay: 0.1s; }
-.stagger > *:nth-child(4) { animation-delay: 0.14s; }
-.stagger > *:nth-child(5) { animation-delay: 0.18s; }
-.stagger > *:nth-child(6) { animation-delay: 0.22s; }
-.stagger > *:nth-child(7) { animation-delay: 0.26s; }
-.stagger > *:nth-child(8) { animation-delay: 0.3s; }
-.stagger > *:nth-child(9) { animation-delay: 0.34s; }
-.stagger > *:nth-child(10) { animation-delay: 0.38s; }
-.stagger > *:nth-child(11) { animation-delay: 0.42s; }
-.stagger > *:nth-child(12) { animation-delay: 0.46s; }
+.stagger > *:nth-child(2) { animation-delay: 0.05s; }
+.stagger > *:nth-child(3) { animation-delay: 0.08s; }
+.stagger > *:nth-child(4) { animation-delay: 0.11s; }
+.stagger > *:nth-child(5) { animation-delay: 0.14s; }
+.stagger > *:nth-child(6) { animation-delay: 0.17s; }
+.stagger > *:nth-child(7) { animation-delay: 0.2s; }
+.stagger > *:nth-child(8) { animation-delay: 0.23s; }
+.stagger > *:nth-child(9) { animation-delay: 0.26s; }
+.stagger > *:nth-child(10) { animation-delay: 0.29s; }
+.stagger > *:nth-child(11) { animation-delay: 0.32s; }
+.stagger > *:nth-child(12) { animation-delay: 0.35s; }
 
-/* Animated equalizer for the currently playing row */
+/* Animated equalizer for the currently playing row (GPU-composited scaleY). */
 .eq {
   display: inline-flex;
-  gap: 2px;
+  gap: 2.5px;
   align-items: flex-end;
   height: 14px;
   flex-shrink: 0;
 }
 .eq span {
   width: 3px;
-  border-radius: 1px;
+  height: 14px;
+  border-radius: 1.5px;
   background: var(--bg-highlight);
-  animation: eqBar 0.9s ease-in-out infinite;
+  transform-origin: bottom;
+  animation: eqBar 0.82s ease-in-out infinite;
+  will-change: transform;
 }
 .eq span:nth-child(2) {
-  animation-delay: 0.25s;
+  animation-duration: 0.68s;
+  animation-delay: 0.2s;
 }
 .eq span:nth-child(3) {
-  animation-delay: 0.5s;
+  animation-duration: 0.94s;
+  animation-delay: 0.42s;
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -409,3 +417,243 @@ html.app-hidden .pause-when-hidden * {
    browser blend translateZ(0) into rotate(360deg), which is a full turn back to rest, and the
    disc stood still. */
 .backface-hidden { backface-visibility: hidden; }
+
+/* Fill-in utilities for existing animate-in / fade-in / zoom-in-95 / slide-in-from-bottom
+   classes (Tailwind v4 omits tailwindcss-animate by default). */
+@keyframes animEnter {
+  from {
+    opacity: var(--enter-opacity, 1);
+    transform: translate3d(var(--enter-tx, 0), var(--enter-ty, 0), 0) scale(var(--enter-scale, 1));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-in {
+  --enter-opacity: 1;
+  --enter-tx: 0px;
+  --enter-ty: 0px;
+  --enter-scale: 1;
+  animation: animEnter var(--anim-dur, 220ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.fade-in { --enter-opacity: 0; }
+.zoom-in-95 { --enter-scale: 0.95; --enter-ty: 8px; }
+.slide-in-from-bottom { --enter-ty: 28px; --enter-opacity: 0; }
+.animate-in.duration-150 { --anim-dur: 150ms; }
+.animate-in.duration-200 { --anim-dur: 200ms; }
+.animate-in.duration-300 { --anim-dur: 300ms; }
+
+/* Music-player motion primitives */
+@keyframes sheetSlideUp {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 32px, 0) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.anim-sheet-up {
+  animation: sheetSlideUp 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes modalPop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.anim-modal-pop {
+  animation: modalPop 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes dropdownOpen {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -6px, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.anim-dropdown {
+  transform-origin: top center;
+  animation: dropdownOpen 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes toastSlideUp {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.anim-toast {
+  animation: toastSlideUp 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes trackChangeIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.anim-track-meta {
+  animation: trackChangeIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes artCrossIn {
+  from {
+    opacity: 0.2;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.anim-art-swap {
+  animation: artCrossIn 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes modeFromRight {
+  from {
+    opacity: 0;
+    transform: translate3d(26px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes modeFromLeft {
+  from {
+    opacity: 0;
+    transform: translate3d(-26px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.anim-mode-from-right {
+  animation: modeFromRight 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.anim-mode-from-left {
+  animation: modeFromLeft 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes heartFavoritePop {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.36) rotate(-8deg); }
+  65% { transform: scale(0.9) rotate(4deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+.anim-heart-pop {
+  animation: heartFavoritePop 0.44s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes navIconPop {
+  0% { transform: scale(0.86) translateY(2px); }
+  55% { transform: scale(1.14) translateY(-1px); }
+  100% { transform: scale(1.06) translateY(0); }
+}
+.anim-nav-pop {
+  animation: navIconPop 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes subviewSlideIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.anim-subview-in {
+  animation: subviewSlideIn 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes ambientHalo {
+  0%,
+  100% {
+    opacity: 0.32;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 0.58;
+    transform: scale(1.04);
+  }
+}
+.anim-playing-halo {
+  animation: ambientHalo 3.6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes barGrowY {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.anim-bar-grow-y {
+  transform-origin: bottom;
+  animation: barGrowY 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes barGrowX {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+.anim-bar-grow-x {
+  transform-origin: left;
+  animation: barGrowX 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in,
+  .anim-fade,
+  .anim-rise,
+  .anim-scale,
+  .stagger > *,
+  .anim-sheet-up,
+  .anim-modal-pop,
+  .anim-dropdown,
+  .anim-toast,
+  .anim-track-meta,
+  .anim-art-swap,
+  .anim-mode-from-right,
+  .anim-mode-from-left,
+  .anim-heart-pop,
+  .anim-nav-pop,
+  .anim-subview-in,
+  .anim-playing-halo,
+  .anim-bar-grow-y,
+  .anim-bar-grow-x,
+  .eq span {
+    animation: none !important;
+  }
+}
