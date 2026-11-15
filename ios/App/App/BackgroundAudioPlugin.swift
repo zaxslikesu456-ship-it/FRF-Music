@@ -2,6 +2,7 @@ import Foundation
 import Capacitor
 import AVFoundation
 import MediaPlayer
+import WebKit
 
 @objc(BackgroundAudioPlugin)
 public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -11,6 +12,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "update", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "playUrl", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "mintPoToken", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pause", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resume", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seek", returnType: CAPPluginReturnPromise),
@@ -304,6 +306,26 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         )
 
         call.resolve()
+    }
+
+    // YouTube proof-of-origin tokens, minted on youtube.com (see NativePoTokenMinter).
+    @objc func mintPoToken(_ call: CAPPluginCall) {
+        let videoId = call.getString("videoId", "")
+        if videoId.isEmpty {
+            call.reject("videoId is required")
+            return
+        }
+        DispatchQueue.main.async {
+            NativePoTokenMinter.shared.mint(videoId: videoId) { json in
+                if let json = json,
+                   let data = json.data(using: .utf8),
+                   let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                    call.resolve(obj)
+                } else {
+                    call.resolve(["ok": false, "error": "native minter busy or timed out"])
+                }
+            }
+        }
     }
 
     @objc public func pause(_ call: CAPPluginCall) {
@@ -811,5 +833,247 @@ final class GoogleVideoLoader: NSObject, AVAssetResourceLoaderDelegate {
         }
         running[id] = task
         task.resume()
+    }
+}
+
+// Mints YouTube WebPO (proof-of-origin) tokens inside a hidden web view that runs
+// on a real youtube.com origin, as the Android app (NativePoTokenMinter.java) and
+// the Windows app (po_token.rs) do.
+//
+// YouTube's BotGuard check skips the step that produces a usable token unless it
+// runs on a YouTube origin. The app's own page is capacitor://localhost, so the
+// in-page minter only ever got "No integrity token" on iPhone; without a token
+// the full-length stream sources answer "Sign in to confirm you're not a bot".
+// What was left were the streams made for YouTube's phone apps, which stop after
+// about a minute, and age-restricted songs could not be swapped for their
+// YouTube Music version. Here the check runs on youtube.com/robots.txt (a tiny
+// page on the real origin), through that page's own same-origin requests.
+//
+// The web view and the minted callback are kept between requests; each request
+// then only mints the tokens for its video. One request at a time: a second
+// caller gets nothing at once, and the app falls back as before.
+final class NativePoTokenMinter: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    static let shared = NativePoTokenMinter()
+
+    private static let initTimeout: TimeInterval = 30
+    private static let handlerName = "frfPot"
+
+    private var webView: WKWebView?
+    private var pageReady = false
+    private var busy = false
+    private var pendingVideoId: String?
+    private var pending: ((String?) -> Void)?
+    private var timeout: DispatchWorkItem?
+
+    /// Main thread only. `done` gets the JSON result ({ok, visitorData, contentPot,
+    /// sessionPot} or {ok:false, error}), or nil when busy or timed out.
+    func mint(videoId: String, done: @escaping (String?) -> Void) {
+        if busy {
+            done(nil)
+            return
+        }
+        busy = true
+        pendingVideoId = videoId
+        pending = done
+        let t = DispatchWorkItem { [weak self] in self?.onTimeout() }
+        timeout = t
+        DispatchQueue.main.asyncAfter(deadline: .now() + NativePoTokenMinter.initTimeout, execute: t)
+        if webView == nil {
+            createWebView()
+        } else if pageReady {
+            runInit()
+        }
+        // else: the page is still loading; didFinish picks the request up.
+    }
+
+    private func onTimeout() {
+        deliver(nil)
+        // A wedged check must not poison later requests: start over next time.
+        teardown()
+    }
+
+    private func deliver(_ json: String?) {
+        timeout?.cancel()
+        timeout = nil
+        busy = false
+        pendingVideoId = nil
+        let callback = pending
+        pending = nil
+        callback?(json)
+    }
+
+    private func teardown() {
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: NativePoTokenMinter.handlerName)
+        webView?.navigationDelegate = nil
+        webView?.removeFromSuperview()
+        webView = nil
+        pageReady = false
+    }
+
+    private func createWebView() {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        let controller = WKUserContentController()
+        controller.add(WeakScriptHandler(self), name: NativePoTokenMinter.handlerName)
+        config.userContentController = controller
+        let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 2, height: 2), configuration: config)
+        view.navigationDelegate = self
+        view.alpha = 0
+        view.isUserInteractionEnabled = false
+        // In a window, so iOS runs its JavaScript at full speed; invisible.
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow })
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first
+        window?.addSubview(view)
+        webView = view
+        if let url = URL(string: "https://www.youtube.com/robots.txt") {
+            view.load(URLRequest(url: url))
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pageReady = true
+        runInit()
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        loadFailed(error)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        loadFailed(error)
+    }
+
+    private func loadFailed(_ error: Error) {
+        let message = error.localizedDescription.replacingOccurrences(of: "\"", with: "'")
+        deliver("{\"ok\":false,\"error\":\"youtube.com did not load: \(message)\"}")
+        teardown()
+    }
+
+    private func runInit() {
+        guard let view = webView, let videoId = pendingVideoId else { return }
+        let quoted = (try? JSONSerialization.data(withJSONObject: [videoId]))
+            .flatMap { String(data: $0, encoding: .utf8) }
+            .map { String($0.dropFirst().dropLast()) } ?? "\"\""
+        view.evaluateJavaScript(NativePoTokenMinter.script.replacingOccurrences(of: "__VIDEO_ID__", with: quoted)) { _, error in
+            // evaluateJavaScript reports the async function's promise as an
+            // unsupported result type; the real answer arrives as a message.
+            _ = error
+        }
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == NativePoTokenMinter.handlerName else { return }
+        let json = message.body as? String
+        if let json = json, !json.contains("\"ok\":true") {
+            // Failed inside the page: rebuild the check next time instead of
+            // reusing a broken one.
+            webView?.evaluateJavaScript("window.__frfPotMinter = null;", completionHandler: nil)
+        }
+        deliver(json)
+    }
+
+    /// The minting flow and parts of this script come from BgUtils
+    /// (https://github.com/LuanRT/BgUtils), Copyright (c) 2024 LuanRT, MIT
+    /// license; see THIRD_PARTY_NOTICES.txt. Same script as the Android app's,
+    /// answering through a WebKit message handler.
+    private static let script = #"""
+    (async () => {
+      const send = (obj) => {
+        try { window.webkit.messageHandlers.frfPot.postMessage(JSON.stringify(obj)); } catch (e) {}
+      };
+      try {
+        if (!window.__frfPotMinter) {
+          const YT_KEY = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30';
+          const GOOG_KEY = 'AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw';
+          const REQ_KEY = 'O43z0dpjhgX20SCx4KAo';
+          const post = async (url, body, headers) => {
+            const res = await fetch(url, {method:'POST', headers: headers, body: JSON.stringify(body)});
+            return res.json();
+          };
+          const att = await post(
+            'https://www.youtube.com/youtubei/v1/att/get?key=' + YT_KEY + '&prettyPrint=false',
+            {context:{client:{clientName:'WEB',clientVersion:'2.20260617.01.00',hl:'en',gl:'US'}},
+             engagementType:'ENGAGEMENT_TYPE_UNBOUND'});
+          const bg = att.bgChallenge;
+          if (!bg || !bg.program) throw new Error('no challenge');
+          const visitorData = att.responseContext && att.responseContext.visitorData;
+          if (!window.yt) window.yt = {config_: {}};
+          const scriptUrl = bg.interpreterUrl.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue;
+          const fullUrl = scriptUrl.indexOf('http') === 0 ? scriptUrl : 'https:' + scriptUrl;
+          // A script tag, not fetch(): the interpreter lives on google.com,
+          // which sends no CORS header, and script tags are exempt from CORS.
+          await new Promise((res, rej) => {
+            const s = document.createElement('script');
+            s.src = fullUrl;
+            s.onload = () => res(null);
+            s.onerror = () => rej(new Error('interpreter load failed'));
+            (document.head || document.documentElement).appendChild(s);
+          });
+          const vm = window[bg.globalName];
+          if (!vm || !vm.a) throw new Error('no vm');
+          let fnsResolve = null;
+          const fnsPromise = new Promise((res) => { fnsResolve = res; });
+          await vm.a(bg.program, (a) => { fnsResolve({snap: a}); }, true, undefined,
+            () => {}, [[], []], undefined, false,
+            [() => {}, () => {}, () => {}, () => {}, () => {}])?.[0];
+          const fns = await Promise.race([
+            fnsPromise,
+            new Promise((res, rej) => setTimeout(() => rej(new Error('vm init timeout')), 8000))
+          ]);
+          if (!fns || !fns.snap) throw new Error('no snapshot fn');
+          const out = [];
+          const bgResp = await new Promise((res) => fns.snap((r) => res(r),
+            [undefined, undefined, out, undefined]));
+          if (!out.length) throw new Error('no webpo signals');
+          const it = await post('https://www.youtube.com/api/jnn/v1/GenerateIT',
+            [REQ_KEY, bgResp],
+            {'Content-Type':'application/json+protobuf',
+             'x-goog-api-key':GOOG_KEY, 'x-user-agent':'grpc-web-javascript/0.1'});
+          if (!it[0]) throw new Error('no integrity token');
+          const b64u8 = (s) => {
+            const b = atob(s.split('-').join('+').split('_').join('/'));
+            const a = new Uint8Array(b.length);
+            for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
+            return a;
+          };
+          const u8b64 = (u8) => {
+            let bin = '';
+            for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+            return btoa(bin).split('+').join('-').split('/').join('_').replace(/=+$/, '');
+          };
+          const mintCallback = await out[0](b64u8(it[0]));
+          window.__frfPotMinter = {
+            mint: async (binding) => u8b64(await mintCallback(new TextEncoder().encode(binding))),
+            visitorData: visitorData,
+            mintedAt: Date.now()
+          };
+        }
+        const m = window.__frfPotMinter;
+        if (!m) throw new Error('minter unavailable');
+        const contentPot = await m.mint(__VIDEO_ID__);
+        const sessionPot = await m.mint(m.visitorData);
+        send({ok: true, visitorData: m.visitorData, contentPot: contentPot, sessionPot: sessionPot});
+      } catch (e) {
+        window.__frfPotMinter = null;
+        send({ok: false, error: String(e && e.message ? e.message : e)});
+      }
+    })();
+    """#
+}
+
+/// WKUserContentController keeps its handlers strongly; this breaks the cycle.
+final class WeakScriptHandler: NSObject, WKScriptMessageHandler {
+    private weak var target: WKScriptMessageHandler?
+
+    init(_ target: WKScriptMessageHandler) {
+        self.target = target
+        super.init()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.userContentController(userContentController, didReceive: message)
     }
 }
