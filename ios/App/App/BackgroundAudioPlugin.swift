@@ -260,6 +260,10 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             pruneStreamLoaders()
         } else {
             let created = AVQueuePlayer(playerItem: playerItem)
+            // At the end of a song the player waits instead of moving on by itself:
+            // playerDidFinishPlaying first checks that the song really reached its
+            // end (a stream that stops early also counts as "played to the end").
+            created.actionAtItemEnd = .pause
             avPlayer = created
             observeCurrentItem(of: created)
         }
@@ -527,10 +531,31 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc private func playerDidFinishPlaying(_ note: Notification) {
         guard let item = note.object as? AVPlayerItem, let player = avPlayer else { return }
-        // Already rolled into the next song, or about to (one is queued): this is
-        // not the end of playback. Only the last song in the queue ends it.
         if item !== player.currentItem { return }
-        if player.items().count > 1 { return }
+
+        // A stream that YouTube cut off (links for its phone apps often stop after
+        // about a megabyte) also "plays to the end": the player used to move on to
+        // the next song in the queue (often the same artist) or stop, with no error.
+        // Ending more than 5 s before the song's length is a failure: stay on the
+        // song and report it, so the app resumes it from here with a fresh stream.
+        let played = CMTimeGetSeconds(item.currentTime())
+        let total = CMTimeGetSeconds(item.duration)
+        if total.isFinite, total > 30, played.isFinite, played < total - 5 {
+            player.pause()
+            stallReported = true // the watchdog need not report it a second time
+            notifyListeners("playbackError", data: [
+                "message": "Stream ended early at \(Int(played)) s of \(Int(total)) s",
+                "position": played
+            ])
+            return
+        }
+
+        // A real end: on to the next song in the queue, or the end of playback.
+        if player.items().count > 1 {
+            player.advanceToNextItem()
+            player.play()
+            return
+        }
         notifyListeners("playbackEnded", data: [:])
     }
 
