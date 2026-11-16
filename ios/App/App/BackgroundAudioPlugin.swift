@@ -127,6 +127,9 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     public override func load() {
         setupAudioSession()
         setupRemoteCommandCenter()
+        DispatchQueue.main.async {
+            UIApplication.shared.beginReceivingRemoteControlEvents()
+        }
     }
 
     private func setupAudioSession() {
@@ -286,6 +289,8 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                 "currentTime": currentSeconds.isNaN ? 0 : currentSeconds,
                 "duration": durSeconds.isNaN ? 0 : durSeconds
             ])
+            self?.nowPlayingTick += 1
+            if (self?.nowPlayingTick ?? 0) % 4 == 0 { self?.refreshNowPlayingTime() }
         }
 
         if startTime > 0 {
@@ -330,18 +335,20 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc public func pause(_ call: CAPPluginCall) {
         avPlayer?.pause()
+        refreshNowPlayingTime()
         call.resolve()
     }
 
     @objc public func resume(_ call: CAPPluginCall) {
         avPlayer?.play()
+        refreshNowPlayingTime()
         call.resolve()
     }
 
     @objc public func seek(_ call: CAPPluginCall) {
         let position = call.getDouble("position", 0.0)
         let cmTime = CMTime(seconds: position, preferredTimescale: 600)
-        avPlayer?.seek(to: cmTime)
+        avPlayer?.seek(to: cmTime) { [weak self] _ in self?.refreshNowPlayingTime() }
         call.resolve()
     }
 
@@ -400,6 +407,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         avPlayer?.removeAllItems()
         streamLoaders.removeAll()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        nowPlayingCoverUrl = nil
         call.resolve()
     }
 
@@ -587,6 +595,14 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         notifyListeners("playbackError", data: ["message": message])
     }
 
+    // Lock screen / Control Center. The app sends updates every few seconds,
+    // often without the song's length; replacing the whole entry each time
+    // wiped the length and time bar and fetched the cover again. Now updates are
+    // merged in, the cover is fetched once per song, and while the native player
+    // has the song, its own length, position and speed are what is shown.
+    private var nowPlayingCoverUrl: String?
+    private var nowPlayingTick = 0
+
     private func updateNowPlaying(
         title: String,
         artist: String,
@@ -595,33 +611,59 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         duration: Double?,
         position: Double?
     ) {
-        var info: [String: Any] = [
-            MPMediaItemPropertyTitle: title,
-            MPMediaItemPropertyArtist: artist,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
-        ]
+        let center = MPNowPlayingInfoCenter.default()
+        var info = center.nowPlayingInfo ?? [:]
+        if !title.isEmpty { info[MPMediaItemPropertyTitle] = title }
+        if !artist.isEmpty || info[MPMediaItemPropertyArtist] == nil { info[MPMediaItemPropertyArtist] = artist }
+        info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
 
-        if let d = duration, d > 0 {
-            info[MPMediaItemPropertyPlaybackDuration] = d
+        if let player = avPlayer, let item = player.currentItem {
+            let length = CMTimeGetSeconds(item.duration)
+            if length.isFinite, length > 0 {
+                info[MPMediaItemPropertyPlaybackDuration] = length
+            } else if let d = duration, d > 0 {
+                info[MPMediaItemPropertyPlaybackDuration] = d
+            }
+            let at = CMTimeGetSeconds(player.currentTime())
+            if at.isFinite { info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = at }
+            info[MPNowPlayingInfoPropertyPlaybackRate] = player.timeControlStatus == .paused ? 0.0 : 1.0
+        } else {
+            if let d = duration, d > 0 { info[MPMediaItemPropertyPlaybackDuration] = d }
+            if let p = position, p >= 0 { info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = p }
+            info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
         }
-        if let p = position, p >= 0 {
-            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = p
-        }
 
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-
-        if let cover = coverUrl, let url = URL(string: cover) {
-            DispatchQueue.global(qos: .userInitiated).async {
-                if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+        let newCover = (coverUrl?.isEmpty ?? true) ? nil : coverUrl
+        if newCover != nowPlayingCoverUrl {
+            nowPlayingCoverUrl = newCover
+            info.removeValue(forKey: MPMediaItemPropertyArtwork)
+            if let cover = newCover, let url = URL(string: cover) {
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return }
                     DispatchQueue.main.async {
+                        // Still the same song?
+                        guard self?.nowPlayingCoverUrl == cover else { return }
                         var updated = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-                        let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-                        updated[MPMediaItemPropertyArtwork] = artwork
+                        updated[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
                         MPNowPlayingInfoCenter.default().nowPlayingInfo = updated
                     }
                 }
             }
         }
+        center.nowPlayingInfo = info
+    }
+
+    /// The native player's length, position and speed, onto the lock screen.
+    private func refreshNowPlayingTime() {
+        guard let player = avPlayer, let item = player.currentItem else { return }
+        let center = MPNowPlayingInfoCenter.default()
+        guard var info = center.nowPlayingInfo else { return }
+        let length = CMTimeGetSeconds(item.duration)
+        if length.isFinite, length > 0 { info[MPMediaItemPropertyPlaybackDuration] = length }
+        let at = CMTimeGetSeconds(player.currentTime())
+        if at.isFinite { info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = at }
+        info[MPNowPlayingInfoPropertyPlaybackRate] = player.timeControlStatus == .paused ? 0.0 : 1.0
+        center.nowPlayingInfo = info
     }
 }
 
