@@ -1114,9 +1114,12 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Standard Web MediaSession API for Background Audio on Android Chromium/Capacitor
   useEffect(() => {
-    if (!('mediaSession' in navigator) || !currentTrack) return;
+    if (!currentTrack) return;
 
-    try {
+    // Not on iPhone: the web view's media session made iOS show the page as the
+    // thing playing, with no length and controls aimed at a page iOS pauses. The
+    // native player (BackgroundAudioPlugin.swift) owns the lock screen there.
+    if ('mediaSession' in navigator && !IS_IOS) try {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: currentTrack.title,
         artist: currentTrack.artist || 'Aura Music',
@@ -2470,8 +2473,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [currentTrack, isPlaying]);
 
   // Lock screen, desktop OS media controls, background audio & Bluetooth headphone controls
+  // (iPhone: the native player handles these; see above.)
   useEffect(() => {
-    if (!('mediaSession' in navigator)) return;
+    if (!('mediaSession' in navigator) || IS_IOS) return;
     if (currentTrack) {
       try {
         navigator.mediaSession.metadata = new MediaMetadata({
@@ -2499,7 +2503,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [currentTrack, isPlaying]);
 
   useEffect(() => {
-    if (!('mediaSession' in navigator)) return;
+    if (!('mediaSession' in navigator) || IS_IOS) return;
     const safeSet = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
       try {
         navigator.mediaSession.setActionHandler(action, handler);

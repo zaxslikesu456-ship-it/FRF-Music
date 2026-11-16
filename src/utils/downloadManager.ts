@@ -1219,6 +1219,80 @@ async function fetchThroughDesktopProxy(url: string, onProgress?: (fraction: num
   return new Blob(parts, { type });
 }
 
+// iPhone: a song was fetched in one request, which googlevideo slows to a few
+// KB/s after the first burst (and, for links made for its phone apps, cuts off),
+// so downloads sat at 30% for good. Like Android and the PC app, the file is now
+// fetched in 1 MB pieces given as a "range=start-end" parameter, four at a time,
+// through the app's native HTTP client, with the User-Agent of the YouTube
+// client the link was made for (googlevideo refuses others).
+const GV_CHUNK = 1024 * 1024;
+function googleVideoUserAgent(url: string): string {
+  const client = (/[?&]c=([^&]+)/.exec(url)?.[1] || '').toUpperCase();
+  if (client.startsWith('IOS')) return 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_5 like Mac OS X; en_US)';
+  if (client.startsWith('ANDROID_VR')) {
+    return 'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip';
+  }
+  if (client.startsWith('ANDROID_MUSIC')) return 'com.google.android.apps.youtube.music/6.40.52 (Linux; U; Android 14; en_US) gzip';
+  if (client.startsWith('ANDROID')) return 'com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip';
+  return 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
+}
+
+async function fetchGoogleVideoInPieces(url: string, onProgress?: (fraction: number) => void): Promise<Blob> {
+  const userAgent = googleVideoUserAgent(url);
+  const base = url.replace(/[?&]range=[^&]*/g, '');
+  const joiner = base.includes('?') ? '&' : '?';
+  const getPiece = async (start: number, end: number): Promise<Uint8Array> => {
+    let lastError = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await CapacitorHttp.get({
+          url: `${base}${joiner}range=${start}-${end}`,
+          headers: { 'User-Agent': userAgent },
+          responseType: 'blob',
+          connectTimeout: 20000,
+          readTimeout: 30000,
+        });
+        if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+        if (typeof res.data !== 'string') throw new Error('no data');
+        const bin = atob(res.data);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      } catch (e) {
+        lastError = String((e as Error)?.message || e);
+        await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+      }
+    }
+    throw new Error(`Download stopped at ${Math.round(start / 1024)} KB (${lastError})`);
+  };
+
+  const parts: Uint8Array[] = [];
+  const total = Number(/[?&]clen=(\d+)/.exec(url)?.[1] || 0);
+  if (total > 0) {
+    const starts: number[] = [];
+    for (let at = 0; at < total; at += GV_CHUNK) starts.push(at);
+    let done = 0;
+    for (let i = 0; i < starts.length; i += 4) {
+      const batch = await Promise.all(
+        starts.slice(i, i + 4).map(at => getPiece(at, Math.min(total, at + GV_CHUNK) - 1))
+      );
+      parts.push(...batch);
+      done += batch.length;
+      onProgress?.(done / starts.length);
+    }
+  } else {
+    // No size in the link: piece after piece until a short one ends the file.
+    for (let at = 0; ; at += GV_CHUNK) {
+      const piece = await getPiece(at, at + GV_CHUNK - 1);
+      parts.push(piece);
+      onProgress?.(Math.min(0.95, (parts.length * GV_CHUNK) / (6 * GV_CHUNK)));
+      if (piece.length < GV_CHUNK) break;
+    }
+  }
+  const type = url.includes('mime=audio%2Fwebm') || url.includes('mime=audio/webm') ? 'audio/webm' : 'audio/mp4';
+  return new Blob(parts as BlobPart[], { type });
+}
+
 async function collectProxyStreamUrls(youtubeId: string): Promise<string[]> {
   const tasks: Array<() => Promise<string>> = [
     ...getPipedBases().map(base => () => resolveFromPiped(base, youtubeId)),
@@ -1342,6 +1416,14 @@ export async function downloadTrackToFile(
             });
             notifyDownloadListeners();
           })
+        : IS_NATIVE && /googlevideo\.com/i.test(streamUrl)
+          ? await fetchGoogleVideoInPieces(streamUrl, pct => {
+              activeDownloadsMap.set(track.id, {
+                trackId: track.id, title: track.title, coverUrl: track.coverUrl,
+                bytes: 30 + Math.round(pct * 70), total: 100, status: 'downloading',
+              });
+              notifyDownloadListeners();
+            })
         : await (async () => {
             const res = await fetch(streamUrl);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
