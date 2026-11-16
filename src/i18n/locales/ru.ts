@@ -310,7 +310,7 @@ const ru: Record<string, string> = {
   "Violet Aura": "Фиолетовая аура",
   "Visualizer style": "Стиль визуализации",
   "Watch": "Смотреть",
-  "Welcome to Aura Music": "Добро пожаловать в Aura Music",
+  "Welcome to FRF Music": "Добро пожаловать в FRF Music",
   "Wi-Fi only": "Только Wi-Fi",
   "YOUR PLAYLISTS": "ВАШИ ПЛЕЙЛИСТЫ",
   "You can change this any time in Settings.": "Это можно изменить в любой момент в настройках.",

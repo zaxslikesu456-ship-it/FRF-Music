@@ -310,7 +310,7 @@ const tr: Record<string, string> = {
   "Violet Aura": "Mor aura",
   "Visualizer style": "Görselleştirici stili",
   "Watch": "İzle",
-  "Welcome to Aura Music": "Aura Music'e hoş geldin",
+  "Welcome to FRF Music": "FRF Music'e hoş geldin",
   "Wi-Fi only": "Yalnızca Wi-Fi",
   "YOUR PLAYLISTS": "ÇALMA LİSTELERİN",
   "You can change this any time in Settings.": "Bunu istediğin zaman Ayarlar'dan değiştirebilirsin.",

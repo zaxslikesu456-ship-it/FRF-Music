@@ -310,7 +310,7 @@ const zh: Record<string, string> = {
   "Violet Aura": "紫罗兰光晕",
   "Visualizer style": "可视化样式",
   "Watch": "观看",
-  "Welcome to Aura Music": "欢迎使用 Aura Music",
+  "Welcome to FRF Music": "欢迎使用 FRF Music",
   "Wi-Fi only": "仅限 Wi-Fi",
   "YOUR PLAYLISTS": "你的歌单",
   "You can change this any time in Settings.": "你可以随时在设置中更改。",

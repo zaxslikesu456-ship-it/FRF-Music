@@ -310,7 +310,7 @@ const es: Record<string, string> = {
   "Violet Aura": "Aura violeta",
   "Visualizer style": "Estilo del visualizador",
   "Watch": "Ver",
-  "Welcome to Aura Music": "Bienvenido a Aura Music",
+  "Welcome to FRF Music": "Bienvenido a FRF Music",
   "Wi-Fi only": "Solo Wi-Fi",
   "YOUR PLAYLISTS": "TUS LISTAS",
   "You can change this any time in Settings.": "Puedes cambiarlo cuando quieras en Ajustes.",

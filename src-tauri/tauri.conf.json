@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Aura Music",
+  "productName": "FRF Music",
   "version": "1.0.0",
   "identifier": "com.frf.music",
   "build": {
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Aura Music",
+        "title": "FRF Music",
         "width": 1280,
         "height": 800,
         "minWidth": 960,

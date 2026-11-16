@@ -402,7 +402,7 @@ export const DesktopFrame: React.FC = () => {
         style={{ width: layout.sidebarWidth }}
       >
         <div className="flex items-center justify-between gap-2 pl-3 pr-1 py-5">
-          <h1 className="text-2xl font-black truncate">{tr("Aura Music")}</h1>
+          <h1 className="text-2xl font-black truncate">{tr("FRF Music")}</h1>
           <button
             onClick={() => update({ sidebarOpen: false })}
             className="p-1.5 rounded-lg text-app-secondary hover:text-app-primary hover:bg-app-card shrink-0"

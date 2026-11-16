@@ -310,7 +310,7 @@ const ja: Record<string, string> = {
   "Violet Aura": "バイオレットオーラ",
   "Visualizer style": "ビジュアライザーのスタイル",
   "Watch": "視聴",
-  "Welcome to Aura Music": "Aura Music へようこそ",
+  "Welcome to FRF Music": "FRF Music へようこそ",
   "Wi-Fi only": "Wi-Fi のみ",
   "YOUR PLAYLISTS": "あなたのプレイリスト",
   "You can change this any time in Settings.": "あとから設定でいつでも変更できます。",

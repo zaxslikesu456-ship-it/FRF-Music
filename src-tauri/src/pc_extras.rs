@@ -51,7 +51,7 @@ pub fn open_mini(app: &AppHandle) -> Result<(), String> {
         let _ = w.set_focus();
     } else {
         let win = WebviewWindowBuilder::new(app, MINI, WebviewUrl::App("index.html?mini=1".into()))
-            .title("Aura Mini")
+            .title("FRF Mini")
             .inner_size(MINI_W, MINI_H)
             .resizable(false)
             .maximizable(false)

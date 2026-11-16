@@ -3,6 +3,7 @@ import Capacitor
 import AVFoundation
 import MediaPlayer
 import WebKit
+import MediaToolbox
 
 @objc(BackgroundAudioPlugin)
 public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -13,6 +14,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "update", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "playUrl", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "mintPoToken", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setEqualizer", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pause", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resume", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seek", returnType: CAPPluginReturnPromise),
@@ -110,12 +112,17 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     /// A player item for a song: YouTube audio goes through GoogleVideoLoader,
     /// files and other addresses straight to AVPlayer.
     private func makeItem(for url: URL) -> AVPlayerItem {
+        let item: AVPlayerItem
         if GoogleVideoLoader.isGoogleVideo(url), let made = GoogleVideoLoader.makeAsset(for: url) {
-            let item = AVPlayerItem(asset: made.asset)
+            item = AVPlayerItem(asset: made.asset)
             streamLoaders[ObjectIdentifier(item)] = made.loader
-            return item
+        } else {
+            item = AVPlayerItem(url: url)
         }
-        return AVPlayerItem(url: url)
+        // Every song goes through the equalizer (it passes the sound through
+        // untouched while the equalizer is off or flat).
+        IOSEqualizer.attach(to: item)
+        return item
     }
 
     /// A song's length. For YouTube audio, the length YouTube put in the link:
@@ -484,6 +491,21 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private func applyGain(_ gainDb: Double) {
         guard let player = avPlayer else { return }
         player.volume = gainDb < 0 ? Float(pow(10.0, max(gainDb, -20.0) / 20.0)) : 1.0
+    }
+
+    /// The app's equalizer settings (band gains in dB, bass boost 0..10,
+    /// surround 0..10). Applies at once to the song playing and to later ones.
+    @objc public func setEqualizer(_ call: CAPPluginCall) {
+        var settings = IOSEqualizer.Settings()
+        settings.enabled = call.getBool("enabled", true)
+        let raw = call.getArray("bands") ?? []
+        settings.bandsDb = (0..<5).map { i in
+            i < raw.count ? ((raw[i] as? NSNumber)?.doubleValue ?? 0) : 0
+        }
+        settings.bass = call.getDouble("bassBoost", 0)
+        settings.surround = call.getDouble("surround", 0)
+        IOSEqualizer.set(settings)
+        call.resolve()
     }
 
     @objc public func setNormGain(_ call: CAPPluginCall) {
@@ -1143,4 +1165,276 @@ final class WeakScriptHandler: NSObject, WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         target?.userContentController(userContentController, didReceive: message)
     }
+}
+
+// The app's equalizer on iPhone: a 5-band graphic EQ, bass boost, stereo
+// widening ("3D surround") and a soft limiter, the same as the Android app's
+// ParametricEq.java and the Web Audio graph in src/utils/equalizer.ts (same band
+// frequencies, filter types and Q), so all versions sound alike.
+//
+// The music plays in the native player (AVQueuePlayer), which the web page's
+// Web Audio equalizer cannot reach, so on iPhone the equalizer did nothing at
+// all. This runs inside each song's audio through an MTAudioProcessingTap.
+// Filters are the standard RBJ biquads (the formulas Web Audio uses).
+final class IOSEqualizer {
+    static let bandHz: [Double] = [60, 230, 910, 3600, 14000]
+    static let peakQ = 1.4
+    static let bassHz = 80.0
+    static let bassDbPerStep = 1.8 // bass boost 0..10 -> 0..18 dB low shelf
+    static let widenPerStep = 0.18 // surround 0..10 -> side gain 1.0..2.8
+    static let maxBandDb = 15.0
+
+    struct Settings {
+        var enabled = true
+        var bandsDb: [Double] = [0, 0, 0, 0, 0]
+        var bass = 0.0
+        var surround = 0.0
+
+        var isFlat: Bool {
+            if bass >= 0.05 || surround >= 0.05 { return false }
+            return !bandsDb.contains { abs($0) >= 0.05 }
+        }
+    }
+
+    private static let lock = NSLock()
+    private static var current = Settings()
+    private static var currentVersion = 0
+
+    static func set(_ settings: Settings) {
+        lock.lock()
+        current = settings
+        currentVersion += 1
+        lock.unlock()
+    }
+
+    /// Never blocks: the audio thread keeps its last settings if they are being changed.
+    static func read(ifNewerThan version: Int) -> (Settings, Int)? {
+        guard lock.try() else { return nil }
+        defer { lock.unlock() }
+        return currentVersion == version ? nil : (current, currentVersion)
+    }
+
+    /// Puts the equalizer into a song's audio once its tracks are known.
+    static func attach(to item: AVPlayerItem) {
+        let asset = item.asset
+        asset.loadValuesAsynchronously(forKeys: ["tracks"]) {
+            guard asset.statusOfValue(forKey: "tracks", error: nil) == .loaded,
+                  let track = asset.tracks(withMediaType: .audio).first else { return }
+            let processor = EqTapProcessor()
+            var callbacks = MTAudioProcessingTapCallbacks(
+                version: kMTAudioProcessingTapCallbacksVersion_0,
+                clientInfo: UnsafeMutableRawPointer(Unmanaged.passRetained(processor).toOpaque()),
+                init: eqTapInit,
+                finalize: eqTapFinalize,
+                prepare: eqTapPrepare,
+                unprepare: nil,
+                process: eqTapProcess)
+            var tap: MTAudioProcessingTap?
+            let status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap)
+            guard status == noErr, let created = tap else {
+                Unmanaged.passUnretained(processor).release()
+                return
+            }
+            let params = AVMutableAudioMixInputParameters(track: track)
+            params.audioTapProcessor = created
+            let mix = AVMutableAudioMix()
+            mix.inputParameters = [params]
+            DispatchQueue.main.async {
+                item.audioMix = mix
+            }
+        }
+    }
+}
+
+/// One song's equalizer state; lives as long as its tap.
+final class EqTapProcessor {
+    private var sampleRate = 44100.0
+    private var channels = 2
+    private var isFloat = false
+    private var interleaved = false
+    private var version = -1
+    private var bypass = true
+    private var preGain = 1.0
+    private var sideGain = 1.0
+    // 5 bands + bass shelf, each b0 b1 b2 a1 a2; state per channel, filter: z1 z2
+    private var coef = [Double](repeating: 0, count: 6 * 5)
+    private var active = [Bool](repeating: false, count: 6)
+    private var state = [Double](repeating: 0, count: 2 * 6 * 2)
+
+    func prepare(_ format: AudioStreamBasicDescription) {
+        sampleRate = format.mSampleRate > 0 ? format.mSampleRate : 44100
+        channels = max(1, Int(format.mChannelsPerFrame))
+        isFloat = (format.mFormatFlags & kAudioFormatFlagIsFloat) != 0 && format.mBitsPerChannel == 32
+        interleaved = (format.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0
+        state = [Double](repeating: 0, count: channels * 6 * 2)
+        version = -1
+    }
+
+    private func refresh() {
+        guard let fresh = IOSEqualizer.read(ifNewerThan: version) else { return }
+        let s = fresh.0
+        version = fresh.1
+        if !s.enabled || s.isFlat {
+            bypass = true
+            return
+        }
+        bypass = false
+        var maxBoost = 0.0
+        for i in 0..<5 {
+            let db = max(-IOSEqualizer.maxBandDb, min(IOSEqualizer.maxBandDb, i < s.bandsDb.count ? s.bandsDb[i] : 0))
+            let hz = IOSEqualizer.bandHz[i]
+            active[i] = hz < 0.49 * sampleRate && abs(db) >= 0.05
+            if !active[i] { continue }
+            if i == 0 {
+                lowShelf(i, hz, db)
+            } else if i == 4 {
+                highShelf(i, hz, db)
+            } else {
+                peaking(i, hz, IOSEqualizer.peakQ, db)
+            }
+            maxBoost = max(maxBoost, db)
+        }
+        let bassDb = max(0, min(10, s.bass)) * IOSEqualizer.bassDbPerStep
+        active[5] = bassDb >= 0.05
+        if active[5] {
+            lowShelf(5, IOSEqualizer.bassHz, bassDb)
+            maxBoost = max(maxBoost, bassDb)
+        }
+        preGain = pow(10.0, -min(9.0, maxBoost * 0.5) / 20.0)
+        sideGain = channels == 2 ? 1.0 + max(0, min(10, s.surround)) * IOSEqualizer.widenPerStep : 1.0
+        for c in 0..<channels {
+            for f in 0..<6 where !active[f] {
+                state[(c * 6 + f) * 2] = 0
+                state[(c * 6 + f) * 2 + 1] = 0
+            }
+        }
+    }
+
+    func process(_ buffers: UnsafeMutableAudioBufferListPointer, frames: Int) {
+        guard isFloat, frames > 0 else { return }
+        refresh()
+        if bypass { return }
+        // Each channel's samples: their start and the step between them.
+        var starts: [UnsafeMutablePointer<Float>] = []
+        var step = 1
+        if interleaved {
+            guard let data = buffers.first?.mData else { return }
+            let base = data.assumingMemoryBound(to: Float.self)
+            for c in 0..<channels { starts.append(base + c) }
+            step = channels
+        } else {
+            for c in 0..<min(channels, buffers.count) {
+                guard let data = buffers[c].mData else { return }
+                starts.append(data.assumingMemoryBound(to: Float.self))
+            }
+        }
+        let count = starts.count
+        if count == 0 { return }
+        for n in 0..<frames {
+            let at = n * step
+            for c in 0..<count {
+                var y = Double(starts[c][at]) * preGain
+                for f in 0..<6 where active[f] {
+                    let k = f * 5
+                    let z = (c * 6 + f) * 2
+                    let out = coef[k] * y + state[z]
+                    state[z] = coef[k + 1] * y - coef[k + 3] * out + state[z + 1]
+                    state[z + 1] = coef[k + 2] * y - coef[k + 4] * out
+                    y = out
+                }
+                starts[c][at] = Float(y)
+            }
+            if count == 2 && sideGain != 1.0 {
+                let l = Double(starts[0][at])
+                let r = Double(starts[1][at])
+                let mid = (l + r) * 0.5
+                let side = (l - r) * 0.5 * sideGain
+                starts[0][at] = Float(mid + side)
+                starts[1][at] = Float(mid - side)
+            }
+            for c in 0..<count {
+                starts[c][at] = Float(EqTapProcessor.softLimit(Double(starts[c][at])))
+            }
+        }
+    }
+
+    private static func softLimit(_ v: Double) -> Double {
+        let knee = 0.8
+        let a = abs(v)
+        if a <= knee { return v }
+        let room = 1.0 - knee
+        let limited = knee + room * tanh((a - knee) / room)
+        return v < 0 ? -limited : limited
+    }
+
+    private func store(_ f: Int, _ b0: Double, _ b1: Double, _ b2: Double, _ a0: Double, _ a1: Double, _ a2: Double) {
+        let k = f * 5
+        coef[k] = b0 / a0
+        coef[k + 1] = b1 / a0
+        coef[k + 2] = b2 / a0
+        coef[k + 3] = a1 / a0
+        coef[k + 4] = a2 / a0
+    }
+
+    private func omega(_ freq: Double) -> Double {
+        2.0 * Double.pi * min(freq, 0.49 * sampleRate) / sampleRate
+    }
+
+    private func peaking(_ f: Int, _ freq: Double, _ q: Double, _ db: Double) {
+        let a = pow(10.0, db / 40.0)
+        let w0 = omega(freq)
+        let cs = cos(w0)
+        let alpha = sin(w0) / (2.0 * q)
+        store(f, 1.0 + alpha * a, -2.0 * cs, 1.0 - alpha * a, 1.0 + alpha / a, -2.0 * cs, 1.0 - alpha / a)
+    }
+
+    private func lowShelf(_ f: Int, _ freq: Double, _ db: Double) {
+        let a = pow(10.0, db / 40.0)
+        let w0 = omega(freq)
+        let cs = cos(w0)
+        let alpha = sin(w0) / 2.0.squareRoot()
+        let t = 2.0 * a.squareRoot() * alpha
+        store(f,
+              a * ((a + 1) - (a - 1) * cs + t),
+              2 * a * ((a - 1) - (a + 1) * cs),
+              a * ((a + 1) - (a - 1) * cs - t),
+              (a + 1) + (a - 1) * cs + t,
+              -2 * ((a - 1) + (a + 1) * cs),
+              (a + 1) + (a - 1) * cs - t)
+    }
+
+    private func highShelf(_ f: Int, _ freq: Double, _ db: Double) {
+        let a = pow(10.0, db / 40.0)
+        let w0 = omega(freq)
+        let cs = cos(w0)
+        let alpha = sin(w0) / 2.0.squareRoot()
+        let t = 2.0 * a.squareRoot() * alpha
+        store(f,
+              a * ((a + 1) + (a - 1) * cs + t),
+              -2 * a * ((a - 1) + (a + 1) * cs),
+              a * ((a + 1) + (a - 1) * cs - t),
+              (a + 1) - (a - 1) * cs + t,
+              2 * ((a - 1) - (a + 1) * cs),
+              (a + 1) - (a - 1) * cs - t)
+    }
+}
+
+// MTAudioProcessingTap callbacks (plain C functions; the processor rides in the tap's storage).
+private let eqTapInit: MTAudioProcessingTapInitCallback = { _, clientInfo, storageOut in
+    storageOut.pointee = clientInfo
+}
+
+private let eqTapFinalize: MTAudioProcessingTapFinalizeCallback = { tap in
+    Unmanaged<EqTapProcessor>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release()
+}
+
+private let eqTapPrepare: MTAudioProcessingTapPrepareCallback = { tap, _, format in
+    Unmanaged<EqTapProcessor>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue().prepare(format.pointee)
+}
+
+private let eqTapProcess: MTAudioProcessingTapProcessCallback = { tap, frames, _, bufferList, framesOut, flagsOut in
+    let status = MTAudioProcessingTapGetSourceAudio(tap, frames, bufferList, flagsOut, nil, framesOut)
+    if status != noErr { return }
+    let processor = Unmanaged<EqTapProcessor>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
+    processor.process(UnsafeMutableAudioBufferListPointer(bufferList), frames: Int(framesOut.pointee))
 }

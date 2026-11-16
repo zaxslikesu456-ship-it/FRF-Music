@@ -155,7 +155,7 @@ export const TrackOptionsMenuModal: React.FC<TrackOptionsMenuModalProps> = ({
     if (navigator.share) {
       navigator.share({
         title: track.title,
-        text: `Listen to "${track.title}" by ${track.artist} on Aura Music!`,
+        text: `Listen to "${track.title}" by ${track.artist} on FRF Music!`,
         url: shareUrl,
       }).catch(() => {});
     } else {

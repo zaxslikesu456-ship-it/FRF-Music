@@ -36,8 +36,8 @@ fn main() {
             });
         })
         .setup(|app| {
-            let show_item = MenuItem::with_id(app, "show", "Show Aura Music", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit Aura Music", true, None::<&str>)?;
+            let show_item = MenuItem::with_id(app, "show", "Show FRF Music", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit FRF Music", true, None::<&str>)?;
             let mini_item = MenuItem::with_id(app, "mini", "Mini player", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &mini_item, &quit_item])?;
             pc_extras::register_media_keys(app.handle());

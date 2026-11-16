@@ -310,7 +310,7 @@ const ko: Record<string, string> = {
   "Violet Aura": "바이올렛 오라",
   "Visualizer style": "비주얼라이저 스타일",
   "Watch": "시청",
-  "Welcome to Aura Music": "Aura Music에 오신 것을 환영합니다",
+  "Welcome to FRF Music": "FRF Music에 오신 것을 환영합니다",
   "Wi-Fi only": "Wi-Fi에서만",
   "YOUR PLAYLISTS": "내 플레이리스트",
   "You can change this any time in Settings.": "설정에서 언제든지 바꿀 수 있습니다.",

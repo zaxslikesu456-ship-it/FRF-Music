@@ -310,7 +310,7 @@ const id: Record<string, string> = {
   "Violet Aura": "Aura ungu",
   "Visualizer style": "Gaya visualizer",
   "Watch": "Tonton",
-  "Welcome to Aura Music": "Selamat datang di Aura Music",
+  "Welcome to FRF Music": "Selamat datang di FRF Music",
   "Wi-Fi only": "Hanya Wi-Fi",
   "YOUR PLAYLISTS": "PLAYLIST KAMU",
   "You can change this any time in Settings.": "Kamu bisa mengubahnya kapan saja di Pengaturan.",

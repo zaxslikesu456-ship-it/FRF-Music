@@ -1122,8 +1122,8 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if ('mediaSession' in navigator && !IS_IOS) try {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: currentTrack.title,
-        artist: currentTrack.artist || 'Aura Music',
-        album: currentTrack.album || 'Aura Music',
+        artist: currentTrack.artist || 'FRF Music',
+        album: currentTrack.album || 'FRF Music',
         artwork: currentTrack.coverUrl
           ? [
               { src: nativeCover(currentTrack.coverUrl), sizes: '192x192', type: 'image/jpeg' },

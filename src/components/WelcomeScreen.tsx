@@ -59,7 +59,7 @@ export const WelcomeScreen: React.FC<{ onDone: () => void }> = ({ onDone }) => {
               <Music2 className="w-10 h-10 text-white" />
             </div>
             <h1 className="mt-6 text-3xl font-extrabold text-app-primary tracking-tight">
-              {t('Welcome to Aura Music')}
+              {t('Welcome to FRF Music')}
             </h1>
             <p className="mt-2 text-base text-app-secondary">
               {t('Your music, lyrics and downloads in one place.')}

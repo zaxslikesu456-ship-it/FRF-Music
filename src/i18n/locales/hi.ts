@@ -310,7 +310,7 @@ const hi: Record<string, string> = {
   "Violet Aura": "वायलेट ऑरा",
   "Visualizer style": "विज़ुअलाइज़र स्टाइल",
   "Watch": "देखें",
-  "Welcome to Aura Music": "Aura Music में आपका स्वागत है",
+  "Welcome to FRF Music": "FRF Music में आपका स्वागत है",
   "Wi-Fi only": "सिर्फ़ Wi-Fi",
   "YOUR PLAYLISTS": "आपकी प्लेलिस्ट",
   "You can change this any time in Settings.": "आप इसे कभी भी सेटिंग में बदल सकते हैं।",
