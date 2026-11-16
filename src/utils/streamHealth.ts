@@ -59,6 +59,71 @@ function cleanError(err: unknown): string {
     .slice(0, 140);
 }
 
+// YouTube's rate limit. When a connection sends YouTube too many requests, every
+// client gets "This content isn't available, try again later" for up to an hour.
+// The app made it worse: one song could send ~35 lookups (two dozen clients, retries,
+// then the same again for each other version of the song it searched for), so a
+// short limit turned into a long one and nothing played. After the first "try again
+// later", YouTube is left alone for a while (5, then 15, then 30 minutes; the mirrors
+// still get asked); a lookup that works again ends it. Kept across restarts, since
+// the limit outlasts them.
+const COOLDOWN_KEY = 'frf_yt_cooldown_v1';
+const COOLDOWN_MINUTES = [5, 15, 30];
+const RATE_LIMITED = /try again later/i;
+let cooldown: { until: number; step: number } = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COOLDOWN_KEY) || 'null');
+    if (saved && typeof saved.until === 'number' && typeof saved.step === 'number') return saved;
+  } catch {
+    // ignore
+  }
+  return { until: 0, step: 0 };
+})();
+
+function saveCooldown() {
+  try {
+    localStorage.setItem(COOLDOWN_KEY, JSON.stringify(cooldown));
+  } catch {
+    // ignore
+  }
+}
+
+/** True while YouTube is being left alone after it rate-limited this connection. */
+export function youtubeCoolingDown(): boolean {
+  return Date.now() < cooldown.until;
+}
+
+/** The error used while cooling down. */
+export function youtubeCooldownError(): Error {
+  const minutes = Math.max(1, Math.ceil((cooldown.until - Date.now()) / 60000));
+  return new Error(`YouTube is limiting this connection (too many requests); asking again in ${minutes} min`);
+}
+
+// YouTube's own clients (not the mirrors, the token minter or the player).
+const YOUTUBE_SOURCE = /^YouTube (TV|web) client$|^[A-Z][A-Z0-9_]*(\+po)?$/;
+
+function watchRateLimit(source: string, ok: boolean, error: string | undefined) {
+  if (!YOUTUBE_SOURCE.test(source)) return;
+  if (ok) {
+    if (cooldown.step !== 0 || cooldown.until !== 0) {
+      cooldown = { until: 0, step: 0 };
+      saveCooldown();
+    }
+    return;
+  }
+  if (!error || !RATE_LIMITED.test(error) || youtubeCoolingDown()) return;
+  const minutes = COOLDOWN_MINUTES[Math.min(cooldown.step, COOLDOWN_MINUTES.length - 1)];
+  cooldown = { until: Date.now() + minutes * 60000, step: cooldown.step + 1 };
+  saveCooldown();
+  events.push({
+    source: 'YouTube rate limit',
+    ok: false,
+    ms: 0,
+    error: `YouTube asked to try again later; not asking it for ${minutes} min`,
+    at: Date.now(),
+  });
+}
+
 export function recordSource(source: string, ok: boolean, ms: number, error?: unknown) {
   events.push({
     source,
@@ -67,6 +132,7 @@ export function recordSource(source: string, ok: boolean, ms: number, error?: un
     error: ok ? undefined : cleanError(error),
     at: Date.now(),
   });
+  watchRateLimit(source, ok, events[events.length - 1].error);
   if (events.length > MAX_EVENTS) events = events.slice(-MAX_EVENTS);
   save();
   listeners.forEach(fn => fn());

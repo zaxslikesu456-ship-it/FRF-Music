@@ -3,7 +3,7 @@ import type { Track } from '../types/music';
 import { httpGetJson, httpPostJson, isTauriRuntime } from './http';
 import { nativeCover } from './cover';
 import { getPoTokenMinter } from './poToken';
-import { recordSource } from './streamHealth';
+import { recordSource, youtubeCoolingDown, youtubeCooldownError } from './streamHealth';
 import {
   isAgeGated,
   noteAgeGated,
@@ -447,6 +447,7 @@ async function resolveFromInnerTube(
   usePoToken = false,
   forceRefreshMinter = false
 ): Promise<string> {
+  if (youtubeCoolingDown()) throw youtubeCooldownError();
   // On bot-flagged networks, attach a freshly minted poToken: the player
   // request carries a content-bound token (video ID) and the returned stream
   // URL gets a session-bound pot parameter (visitor data).
@@ -476,6 +477,9 @@ async function resolveFromInnerTube(
       };
     }
   }
+  // (WEB_EMBEDDED_PLAYER and TVHTML5_SIMPLY_EMBEDDED_PLAYER were removed in
+  // 2026-11: YouTube answers them "video unavailable" / "no longer supported"
+  // for every song, so they only added to the requests YouTube counts.)
   const clients = [
     {
       // The WebPO attestation flow is built for the WEB client (visitorData +
@@ -525,23 +529,10 @@ async function resolveFromInnerTube(
       clientId: '21',
     },
     {
-      // The embedded-player identity is designed for restricted embed contexts.
-      clientName: 'WEB_EMBEDDED_PLAYER',
-      clientVersion: '1.20240814.00.00',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-      clientId: '56',
-    },
-    {
       clientName: 'TVHTML5',
       clientVersion: '7.20240814.00.00',
       userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 (KHTML, like Gecko) Version/6.5 TV Safari/537.36',
       clientId: '7',
-    },
-    {
-      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-      clientVersion: '2.0',
-      userAgent: 'Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.50 Safari/605.1.15',
-      clientId: '85',
     },
   ];
 
@@ -610,8 +601,9 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
   // iOS silences the moment the app is backgrounded. The PC app plays the stream
   // itself too (so the equalizer can process it), so it needs the same source.
   if (
-    (IS_NATIVE && (Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios')) ||
-    isTauriRuntime()
+    ((IS_NATIVE && (Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios')) ||
+      isTauriRuntime()) &&
+    !youtubeCoolingDown()
   ) {
     try {
       return await withTimeout(resolveAudioStreamUrlFull(youtubeId), 20000, 'youtubei timeout');
@@ -625,12 +617,15 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
   // minute proving it. The caller plays the song version instead.
   if (isAgeGated(youtubeId)) throw new Error('Age-restricted video');
   try {
+    // While YouTube is rate-limiting this connection, only the mirrors are asked.
+    const coolingDown = youtubeCoolingDown();
     return await raceFirstUrl([
       // The poToken'd stream goes first: on bot-gated networks it is the only
       // kind googlevideo lets a native player stream open-ended, while the
       // plain mobile-client URLs die with HTTP 403 the moment playback starts.
-      () => resolveFromInnerTube(youtubeId, true),
-      () => resolveFromInnerTube(youtubeId),
+      ...(coolingDown
+        ? []
+        : [() => resolveFromInnerTube(youtubeId, true), () => resolveFromInnerTube(youtubeId)]),
       ...getPipedBases().map(base =>
         noted(`piped:${hostOf(base)}`, validated(() => resolveFromPiped(base, youtubeId)))
       ),
@@ -648,12 +643,9 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
   // and answer googlevideo with 403, so every source above fails. The
   // ad-free stream is what keeps iOS off the ad-serving YouTube player, so
   // it is worth the extra mint round-trips before giving up.
-  if (IS_NATIVE) {
-    try {
-      return await resolveFromInnerTube(youtubeId, true);
-    } catch {
-      // poToken path failed — keep going
-    }
+  // (The race above already asked every client with a token; asking them all
+  // again with the same token only added to YouTube's count.)
+  if (IS_NATIVE && !youtubeCoolingDown()) {
     // One more pass with a forced-fresh minter: the cached one may be poisoned.
     try {
       return await resolveFromInnerTube(youtubeId, true, true);
@@ -662,11 +654,17 @@ async function resolveAudioStreamUrlUncached(youtubeId: string): Promise<string>
     }
   }
 
-  return await raceFirstUrl(
-    getInvidiousBases().map(base =>
-      noted(`inv-local:${hostOf(base)}`, validated(() => resolveFromInvidious(base, youtubeId, true)))
-    )
-  );
+  try {
+    return await raceFirstUrl(
+      getInvidiousBases().map(base =>
+        noted(`inv-local:${hostOf(base)}`, validated(() => resolveFromInvidious(base, youtubeId, true)))
+      )
+    );
+  } catch (e) {
+    // Say why, so the player and Playback health don't blame the song.
+    if (youtubeCoolingDown()) throw youtubeCooldownError();
+    throw e;
+  }
 }
 
 // Plays an age-restricted video's song version instead. YouTube will not hand
@@ -690,6 +688,9 @@ async function resolveWithAgeFallback(youtubeId: string): Promise<string> {
       // the same song is looked for in another upload below. Without the song's
       // title there is nothing to look for.
       if (!isAgeGated(youtubeId) && !songDetailsFor(youtubeId)) throw e;
+      // Rate-limited, not a missing video: every other version would fail the
+      // same way, and each try made the limit last longer.
+      if (youtubeCoolingDown()) throw e;
     }
   }
   const song = songDetailsFor(youtubeId);
@@ -698,6 +699,7 @@ async function resolveWithAgeFallback(youtubeId: string): Promise<string> {
   const started = Date.now();
   const ids = await findSongVersionIds(song.title, song.artist, [youtubeId, ...(known ? [known] : [])]);
   for (const id of ids) {
+    if (youtubeCoolingDown()) throw youtubeCooldownError();
     if (isAgeGated(id)) continue;
     try {
       const url = await resolveAudioStreamUrlUncached(id);
@@ -753,6 +755,7 @@ function oneMintAtATime<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function resolveAudioStreamUrlFull(youtubeId: string): Promise<string> {
+  if (youtubeCoolingDown()) throw youtubeCooldownError();
   const { resolveFullAudioUrl } = await import('./ytjs');
   return resolveFullAudioUrl(youtubeId, preferredItags(), () => oneMintAtATime(async () => {
     // The plugin object accepts any method name, so a missing native method only
