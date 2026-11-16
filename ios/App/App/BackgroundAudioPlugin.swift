@@ -118,6 +118,16 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         return AVPlayerItem(url: url)
     }
 
+    /// A song's length. For YouTube audio, the length YouTube put in the link:
+    /// the player's own estimate for its streaming files can be longer than the
+    /// song, so the time bar ran on past the music, and the real end looked like
+    /// a stream cut off early. Files fall back to the player's length.
+    private func songLength(_ item: AVPlayerItem) -> Double {
+        if let known = streamLoaders[ObjectIdentifier(item)]?.expectedLength, known > 0 { return known }
+        let length = CMTimeGetSeconds(item.duration)
+        return length.isFinite && length > 0 ? length : 0
+    }
+
     /// Lets go of the loaders of songs no longer in the queue.
     private func pruneStreamLoaders() {
         let alive = Set((avPlayer?.items() ?? []).map { ObjectIdentifier($0) })
@@ -283,8 +293,15 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
         timeObserverToken = avPlayer?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             let currentSeconds = CMTimeGetSeconds(time)
-            let itemDuration = self?.avPlayer?.currentItem?.duration
-            let durSeconds = itemDuration != nil ? CMTimeGetSeconds(itemDuration!) : 0
+            let current = self?.avPlayer?.currentItem
+            let durSeconds = current.flatMap { self?.songLength($0) } ?? 0
+            // Past the song's real length (the file says it is longer): this is
+            // the end of the song, not more of it.
+            if let player = self?.avPlayer, let item = current, durSeconds > 30,
+               currentSeconds.isFinite, currentSeconds > durSeconds + 1.5,
+               player.timeControlStatus != .paused {
+                self?.finishSong(item)
+            }
             self?.notifyListeners("playbackProgress", data: [
                 "currentTime": currentSeconds.isNaN ? 0 : currentSeconds,
                 "duration": durSeconds.isNaN ? 0 : durSeconds
@@ -560,8 +577,12 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc private func playerDidFinishPlaying(_ note: Notification) {
-        guard let item = note.object as? AVPlayerItem, let player = avPlayer else { return }
-        if item !== player.currentItem { return }
+        guard let item = note.object as? AVPlayerItem else { return }
+        finishSong(item)
+    }
+
+    private func finishSong(_ item: AVPlayerItem) {
+        guard let player = avPlayer, item === player.currentItem else { return }
 
         // A stream that YouTube cut off (links for its phone apps often stop after
         // about a megabyte) also "plays to the end": the player used to move on to
@@ -569,7 +590,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         // Ending more than 5 s before the song's length is a failure: stay on the
         // song and report it, so the app resumes it from here with a fresh stream.
         let played = CMTimeGetSeconds(item.currentTime())
-        let total = CMTimeGetSeconds(item.duration)
+        let total = songLength(item)
         if total.isFinite, total > 30, played.isFinite, played < total - 5 {
             player.pause()
             stallReported = true // the watchdog need not report it a second time
@@ -586,6 +607,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             player.play()
             return
         }
+        player.pause()
         notifyListeners("playbackEnded", data: [:])
     }
 
@@ -618,7 +640,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
 
         if let player = avPlayer, let item = player.currentItem {
-            let length = CMTimeGetSeconds(item.duration)
+            let length = songLength(item)
             if length.isFinite, length > 0 {
                 info[MPMediaItemPropertyPlaybackDuration] = length
             } else if let d = duration, d > 0 {
@@ -658,7 +680,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         guard let player = avPlayer, let item = player.currentItem else { return }
         let center = MPNowPlayingInfoCenter.default()
         guard var info = center.nowPlayingInfo else { return }
-        let length = CMTimeGetSeconds(item.duration)
+        let length = songLength(item)
         if length.isFinite, length > 0 { info[MPMediaItemPropertyPlaybackDuration] = length }
         let at = CMTimeGetSeconds(player.currentTime())
         if at.isFinite { info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = at }
@@ -688,6 +710,8 @@ final class GoogleVideoLoader: NSObject, AVAssetResourceLoaderDelegate {
     private let source: URL
     private let userAgent: String
     private var mime: String
+    /// The song's exact length in seconds, from the link's "dur" (0 if missing).
+    let expectedLength: Double
     private var totalLength: Int64 = -1
     private let session: URLSession
     // Loading requests AVPlayer cancelled; their remaining pieces are not fetched.
@@ -726,6 +750,7 @@ final class GoogleVideoLoader: NSObject, AVAssetResourceLoaderDelegate {
         self.userAgent = agent
         let items = URLComponents(url: source, resolvingAgainstBaseURL: false)?.queryItems ?? []
         self.mime = items.first(where: { $0.name == "mime" })?.value ?? "audio/mp4"
+        self.expectedLength = Double(items.first(where: { $0.name == "dur" })?.value ?? "") ?? 0
         if let clen = items.first(where: { $0.name == "clen" })?.value, let n = Int64(clen), n > 0 {
             self.totalLength = n
         }
