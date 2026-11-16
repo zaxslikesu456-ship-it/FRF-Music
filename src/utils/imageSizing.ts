@@ -6,24 +6,49 @@
 import { sizedCover } from './cover';
 
 const done = new WeakMap<HTMLImageElement, string>(); // the src this module last chose
+const chosenFor = new WeakMap<HTMLImageElement, number>(); // the width it was chosen for
 
-function fit(img: HTMLImageElement) {
+// A picture measured while it was still small (the Now Playing cover is added
+// while the screen opens and grows into place) kept the small version for good,
+// so the big cover was blurry until another view loaded it fresh. Pictures that
+// got a smaller version are watched, and get a bigger one once they grow.
+const growth =
+  typeof ResizeObserver !== 'undefined'
+    ? new ResizeObserver(entries => {
+        for (const e of entries) {
+          const img = e.target as HTMLImageElement;
+          const was = chosenFor.get(img) || 0;
+          if (img.offsetWidth * (window.devicePixelRatio || 1) > was * 1.2) {
+            done.delete(img);
+            fit(img, true);
+          }
+        }
+      })
+    : null;
+
+function fit(img: HTMLImageElement, growOnly = false) {
   const src = img.getAttribute('src');
   if (!src || !/^https?:/.test(src)) return;
   // The error handler switched to the small thumbnail because the large one is
   // missing; never switch back.
   if (img.dataset.noResize === '1' || img.dataset.fallback === '1') return;
   if (done.get(img) === src) return;
-  const w = img.getBoundingClientRect().width;
+  // The laid-out width, not the on-screen one: an opening animation scales the
+  // picture down for a moment.
+  const w = img.offsetWidth || img.getBoundingClientRect().width;
   if (!w) return; // not laid out (hidden): leave it
-  const next = sizedCover(src, Math.ceil(w * (window.devicePixelRatio || 1)));
+  const px = Math.ceil(w * (window.devicePixelRatio || 1));
+  if (growOnly && px <= (chosenFor.get(img) || 0)) return;
+  const next = sizedCover(src, px);
   done.set(img, next);
+  chosenFor.set(img, px);
+  growth?.observe(img);
   if (next !== src) img.setAttribute('src', next);
 }
 
 function scan(node: Node) {
   if (node instanceof HTMLImageElement) fit(node);
-  else if (node instanceof Element) node.querySelectorAll('img').forEach(fit);
+  else if (node instanceof Element) node.querySelectorAll('img').forEach(img => fit(img));
 }
 
 export function installImageSizing(): void {

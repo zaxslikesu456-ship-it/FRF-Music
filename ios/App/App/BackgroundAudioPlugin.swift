@@ -15,6 +15,8 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "playUrl", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "mintPoToken", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setEqualizer", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveImportedFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deleteOfflineFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pause", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resume", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seek", returnType: CAPPluginReturnPromise),
@@ -254,7 +256,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
         if !filePath.isEmpty {
             let cleanPath = filePath.replacingOccurrences(of: "file://", with: "")
-            targetUrl = URL(fileURLWithPath: cleanPath)
+            targetUrl = BackgroundAudioPlugin.offlineFile(forPath: cleanPath) ?? URL(fileURLWithPath: cleanPath)
         } else if !urlString.isEmpty {
             targetUrl = URL(string: urlString)
         }
@@ -452,7 +454,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             var target: URL?
             if !filePath.isEmpty {
                 let cleanPath = filePath.replacingOccurrences(of: "file://", with: "")
-                target = URL(fileURLWithPath: cleanPath)
+                target = BackgroundAudioPlugin.offlineFile(forPath: cleanPath) ?? URL(fileURLWithPath: cleanPath)
             } else if !urlString.isEmpty {
                 target = URL(string: urlString)
             }
@@ -491,6 +493,88 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private func applyGain(_ gainDb: Double) {
         guard let player = avPlayer else { return }
         player.volume = gainDb < 0 ? Float(pow(10.0, max(gainDb, -20.0) / 20.0)) : 1.0
+    }
+
+    // Downloaded songs. On iPhone they used to stay inside the web page's
+    // storage, where this player cannot open them, so they never played. The
+    // page now writes each one here in base64 pieces (first with append=false,
+    // then appended), like Android's saveImportedFile. Returns the path and the
+    // size so far.
+    static func offlineDirectory() -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let dir = base.appendingPathComponent("offline", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// A saved song's file. iOS moves the app's folder when the app is updated,
+    /// so a path saved before that is looked up again by its file name.
+    static func offlineFile(forPath path: String) -> URL? {
+        if path.isEmpty { return nil }
+        if FileManager.default.fileExists(atPath: path) { return URL(fileURLWithPath: path) }
+        let name = (path as NSString).lastPathComponent
+        guard !name.isEmpty, let dir = offlineDirectory() else { return nil }
+        let moved = dir.appendingPathComponent(name)
+        return FileManager.default.fileExists(atPath: moved.path) ? moved : nil
+    }
+
+    @objc public func saveImportedFile(_ call: CAPPluginCall) {
+        let name = call.getString("fileName", "import.m4a")
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        var safe = String(String.UnicodeScalarView(name.unicodeScalars.map { allowed.contains($0) ? $0 : "_" }))
+        if safe.isEmpty || safe.hasPrefix(".") { safe = "import-" + safe }
+        let base64 = call.getString("base64", "")
+        let append = call.getBool("append", false)
+        DispatchQueue.global(qos: .utility).async {
+            guard let dir = BackgroundAudioPlugin.offlineDirectory() else {
+                call.reject("Could not create the offline folder")
+                return
+            }
+            guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+                call.reject("Could not read the song data")
+                return
+            }
+            let file = dir.appendingPathComponent(safe)
+            do {
+                if append, FileManager.default.fileExists(atPath: file.path) {
+                    let handle = try FileHandle(forWritingTo: file)
+                    defer { try? handle.close() }
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: data)
+                } else {
+                    try data.write(to: file)
+                }
+                let attrs = try? FileManager.default.attributesOfItem(atPath: file.path)
+                let size = (attrs?[.size] as? NSNumber)?.intValue ?? 0
+                call.resolve(["path": file.path, "size": size])
+            } catch {
+                call.reject("Could not save the song: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @objc public func deleteOfflineFile(_ call: CAPPluginCall) {
+        let path = call.getString("path", "").replacingOccurrences(of: "file://", with: "")
+        if let dir = BackgroundAudioPlugin.offlineDirectory(),
+           let file = BackgroundAudioPlugin.offlineFile(forPath: path),
+           file.deletingLastPathComponent().standardizedFileURL.path == dir.standardizedFileURL.path {
+            try? FileManager.default.removeItem(at: file)
+        }
+        call.resolve()
+    }
+
+    /// The lock-screen picture. The page sends the small video thumbnail
+    /// (320x180, which every video has), blurry on the lock screen; the large
+    /// one (1280x720) is used when the video has it.
+    static func loadCover(_ url: URL) -> UIImage? {
+        let address = url.absoluteString
+        if address.contains("ytimg.com"), address.contains("/mqdefault."),
+           let large = URL(string: address.replacingOccurrences(of: "/mqdefault.", with: "/maxresdefault.")),
+           let data = try? Data(contentsOf: large), let image = UIImage(data: data), image.size.width > 200 {
+            return image
+        }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return UIImage(data: data)
     }
 
     /// The app's equalizer settings (band gains in dB, bass boost 0..10,
@@ -683,7 +767,7 @@ public class BackgroundAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             info.removeValue(forKey: MPMediaItemPropertyArtwork)
             if let cover = newCover, let url = URL(string: cover) {
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                    guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return }
+                    guard let image = BackgroundAudioPlugin.loadCover(url) else { return }
                     DispatchQueue.main.async {
                         // Still the same song?
                         guard self?.nowPlayingCoverUrl == cover else { return }

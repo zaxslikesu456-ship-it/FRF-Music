@@ -847,6 +847,7 @@ export interface OfflineFileRecord {
 }
 
 const IS_ANDROID_NATIVE = IS_NATIVE && Capacitor.getPlatform() === 'android';
+const IS_IOS_NATIVE = IS_NATIVE && Capacitor.getPlatform() === 'ios';
 
 // Total size of all downloads on this device (used by the auto-download limit).
 let usageCache: { at: number; bytes: number } | null = null;
@@ -1077,9 +1078,91 @@ export function isStoredInBrowser(trackId: string): boolean {
   return Boolean(rec && !(IS_NATIVE && rec.path));
 }
 
+// iPhone: a downloaded song has to be a real file. It used to be kept in the web
+// page's storage (IndexedDB) like on PC, but on iPhone every song plays in the
+// native player, which cannot open the page's temporary blob: links, so songs
+// downloaded fine and then never played. The song is now written into the app's
+// offline folder in pieces, through the same plugin call imports use.
+const FILE_PIECE = 3 * 256 * 1024; // a multiple of 3 bytes, so the base64 pieces join up
+
+async function saveBlobAsNativeFile(trackId: string, blob: Blob): Promise<{ path: string; size: number } | null> {
+  if (!IS_IOS_NATIVE || !StreamProbe?.saveImportedFile) return null;
+  const ext = /webm/i.test(blob.type) ? 'webm' : 'm4a';
+  const fileName = `offline-${trackId.replace(/[^A-Za-z0-9._-]/g, '_')}.${ext}`;
+  let res: { path?: string; size?: number } = {};
+  for (let at = 0; at < blob.size; at += FILE_PIECE) {
+    const base64 = await blobToBase64(blob.slice(at, at + FILE_PIECE));
+    res = await StreamProbe.saveImportedFile({ fileName, base64, append: at > 0 });
+  }
+  if (!res.path) return null;
+  if (Number(res.size) !== blob.size) {
+    void StreamProbe.deleteOfflineFile?.({ path: res.path }).catch(() => {});
+    return null;
+  }
+  return { path: res.path, size: blob.size };
+}
+
+async function readOfflineBlob(trackId: string): Promise<Blob | null> {
+  const db = await openDownloadsDB();
+  return new Promise<Blob | null>(resolve => {
+    const tx = db.transaction('files', 'readonly');
+    const req = tx.objectStore('files').get(trackId);
+    req.onsuccess = () => resolve((req.result as Blob) || null);
+    req.onerror = () => resolve(null);
+  });
+}
+
+// iPhone songs downloaded by earlier versions are still in the page's storage:
+// each is moved to a file the first time it is played or queued.
+const movingToFile = new Map<string, Promise<string | null>>();
+export function ensureOfflineFile(trackId: string): Promise<string | null> {
+  const rec = getOfflineRecord(trackId);
+  if (!rec) return Promise.resolve(null);
+  if (rec.path || !IS_IOS_NATIVE) return Promise.resolve(rec.path || null);
+  let job = movingToFile.get(trackId);
+  if (!job) {
+    job = (async () => {
+      try {
+        const blob = await readOfflineBlob(trackId);
+        if (!blob) return null;
+        const saved = await saveBlobAsNativeFile(trackId, blob);
+        if (!saved) return null;
+        const records: OfflineFileRecord[] = JSON.parse(localStorage.getItem(OFFLINE_KEY) || '[]');
+        const mine = records.find(r => r.trackId === trackId);
+        if (!mine) {
+          // Deleted while it was being moved.
+          void StreamProbe?.deleteOfflineFile?.({ path: saved.path }).catch(() => {});
+          return null;
+        }
+        mine.path = saved.path;
+        mine.webUrl = '';
+        mine.size = saved.size;
+        localStorage.setItem(OFFLINE_KEY, JSON.stringify(records));
+        try {
+          const db = await openDownloadsDB();
+          db.transaction('files', 'readwrite').objectStore('files').delete(trackId);
+        } catch {
+          // the file is what plays now; the old copy only takes space
+        }
+        return saved.path;
+      } catch {
+        return null;
+      } finally {
+        movingToFile.delete(trackId);
+      }
+    })();
+    movingToFile.set(trackId, job);
+  }
+  return job;
+}
+
 export async function getOfflinePlaybackUrlAsync(trackId: string): Promise<string | null> {
   const rec = getOfflineRecord(trackId);
   if (!rec) return null;
+  if (IS_IOS_NATIVE && !rec.path) {
+    const moved = await ensureOfflineFile(trackId);
+    if (moved) return Capacitor.convertFileSrc(moved);
+  }
   if (IS_NATIVE && rec.path) {
     return Capacitor.convertFileSrc(rec.path);
   }
@@ -1089,14 +1172,7 @@ export async function getOfflinePlaybackUrlAsync(trackId: string): Promise<strin
     return url;
   }
   try {
-    const db = await openDownloadsDB();
-    const blob = await new Promise<Blob | null>(resolve => {
-      const tx = db.transaction('files', 'readonly');
-      const store = tx.objectStore('files');
-      const req = store.get(trackId);
-      req.onsuccess = () => resolve((req.result as Blob) || null);
-      req.onerror = () => resolve(null);
-    });
+    const blob = await readOfflineBlob(trackId);
     if (blob) {
       const url = URL.createObjectURL(blob);
       rememberObjectUrl(trackId, url);
@@ -1142,7 +1218,9 @@ export async function verifyOfflineRecord(trackId: string): Promise<boolean> {
   if (!rec) return false;
   if (!(IS_NATIVE && rec.path)) return true;
   let ok = rec.size >= 20000;
-  if (ok) {
+  // iPhone: the app's folder moves with every app update, so a saved path can
+  // look missing here while the native player finds the file by its name.
+  if (ok && !IS_IOS_NATIVE) {
     try {
       const res = await fetch(Capacitor.convertFileSrc(rec.path), { method: 'HEAD' });
       ok = res.ok;
@@ -1430,8 +1508,13 @@ export async function downloadTrackToFile(
             return res.blob();
           })();
       if (blob.size < 20000) throw new Error(`File too small (${blob.size} bytes)`);
-      await storeBlobOffline(track.id, blob);
-      // No in-memory link here: the song is read back from IndexedDB when played.
+      const asFile = await saveBlobAsNativeFile(track.id, blob).catch(() => null);
+      if (asFile) {
+        filePath = asFile.path;
+      } else {
+        await storeBlobOffline(track.id, blob);
+      }
+      // No in-memory link here: the song is read back from storage when played.
       webUrl = '';
       size = blob.size;
     }

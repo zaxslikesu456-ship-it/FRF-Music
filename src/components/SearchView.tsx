@@ -527,7 +527,11 @@ export const SearchView: React.FC = () => {
     { id: 'playlists', label: tr("Community Playlists") },
   ];
 
-  const SongRow: React.FC<{ track: Track; list: Track[]; index: number }> = ({ track, list, index }) => {
+  // Rows are plain functions called during render, not components: a component
+  // defined in here is a new one on every redraw (the player reports its
+  // position twice a second), so React rebuilt every row and every picture
+  // loaded again. No hooks in these.
+  const SongRow = ({ track, list, index }: { track: Track; list: Track[]; index: number }) => {
     const isCurrent = currentTrack?.id === track.id;
     return (
       <button
@@ -572,7 +576,7 @@ export const SearchView: React.FC = () => {
   };
 
   // A song from your own library, marked liked / downloaded.
-  const LibrarySongRow: React.FC<{ track: Track; list: Track[]; index: number }> = ({ track, list, index }) => (
+  const LibrarySongRow = ({ track, list, index }: { track: Track; list: Track[]; index: number }) => (
     <button
       onClick={() => {
         rememberItem({ kind: 'track', track, at: Date.now() });
@@ -606,7 +610,7 @@ export const SearchView: React.FC = () => {
     </button>
   );
 
-  const LocalPlaylistRow: React.FC<{ id: string; name: string; tracks: Track[] }> = ({ id, name, tracks: plTracks }) => (
+  const LocalPlaylistRow = ({ id, name, tracks: plTracks }: { id: string; name: string; tracks: Track[] }) => (
     <button
       onClick={() => setActiveLocalPlaylist({ id, title: name, tracks: plTracks })}
       className="w-full flex items-center gap-4 p-2 rounded-xl text-left"
@@ -628,7 +632,7 @@ export const SearchView: React.FC = () => {
     </button>
   );
 
-  const ArtistRows: React.FC<{ artists: ArtistResult[]; limit?: number }> = ({ artists, limit }) => (
+  const ArtistRows = ({ artists, limit }: { artists: ArtistResult[]; limit?: number }) => (
     <>
       {(limit ? artists.slice(0, limit) : artists).map(a => (
         <button
@@ -976,10 +980,10 @@ export const SearchView: React.FC = () => {
                   </div>
                   <div className="space-y-1 -mx-2">
                     {libraryMatches.playlists.slice(0, 2).map(({ playlist, tracks: plTracks }) => (
-                      <LocalPlaylistRow key={playlist.id} id={playlist.id} name={playlist.name} tracks={plTracks} />
+                      <React.Fragment key={playlist.id}>{LocalPlaylistRow({ id: playlist.id, name: playlist.name, tracks: plTracks })}</React.Fragment>
                     ))}
                     {libraryMatches.tracks.slice(0, 3).map((t, idx) => (
-                      <LibrarySongRow key={t.id} track={t} list={libraryMatches.tracks} index={idx} />
+                      <React.Fragment key={t.id}>{LibrarySongRow({ track: t, list: libraryMatches.tracks, index: idx })}</React.Fragment>
                     ))}
                   </div>
                 </div>
@@ -993,7 +997,7 @@ export const SearchView: React.FC = () => {
                       {tr("View all")}
                     </button>
                   </div>
-                  <ArtistRows artists={artistResults} limit={3} />
+                  {ArtistRows({ artists: artistResults, limit: 3 })}
                 </div>
               )}
 
@@ -1007,7 +1011,7 @@ export const SearchView: React.FC = () => {
                   </div>
                   <div className="space-y-1 -mx-2">
                     {searchResults.slice(0, 5).map((t, idx) => (
-                      <SongRow key={t.id} track={t} list={searchResults} index={idx} />
+                      <React.Fragment key={t.id}>{SongRow({ track: t, list: searchResults, index: idx })}</React.Fragment>
                     ))}
                   </div>
                 </div>
@@ -1071,10 +1075,10 @@ export const SearchView: React.FC = () => {
           {searchMode === 'library' && searchQuery && (
             <div className="px-3 space-y-1">
               {libraryMatches.playlists.map(({ playlist, tracks: plTracks }) => (
-                <LocalPlaylistRow key={playlist.id} id={playlist.id} name={playlist.name} tracks={plTracks} />
+                <React.Fragment key={playlist.id}>{LocalPlaylistRow({ id: playlist.id, name: playlist.name, tracks: plTracks })}</React.Fragment>
               ))}
               {libraryMatches.tracks.map((t, idx) => (
-                <LibrarySongRow key={t.id} track={t} list={libraryMatches.tracks} index={idx} />
+                <React.Fragment key={t.id}>{LibrarySongRow({ track: t, list: libraryMatches.tracks, index: idx })}</React.Fragment>
               ))}
               {libraryMatches.tracks.length === 0 && libraryMatches.playlists.length === 0 && (
                 <p className="text-center text-app-secondary py-10">
@@ -1088,7 +1092,7 @@ export const SearchView: React.FC = () => {
           {searchMode === 'songs' && (
             <div className="px-3 space-y-1">
               {searchResults.map((t, idx) => (
-                <SongRow key={t.id} track={t} list={searchResults} index={idx} />
+                <React.Fragment key={t.id}>{SongRow({ track: t, list: searchResults, index: idx })}</React.Fragment>
               ))}
               {searchResults.length > 0 && (
                 <p className="text-center text-sm text-app-secondary py-6">
@@ -1101,7 +1105,7 @@ export const SearchView: React.FC = () => {
           {/* ARTISTS MODE */}
           {searchMode === 'artists' && (
             <div className="px-5">
-              <ArtistRows artists={artistResults} />
+              {ArtistRows({ artists: artistResults })}
               {artistResults.length === 0 && !isSearching && (
                 <p className="text-center text-app-secondary py-10">{tr("No artists found")}</p>
               )}
@@ -1128,7 +1132,7 @@ export const SearchView: React.FC = () => {
           {searchMode === 'videos' && (
             <div className="px-3 space-y-1">
               {videoResults.map((t, idx) => (
-                <SongRow key={`${t.id}-${idx}`} track={t} list={videoResults} index={idx} />
+                <React.Fragment key={`${t.id}-${idx}`}>{SongRow({ track: t, list: videoResults, index: idx })}</React.Fragment>
               ))}
               {videoResults.length === 0 && !isSearching && (
                 <p className="text-center text-app-secondary py-10">{tr("No videos found")}</p>

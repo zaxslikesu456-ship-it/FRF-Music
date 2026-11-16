@@ -9,6 +9,7 @@ import {
   deleteOfflineFile,
   getOfflinePlaybackUrl,
   getOfflinePlaybackUrlAsync,
+  ensureOfflineFile,
   isStoredInBrowser,
   getOfflineRecord,
   setCachedStreamUrl,
@@ -2928,6 +2929,10 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         });
       }
 
+      // A blob: link lives only inside the web page; the native player cannot
+      // open it (it failed without a sound), so the page plays that one.
+      if (!rec?.path && url.startsWith('blob:')) return playHtml5Audio(track, url, startTime, currentGen);
+
       return BackgroundAudio.playUrl({
         url: rec?.webUrl || (url.startsWith('http') ? url : undefined),
         filePath: rec?.path || (!url.startsWith('http') ? url : undefined),
@@ -4142,10 +4147,13 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         let url: string | undefined;
         let filePath: string | undefined;
         if (record) {
-          // A download stored only in the web layer (no file on disk) cannot be
-          // played by the native player, so the queue stops here.
-          if (!record.path) break;
-          filePath = record.path;
+          // A download stored only in the web layer is moved to a file first
+          // (the native player cannot read it there); if that fails, the queue
+          // stops here.
+          const path = record.path || (await ensureOfflineFile(t.id));
+          if (cancelled) return;
+          if (!path) break;
+          filePath = path;
         } else {
           const vid = t.isYouTube
             ? youtubePlaybackOverridesRef.current[t.id] || t.youtubeId
